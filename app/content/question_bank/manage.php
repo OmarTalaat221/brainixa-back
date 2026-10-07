@@ -213,6 +213,101 @@ if (!function_exists('questionBankDeleteFolder')) {
     }
 }
 
+if (!function_exists('question_bank_identical_in_exam_sql')) {
+    /**
+     * An SQL EXISTS clause answering: does this exam already hold a question identical to the bank
+     * question at `$bankRef` (an expression - "q.id" in a listing, a literal id in a guard)?
+     *
+     * IDENTICAL means three things, and deliberately not a fourth:
+     *
+     *   1. the same question type;
+     *   2. the same text, character for character, in every language it is written in;
+     *   3. the same CORRECT answer - the right option's text for an mcq, the true/false value,
+     *      the model answer for a written one.
+     *
+     * The WRONG options are not compared. Rewording a distractor does not make it another
+     * question, so a bank question whose decoys were tidied up still counts as the one already in
+     * the exam. Change the right answer and it becomes a different question again.
+     *
+     * COLLATE utf8mb4_bin throughout: the columns' own utf8mb4_unicode_ci calls two strings equal
+     * when they differ only by a diacritic or a kashida, and the rule is that one changed letter
+     * makes it a different question.
+     *
+     * The mcq check runs in both directions so that adding or removing a correct option counts as
+     * a change, not just editing one.
+     */
+    function question_bank_identical_in_exam_sql(int $examId, string $bankRef): string {
+        $bin = 'COLLATE utf8mb4_bin';
+
+        return "EXISTS (
+            SELECT 1 FROM questions eq
+            WHERE eq.exam_id = {$examId}
+              AND eq.is_bank = 0
+              AND eq.question_type = (SELECT bq.question_type FROM questions bq WHERE bq.id = {$bankRef})
+
+              -- The text, in every language the bank question has.
+              AND NOT EXISTS (
+                  SELECT 1 FROM questions_translations bt
+                  LEFT JOIN questions_translations et
+                         ON et.question_id = eq.id AND et.language_id = bt.language_id
+                  WHERE bt.question_id = {$bankRef}
+                    AND (et.question_text IS NULL
+                         OR et.question_text {$bin} <> bt.question_text {$bin})
+              )
+
+              -- true/false: the answer itself. -1 stands in for 'no row', so a question missing
+              -- its answer never matches one that has it.
+              AND COALESCE((SELECT tf.correct_answer FROM true_false_answers tf
+                             WHERE tf.question_id = eq.id LIMIT 1), -1)
+                = COALESCE((SELECT tf2.correct_answer FROM true_false_answers tf2
+                             WHERE tf2.question_id = {$bankRef} LIMIT 1), -1)
+
+              -- written: the model answer, in every language.
+              AND NOT EXISTS (
+                  SELECT 1 FROM written_model_answers bwa
+                  JOIN written_model_answers_translations bmt
+                       ON bmt.written_model_answer_id = bwa.id
+                  WHERE bwa.question_id = {$bankRef}
+                    AND NOT EXISTS (
+                        SELECT 1 FROM written_model_answers ewa
+                        JOIN written_model_answers_translations emt
+                             ON emt.written_model_answer_id = ewa.id
+                        WHERE ewa.question_id = eq.id
+                          AND emt.language_id = bmt.language_id
+                          AND emt.model_answer {$bin} = bmt.model_answer {$bin}
+                    )
+              )
+
+              -- mcq: every correct option of the bank question is a correct option of the exam's.
+              AND NOT EXISTS (
+                  SELECT 1 FROM mcq_options bmo
+                  JOIN mcq_options_translations bot ON bot.mcq_option_id = bmo.id
+                  WHERE bmo.question_id = {$bankRef} AND bmo.is_correct = 1
+                    AND NOT EXISTS (
+                        SELECT 1 FROM mcq_options emo
+                        JOIN mcq_options_translations eot ON eot.mcq_option_id = emo.id
+                        WHERE emo.question_id = eq.id AND emo.is_correct = 1
+                          AND eot.language_id = bot.language_id
+                          AND eot.option_text {$bin} = bot.option_text {$bin}
+                    )
+              )
+              -- ...and the other way round, so an added or removed right answer is a change too.
+              AND NOT EXISTS (
+                  SELECT 1 FROM mcq_options emo
+                  JOIN mcq_options_translations eot ON eot.mcq_option_id = emo.id
+                  WHERE emo.question_id = eq.id AND emo.is_correct = 1
+                    AND NOT EXISTS (
+                        SELECT 1 FROM mcq_options bmo
+                        JOIN mcq_options_translations bot ON bot.mcq_option_id = bmo.id
+                        WHERE bmo.question_id = {$bankRef} AND bmo.is_correct = 1
+                          AND bot.language_id = eot.language_id
+                          AND bot.option_text {$bin} = eot.option_text {$bin}
+                    )
+              )
+        )";
+    }
+}
+
 // =================================================================================================
 // Listing the questions in a folder
 // =================================================================================================
@@ -273,28 +368,9 @@ if (!function_exists('questionBankListQuestions')) {
         // and the GROUP BY that hid it would then depend on ONLY_FULL_GROUP_BY being off. This
         // way each question is one row no matter how many languages it was written in, and the
         // fallback to any other language is explicit.
-        // "Already in the exam" means character-for-character identical, in every language the
-        // question is written in. COLLATE utf8mb4_bin is what makes that literal: the column's own
-        // utf8mb4_unicode_ci would treat strings differing by a diacritic or a kashida as equal,
-        // and the rule here is that one changed letter makes it a different question.
-        //
-        // The NOT EXISTS clause is the "in every language" half: a bank question counts as taken
-        // only when the exam's copy has no translation that differs from it.
-        $alreadySql = '0';
-        if ($examId > 0) {
-            $alreadySql = "EXISTS (
-                SELECT 1 FROM questions eq
-                WHERE eq.exam_id = {$examId} AND eq.is_bank = 0
-                  AND NOT EXISTS (
-                      SELECT 1 FROM questions_translations bt
-                      LEFT JOIN questions_translations et
-                             ON et.question_id = eq.id AND et.language_id = bt.language_id
-                      WHERE bt.question_id = q.id
-                        AND (et.question_text IS NULL
-                             OR et.question_text COLLATE utf8mb4_bin <> bt.question_text COLLATE utf8mb4_bin)
-                  )
-            )";
-        }
+        $alreadySql = $examId > 0
+            ? question_bank_identical_in_exam_sql($examId, 'q.id')
+            : '0';
 
         $res = mysqli_query($con, "
             SELECT q.id, q.question_type, q.score, q.is_active, q.order_num, q.question_image,
@@ -561,18 +637,7 @@ if (!function_exists('questionBankCopyToExam')) {
             SELECT q.id
             FROM questions q
             WHERE q.is_bank = 1 AND q.id IN ({$idList})
-              AND EXISTS (
-                  SELECT 1 FROM questions eq
-                  WHERE eq.exam_id = {$examId} AND eq.is_bank = 0
-                    AND NOT EXISTS (
-                        SELECT 1 FROM questions_translations bt
-                        LEFT JOIN questions_translations et
-                               ON et.question_id = eq.id AND et.language_id = bt.language_id
-                        WHERE bt.question_id = q.id
-                          AND (et.question_text IS NULL
-                               OR et.question_text COLLATE utf8mb4_bin <> bt.question_text COLLATE utf8mb4_bin)
-                    )
-              )
+              AND " . question_bank_identical_in_exam_sql($examId, 'q.id') . "
         ");
         if ($dupRes) {
             while ($r = mysqli_fetch_assoc($dupRes)) {
