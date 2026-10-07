@@ -130,7 +130,7 @@ if (!function_exists('adminGetQuestionDetails')) {
         if (!$questionId) return null;
         $langInfo = get_language_info($con);
 
-        $stmt = mysqli_prepare($con, "SELECT id, exam_id, course_id, unit_id, subject_id, question_type, question_image, order_num, score, is_active, created_by_type, created_by_id, created_at, updated_at FROM questions WHERE id = ? LIMIT 1");
+        $stmt = mysqli_prepare($con, "SELECT id, exam_id, is_bank, bank_folder_id, course_id, unit_id, subject_id, question_type, question_image, order_num, score, is_active, created_by_type, created_by_id, created_at, updated_at FROM questions WHERE id = ? LIMIT 1");
         if (!$stmt) return null;
         mysqli_stmt_bind_param($stmt, "i", $questionId);
         mysqli_stmt_execute($stmt);
@@ -257,7 +257,11 @@ if (!function_exists('adminListQuestions')) {
         $questionType = in_array(trim($_GET['question_type'] ?? ''), ['mcq', 'true_false', 'written'], true) ? trim($_GET['question_type']) : '';
         $activeFilter = isset($_GET['is_active']) && $_GET['is_active'] !== '' ? ((int)$_GET['is_active'] === 1 ? 1 : 0) : null;
 
-        $where = ["1=1"];
+        // Bank questions share this table with exam questions, so every listing has to say which
+        // kind it wants. Defaulting to exam questions keeps the existing screens showing exactly
+        // what they showed before the bank existed; `is_bank=1` is what the bank screen passes.
+        $bankOnly = isset($_GET['is_bank']) && (int)$_GET['is_bank'] === 1;
+        $where = [$bankOnly ? "q.is_bank = 1" : "q.is_bank = 0"];
         if ($examId > 0) $where[] = "q.exam_id = {$examId}";
         if ($courseId > 0) $where[] = "q.course_id = {$courseId}";
         if ($unitId > 0) $where[] = "q.unit_id = {$unitId}";
@@ -338,6 +342,26 @@ if (!function_exists('adminCreateQuestion')) {
         $unitId = isset($input['unit_id']) && $input['unit_id'] !== '' ? (int)$input['unit_id'] : null;
         $subjectId = isset($input['subject_id']) && $input['subject_id'] !== '' ? (int)$input['subject_id'] : null;
 
+        // A bank question lives in a folder and nowhere else - no exam, no unit, no course, no
+        // subject. Those NULLs are what keep it out of every student query, since all of them
+        // filter by one of the three. See migration 097.
+        $isBank = !empty($input['is_bank']);
+        $bankFolderId = null;
+        if ($isBank) {
+            $bankFolderId = isset($input['bank_folder_id']) ? (int)$input['bank_folder_id'] : 0;
+            if ($bankFolderId <= 0) {
+                return json_error('A bank question needs a folder', 422);
+            }
+            $folderRow = mysqli_fetch_assoc(mysqli_query($con, "SELECT id FROM question_bank_folders WHERE id = {$bankFolderId} LIMIT 1"));
+            if (!$folderRow) {
+                return json_error('That folder does not exist', 404);
+            }
+            $examId = null;
+            $unitId = null;
+            $courseId = 0;
+            $subjectId = null;
+        }
+
         // An exam that belongs to no course is a real exam - it is the standalone kind, open to
         // every student - and its questions belong to no course either. `questions.course_id` is
         // nullable, so this is only ever set when the exam itself has a course to inherit.
@@ -364,8 +388,9 @@ if (!function_exists('adminCreateQuestion')) {
         }
 
         // Still refused when there is no course AND no standalone exam to hang the question on -
-        // that request names nothing at all, and the question would be unreachable.
-        if ($courseId <= 0 && !$examHasNoCourse) {
+        // that request names nothing at all, and the question would be unreachable. A bank
+        // question is the one kind that legitimately names none of them: its folder is its home.
+        if (!$isBank && $courseId <= 0 && !$examHasNoCourse) {
             return json_error('Unable to resolve the course for this question', 422);
         }
 
@@ -390,15 +415,22 @@ if (!function_exists('adminCreateQuestion')) {
             }
         }
 
-        $nextOrderRes = mysqli_query($con, "SELECT COALESCE(MAX(order_num), 0) + 1 AS next_order FROM questions WHERE exam_id = {$examId}");
+        // Ordering is per-exam for an exam question and per-folder for a bank one. Written as two
+        // scopes rather than one because `exam_id = NULL` matches nothing in SQL, so a bank
+        // question would otherwise always come out as order 1.
+        $orderScope = $isBank
+            ? "is_bank = 1 AND bank_folder_id = {$bankFolderId}"
+            : "exam_id = " . (int)$examId;
+        $nextOrderRes = mysqli_query($con, "SELECT COALESCE(MAX(order_num), 0) + 1 AS next_order FROM questions WHERE {$orderScope}");
         $orderNum = $nextOrderRes ? (int)(mysqli_fetch_assoc($nextOrderRes)['next_order'] ?? 1) : 1;
 
-        $stmt = mysqli_prepare($con, "INSERT INTO questions (exam_id, course_id, unit_id, subject_id, question_type, question_image, order_num, score, is_active, created_by_type, created_by_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $isBankFlag = $isBank ? 1 : 0;
+        $stmt = mysqli_prepare($con, "INSERT INTO questions (exam_id, is_bank, bank_folder_id, course_id, unit_id, subject_id, question_type, question_image, order_num, score, is_active, created_by_type, created_by_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         if (!$stmt) {
             return json_error('Database error: ' . mysqli_error($con), 500);
         }
 
-        mysqli_stmt_bind_param($stmt, "iiiissidisi", $examId, $courseId, $unitId, $subjectId, $qType, $questionImage, $orderNum, $score, $isActive, $createdByType, $createdById);
+        mysqli_stmt_bind_param($stmt, "iiiiiissidisi", $examId, $isBankFlag, $bankFolderId, $courseId, $unitId, $subjectId, $qType, $questionImage, $orderNum, $score, $isActive, $createdByType, $createdById);
 
         if (!mysqli_stmt_execute($stmt)) {
             return json_error('Failed to create question: ' . mysqli_stmt_error($stmt), 500);
@@ -500,6 +532,16 @@ if (!function_exists('adminUpdateQuestion')) {
         $courseId = isset($input['course_id']) ? ((int)$input['course_id'] ?: null) : $existing['course_id'];
         $unitId = isset($input['unit_id']) ? ((int)$input['unit_id'] ?: null) : $existing['unit_id'];
         $subjectId = isset($input['subject_id']) ? ((int)$input['subject_id'] ?: null) : $existing['subject_id'];
+        // A bank question stays a bank question. The edit screens post the whole question back,
+        // course_id and all, so without this a single edit would quietly give a bank question an
+        // exam or a course and let it escape into a student's unit listing.
+        if (!empty($existing['is_bank'])) {
+            $examId = null;
+            $courseId = null;
+            $unitId = null;
+            $subjectId = null;
+        }
+
         $qType = trim($input['question_type'] ?? $existing['question_type']);
         $questionImage = handle_question_image_upload($input, $existing['question_image'] ?? '');
         $orderNum = isset($input['order_num']) ? (int)$input['order_num'] : $existing['order_num'];

@@ -1302,6 +1302,79 @@ $routes = [
             return adminReorderQuestions($con, $teacherData);
         },
     ],
+
+    // Question bank. `$teacherData` is passed into every one of these: it is what limits a
+    // teacher to the folders they created, on reads and on writes alike.
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/teacher/question-bank/folders",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/content/question_bank/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return questionBankListFolders($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/teacher/question-bank/folders",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/content/question_bank/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return questionBankCreateFolder($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "PUT",
+        "path" => "/brain-ixa/teacher/question-bank/folders",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/content/question_bank/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return questionBankUpdateFolder($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "DELETE",
+        "path" => "/brain-ixa/teacher/question-bank/folders",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/content/question_bank/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return questionBankDeleteFolder($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/teacher/question-bank/questions",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/content/question_bank/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return questionBankListQuestions($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/teacher/question-bank/move",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/content/question_bank/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return questionBankMoveQuestion($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/teacher/question-bank/copy-to-exam",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/content/question_bank/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return questionBankCopyToExam($con, $teacherData);
+        },
+    ],
     [
         "method" => "GET",
         "path" => "/brain-ixa/teacher/certificates",
@@ -3729,6 +3802,87 @@ $routes = [
                 $adminData = adminAuthMiddleware();
                 requirePermission($con, $adminData, 'manage_exams');
                 return adminReorderQuestions($con);
+            },
+        ],
+
+        // Question bank - a global pool of questions, filed in folders, that exams are built from.
+        // Gated on `manage_exams` like the question routes above: building the bank and building
+        // an exam are the same job.
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/question-bank/folders",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/content/question_bank/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_exams');
+                return questionBankListFolders($con);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/question-bank/folders",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/content/question_bank/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_exams');
+                return questionBankCreateFolder($con);
+            },
+        ],
+        [
+            "method" => "PUT",
+            "path" => "/brain-ixa/admin/question-bank/folders",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/content/question_bank/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_exams');
+                return questionBankUpdateFolder($con);
+            },
+        ],
+        [
+            "method" => "DELETE",
+            "path" => "/brain-ixa/admin/question-bank/folders",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/content/question_bank/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_exams');
+                return questionBankDeleteFolder($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/question-bank/questions",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/content/question_bank/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_exams');
+                return questionBankListQuestions($con);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/question-bank/move",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/content/question_bank/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_exams');
+                return questionBankMoveQuestion($con);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/question-bank/copy-to-exam",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/content/question_bank/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_exams');
+                return questionBankCopyToExam($con);
             },
         ],
 

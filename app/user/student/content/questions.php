@@ -157,7 +157,7 @@ if (!function_exists('studentSubmitQuestionAnswer')) {
         $qRes = mysqli_query($con, "
             SELECT q.id, q.course_id, q.unit_id, q.question_type, q.score, q.is_active, q.created_by_type, q.created_by_id
             FROM questions q
-            WHERE q.id = {$questionId} AND q.is_active = 1
+            WHERE q.id = {$questionId} AND q.is_active = 1 AND q.is_bank = 0
             LIMIT 1
         ");
         $qRow = $qRes ? mysqli_fetch_assoc($qRes) : null;

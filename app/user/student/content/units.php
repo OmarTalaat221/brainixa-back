@@ -425,7 +425,9 @@ if (!function_exists('studentGetUnitQuestionsOnly')) {
             }
         }
 
-        $qWhere = ["q.is_active = 1"];
+        // `is_bank = 0` because this filters by course_id alone when no unit is named, and a
+        // course's bank questions would otherwise be served to the student as unit questions.
+        $qWhere = ["q.is_active = 1", "q.is_bank = 0"];
         if ($unitId > 0) {
             $qWhere[] = "q.unit_id = {$unitId}";
         }
