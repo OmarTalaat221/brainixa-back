@@ -90,9 +90,13 @@ if (!function_exists('questionBankListFolders')) {
                    COALESCE(q.total, 0) AS questions_count
             FROM question_bank_folders f
             LEFT JOIN (
+                -- Every question in the folder, inactive ones included. The badge has to
+                -- agree with what opening the folder shows, and that listing is unfiltered
+                -- until someone picks a status - a folder reading 80 that then lists 85 rows
+                -- just looks broken.
                 SELECT bank_folder_id, COUNT(*) AS total
                 FROM questions
-                WHERE is_bank = 1 AND is_active = 1
+                WHERE is_bank = 1
                 GROUP BY bank_folder_id
             ) q ON q.bank_folder_id = f.id
             WHERE {$whereSql}
