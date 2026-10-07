@@ -1262,6 +1262,19 @@ $routes = [
             return adminListQuestions($con);
         },
     ],
+    // One question with everything on it - options, model answer, both translations. The teacher
+    // exam screens never needed this because their listings carry full details already; the
+    // question bank does, because its listing is deliberately lean and loads none of that.
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/teacher/questions/show",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/teacher/content/manage.php";
+            teacherAuthMiddleware();
+            return adminGetQuestion($con);
+        },
+    ],
     [
         "method" => "POST",
         "path" => "/brain-ixa/teacher/questions",

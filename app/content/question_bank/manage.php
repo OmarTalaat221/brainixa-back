@@ -260,18 +260,24 @@ if (!function_exists('questionBankListQuestions')) {
         "));
         $total = (int)($countRow['total'] ?? 0);
 
+        // The text is read through subqueries rather than a second LEFT JOIN plus GROUP BY: a
+        // question has one translation row per language, so joining them would multiply the rows
+        // and the GROUP BY that hid it would then depend on ONLY_FULL_GROUP_BY being off. This
+        // way each question is one row no matter how many languages it was written in, and the
+        // fallback to any other language is explicit.
         $res = mysqli_query($con, "
             SELECT q.id, q.question_type, q.score, q.is_active, q.order_num, q.question_image,
                    q.bank_folder_id, f.name AS folder_name,
-                   COALESCE(qt.question_text, qt_any.question_text, '') AS question_text
+                   COALESCE(
+                       (SELECT qt.question_text FROM questions_translations qt
+                         WHERE qt.question_id = q.id AND qt.language_id = {$langId} LIMIT 1),
+                       (SELECT qt2.question_text FROM questions_translations qt2
+                         WHERE qt2.question_id = q.id LIMIT 1),
+                       ''
+                   ) AS question_text
             FROM questions q
             JOIN question_bank_folders f ON f.id = q.bank_folder_id
-            LEFT JOIN questions_translations qt
-                   ON qt.question_id = q.id AND qt.language_id = {$langId}
-            LEFT JOIN questions_translations qt_any
-                   ON qt_any.question_id = q.id
             WHERE {$whereSql}
-            GROUP BY q.id
             ORDER BY q.order_num ASC, q.id ASC
             LIMIT {$limit} OFFSET {$offset}
         ");
