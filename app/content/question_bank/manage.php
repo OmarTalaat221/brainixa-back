@@ -239,6 +239,10 @@ if (!function_exists('questionBankListQuestions')) {
         $offset = ($page - 1) * $limit;
 
         $folderId = isset($_GET['folder_id']) ? (int)$_GET['folder_id'] : (int)($_GET['bank_folder_id'] ?? 0);
+        // When the caller names an exam, every row says whether that exam already holds an
+        // identical question, so the picker can show it as taken instead of letting someone add
+        // the same question twice.
+        $examId = isset($_GET['exam_id']) ? (int)$_GET['exam_id'] : 0;
         $search = trim($_GET['search'] ?? $_GET['q'] ?? '');
         $questionType = in_array(trim($_GET['question_type'] ?? ''), ['mcq', 'true_false', 'written'], true) ? trim($_GET['question_type']) : '';
 
@@ -269,9 +273,33 @@ if (!function_exists('questionBankListQuestions')) {
         // and the GROUP BY that hid it would then depend on ONLY_FULL_GROUP_BY being off. This
         // way each question is one row no matter how many languages it was written in, and the
         // fallback to any other language is explicit.
+        // "Already in the exam" means character-for-character identical, in every language the
+        // question is written in. COLLATE utf8mb4_bin is what makes that literal: the column's own
+        // utf8mb4_unicode_ci would treat strings differing by a diacritic or a kashida as equal,
+        // and the rule here is that one changed letter makes it a different question.
+        //
+        // The NOT EXISTS clause is the "in every language" half: a bank question counts as taken
+        // only when the exam's copy has no translation that differs from it.
+        $alreadySql = '0';
+        if ($examId > 0) {
+            $alreadySql = "EXISTS (
+                SELECT 1 FROM questions eq
+                WHERE eq.exam_id = {$examId} AND eq.is_bank = 0
+                  AND NOT EXISTS (
+                      SELECT 1 FROM questions_translations bt
+                      LEFT JOIN questions_translations et
+                             ON et.question_id = eq.id AND et.language_id = bt.language_id
+                      WHERE bt.question_id = q.id
+                        AND (et.question_text IS NULL
+                             OR et.question_text COLLATE utf8mb4_bin <> bt.question_text COLLATE utf8mb4_bin)
+                  )
+            )";
+        }
+
         $res = mysqli_query($con, "
             SELECT q.id, q.question_type, q.score, q.is_active, q.order_num, q.question_image,
                    q.bank_folder_id, f.name AS folder_name,
+                   {$alreadySql} AS already_in_exam,
                    COALESCE(
                        (SELECT qt.question_text FROM questions_translations qt
                          WHERE qt.question_id = q.id AND qt.language_id = {$langId} LIMIT 1),
@@ -299,6 +327,7 @@ if (!function_exists('questionBankListQuestions')) {
                     'order_num' => (int)$r['order_num'],
                     'bank_folder_id' => (int)$r['bank_folder_id'],
                     'folder_name' => $r['folder_name'],
+                    'already_in_exam' => (int)$r['already_in_exam'] === 1,
                 ]);
             }
         }
@@ -523,9 +552,42 @@ if (!function_exists('questionBankCopyToExam')) {
             }
         }
 
+        // Questions this exam already holds, character for character, in every language. Skipped
+        // rather than copied: the picker greys these out, but the bank screen's own "add to exam"
+        // chooses the exam after the questions and cannot, so the rule is enforced here instead of
+        // relying on the UI to prevent it.
+        $duplicate = [];
+        $dupRes = mysqli_query($con, "
+            SELECT q.id
+            FROM questions q
+            WHERE q.is_bank = 1 AND q.id IN ({$idList})
+              AND EXISTS (
+                  SELECT 1 FROM questions eq
+                  WHERE eq.exam_id = {$examId} AND eq.is_bank = 0
+                    AND NOT EXISTS (
+                        SELECT 1 FROM questions_translations bt
+                        LEFT JOIN questions_translations et
+                               ON et.question_id = eq.id AND et.language_id = bt.language_id
+                        WHERE bt.question_id = q.id
+                          AND (et.question_text IS NULL
+                               OR et.question_text COLLATE utf8mb4_bin <> bt.question_text COLLATE utf8mb4_bin)
+                    )
+              )
+        ");
+        if ($dupRes) {
+            while ($r = mysqli_fetch_assoc($dupRes)) {
+                $duplicate[(int)$r['id']] = true;
+            }
+        }
+
         $copied = [];
         $skipped = [];
+        $skippedDuplicates = [];
         foreach ($ids as $bankId) {
+            if (!empty($duplicate[$bankId])) {
+                $skippedDuplicates[] = $bankId;
+                continue;
+            }
             if (empty($allowed[$bankId])) {
                 $skipped[] = $bankId;
                 continue;
@@ -540,14 +602,46 @@ if (!function_exists('questionBankCopyToExam')) {
             }
         }
 
+        $dupCount = count($skippedDuplicates);
+
         if (!$copied) {
+            // Nothing was added because everything asked for was already there - that is not a
+            // failure, and saying "no question could be added" would read as one.
+            if ($dupCount && !$skipped) {
+                return [
+                    'status' => 'success',
+                    'message' => app_text(
+                        $con,
+                        'كل الأسئلة دي موجودة في الامتحان بالفعل.',
+                        'Those questions are already in this exam.'
+                    ),
+                    'data' => ['copied_question_ids' => [], 'skipped_duplicate_ids' => $skippedDuplicates],
+                ];
+            }
             return json_error(app_text($con, 'مفيش أي سؤال اتضاف.', 'No question could be added.'), 422);
+        }
+
+        $message = app_text(
+            $con,
+            'تم إضافة ' . count($copied) . ' سؤال للامتحان.',
+            'Added ' . count($copied) . ' question(s) to the exam.'
+        );
+        if ($dupCount) {
+            $message .= ' ' . app_text(
+                $con,
+                'و' . $dupCount . ' سؤال كان موجود قبل كده فاتساب زي ما هو.',
+                $dupCount . ' already in the exam were left alone.'
+            );
         }
 
         return [
             'status' => 'success',
-            'message' => app_text($con, 'تم إضافة ' . count($copied) . ' سؤال للامتحان.', 'Added ' . count($copied) . ' question(s) to the exam.'),
-            'data' => ['copied_question_ids' => $copied, 'skipped_question_ids' => $skipped],
+            'message' => $message,
+            'data' => [
+                'copied_question_ids' => $copied,
+                'skipped_question_ids' => $skipped,
+                'skipped_duplicate_ids' => $skippedDuplicates,
+            ],
         ];
     }
 }
