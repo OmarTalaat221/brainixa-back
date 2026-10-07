@@ -277,7 +277,14 @@ if (!function_exists('login_attempt_clear_all')) {
  */
 if (!function_exists('getPublicAppConfig')) {
     function getPublicAppConfig($con) {
+        // Required here rather than at the top of the file: pricing.php requires this file back,
+        // and a top-level require would be circular. Without it this route - which includes only
+        // app_settings.php - never had pricing_base_currency() defined, so the guard below fell to
+        // its 'USD' default and reported dollars no matter what the setting said.
+        require_once __DIR__ . '/pricing.php';
+
         $s = app_settings($con);
+        $baseCurrency = pricing_base_currency($con);
 
         return [
             'status' => 'success',
@@ -298,7 +305,10 @@ if (!function_exists('getPublicAppConfig')) {
                 // The currency a price with no country entry is quoted in. The student app reads
                 // this once at boot so it can label a cached price it was handed before the
                 // pricing context came back.
-                'base_currency' => function_exists('pricing_base_currency') ? pricing_base_currency($con) : 'USD',
+                'base_currency' => $baseCurrency,
+                // The symbol and decimal places beside the code, so a client can print "1500 ج.م"
+                // rather than falling back to the bare code next to every base-currency figure.
+                'base_currency_info' => currency_info($con, $baseCurrency),
                 'country_pricing_enabled' => app_setting_flag($con, 'country_pricing_enabled', true),
                 // Already in the language of the request, so a client shows it as-is.
                 'registration_disabled_message' => app_setting_message(

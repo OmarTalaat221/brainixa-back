@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/entities.php';
 require_once __DIR__ . '/../../../helpers/upload.php';
+require_once __DIR__ . '/../../../helpers/pricing.php';
 
 if (!function_exists('dashboard_fetch_row')) {
     function dashboard_fetch_row($con, string $sql): array {
@@ -111,7 +112,7 @@ if (!function_exists('dashboard_revenue_sources')) {
 if (!function_exists('dashboard_sales_summary')) {
     function dashboard_sales_summary($con): array {
         $summary = [
-            'currency' => 'USD',
+            'currency' => pricing_base_currency($con),
             'total' => 0.0,
             'today' => 0.0,
             'this_month' => 0.0,
@@ -379,6 +380,7 @@ if (!function_exists('dashboard_recent_activity')) {
     function dashboard_recent_activity($con, int $limit = 15): array {
         $perSource = max(5, min($limit, 20));
         $items = [];
+        $baseCurrency = pricing_base_currency($con);
 
         $push = function (array $rows, string $type, callable $mapper) use (&$items) {
             foreach ($rows as $row) {
@@ -439,9 +441,9 @@ if (!function_exists('dashboard_recent_activity')) {
             WHERE pt.status = 'paid'
             ORDER BY COALESCE(pt.paid_at, pt.created_at) DESC, pt.id DESC
             LIMIT {$perSource}
-        "), 'payment', function ($r) {
+        "), 'payment', function ($r) use ($baseCurrency) {
             $isBook = ($r['item_type'] ?? '') === 'book';
-            $money = (float)$r['amount'] . ' ' . ($r['currency'] ?? 'USD');
+            $money = (float)$r['amount'] . ' ' . ($r['currency'] ?? $baseCurrency);
             $who = $r['student_name'] ?? '';
             return [
                 'title_ar' => $isBook ? 'عملية شراء كتاب جديدة' : 'عملية شراء كورس جديدة',
