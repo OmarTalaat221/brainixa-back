@@ -6,6 +6,8 @@ require_once __DIR__ . '/../../../../helpers/admin_notifications.php';
 require_once __DIR__ . '/../../../../helpers/payments_grant.php';
 // app_text() lives here and is used below for the bilingual refusal messages.
 require_once __DIR__ . '/../../../../helpers/app_settings.php';
+// pricing_for_item() - the per-country price the student was actually shown.
+require_once __DIR__ . '/../../../../helpers/pricing.php';
 
 
 if (!function_exists('studentInitiatePayment')) {
@@ -70,16 +72,27 @@ if (!function_exists('studentInitiatePayment')) {
         $config = easykash_config();
         $redirectUrl = trim($body['redirect_url'] ?? '') ?: $config['default_redirect_url'];
 
+        // The amount and the currency both come from the pricing engine, exactly as the offline
+        // path takes them. Charging `$item['price']` in the configured currency - which is what
+        // this used to do - ignores the per-country price table: a student shown "150 SAR" on the
+        // course page would have been charged the base figure, in pounds.
+        $priced = pricing_for_item($con, $itemType, $itemId, (float)$item['price'], $stId);
+        $amount = (float)$priced['price'];
+        $currency = (string)$priced['currency']['code'];
+
+        if ($amount <= 0) {
+            return ['status' => 'error', 'message' => trans('item_is_free')];
+        }
+
         $insStmt = mysqli_prepare($con, "INSERT INTO payment_transactions (student_id, item_type, item_id, amount, currency, status) VALUES (?, ?, ?, ?, ?, 'pending')");
-        $currency = $config['currency'];
-        mysqli_stmt_bind_param($insStmt, "isids", $stId, $itemType, $itemId, $item['price'], $currency);
+        mysqli_stmt_bind_param($insStmt, "isids", $stId, $itemType, $itemId, $amount, $currency);
         if (!mysqli_stmt_execute($insStmt)) {
             return ['status' => 'error', 'message' => 'Failed to create payment transaction: ' . mysqli_error($con)];
         }
         $transactionId = mysqli_insert_id($con);
 
         $result = easykash_create_payment([
-            'amount' => $item['price'],
+            'amount' => $amount,
             'currency' => $currency,
             'name' => $student['name'],
             'email' => $student['email'],
@@ -98,8 +111,9 @@ if (!function_exists('studentInitiatePayment')) {
             'message' => trans('payment_initiated'),
             'data' => [
                 'transaction_id' => $transactionId,
-                'amount' => $item['price'],
+                'amount' => $amount,
                 'currency' => $currency,
+                'amount_formatted' => $priced['price_formatted'] ?? null,
                 'payment_url' => $result['redirectUrl'],
             ],
         ];
