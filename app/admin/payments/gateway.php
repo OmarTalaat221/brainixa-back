@@ -21,16 +21,28 @@ require_once __DIR__ . '/../../../helpers/pricing.php';
 require_once __DIR__ . '/../../user/student/payments/manage.php';
 
 if (!function_exists('gateway_payment_base_query')) {
-    function gateway_payment_base_query(): string {
+    /**
+     * Course and book names live in translation tables, not on the rows themselves - `courses` has
+     * a slug and `course_books` has nothing readable at all. Both are joined for the request's
+     * language, falling back the way helpers/sales.php does: a course to its slug, a book to its
+     * id, so a missing translation shows something rather than an empty cell.
+     */
+    function gateway_payment_base_query($con): string {
+        $langInfo = get_language_info($con);
+        $langId = (int)($langInfo['id'] ?? 1);
+
         return "SELECT t.id, t.student_id, t.item_type, t.item_id, t.amount, t.currency, t.status,
                        t.easykash_ref, t.gateway_reference, t.payment_method, t.granted_ref_id,
                        t.created_at, t.paid_at,
                        s.name AS student_name, s.email AS student_email, s.phone AS student_phone,
-                       c.name AS course_name, b.title AS book_title
+                       COALESCE(ct.name, c.slug) AS course_name,
+                       cbt.title AS book_title
                 FROM payment_transactions t
                 LEFT JOIN students s ON s.id = t.student_id
                 LEFT JOIN courses c ON c.id = t.item_id AND t.item_type = 'course'
-                LEFT JOIN course_books b ON b.id = t.item_id AND t.item_type = 'book'";
+                LEFT JOIN courses_translations ct ON ct.course_id = c.id AND ct.language_id = {$langId}
+                LEFT JOIN course_books cb ON cb.id = t.item_id AND t.item_type = 'book'
+                LEFT JOIN course_books_translations cbt ON cbt.book_id = cb.id AND cbt.language_id = {$langId}";
     }
 }
 
@@ -109,7 +121,7 @@ if (!function_exists('gateway_payment_statistics')) {
 
 if (!function_exists('gateway_find_transaction')) {
     function gateway_find_transaction($con, int $id): ?array {
-        $stmt = mysqli_prepare($con, gateway_payment_base_query() . " WHERE t.id = ? LIMIT 1");
+        $stmt = mysqli_prepare($con, gateway_payment_base_query($con) . " WHERE t.id = ? LIMIT 1");
         if (!$stmt) return null;
         mysqli_stmt_bind_param($stmt, "i", $id);
         mysqli_stmt_execute($stmt);
@@ -172,7 +184,7 @@ if (!function_exists('adminListGatewayPayments')) {
             $total = (int)(mysqli_fetch_assoc(mysqli_stmt_get_result($countStmt))['total'] ?? 0);
         }
 
-        $stmt = mysqli_prepare($con, gateway_payment_base_query() . $where . " ORDER BY t.id DESC LIMIT {$limit} OFFSET {$offset}");
+        $stmt = mysqli_prepare($con, gateway_payment_base_query($con) . $where . " ORDER BY t.id DESC LIMIT {$limit} OFFSET {$offset}");
         if (!$stmt) return ['status' => 'error', 'message' => 'Database error: ' . mysqli_error($con)];
         if ($types) mysqli_stmt_bind_param($stmt, $types, ...$params);
         mysqli_stmt_execute($stmt);
