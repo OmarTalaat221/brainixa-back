@@ -4066,6 +4066,43 @@ $routes = [
                 return adminReviewOfflinePayment($con, $adminData);
             },
         ],
+        // Gateway (EasyKash) transactions. There was no admin view of these at all, which made a
+        // refund impossible to act on: the EasyKash account belongs to the client, so the
+        // platform cannot rely on being told when money goes back. `recheck` asks the gateway
+        // itself; `revoke` is the manual last resort.
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/gateway-payments",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/payments/gateway.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_payments');
+                return adminListGatewayPayments($con);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/gateway-payments/recheck",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/payments/gateway.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_payments');
+                return adminRecheckGatewayPayment($con);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/gateway-payments/revoke",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/payments/gateway.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_payments');
+                return adminRevokeGatewayPayment($con, $adminData);
+            },
+        ],
         [
             "method" => "GET",
             "path" => "/brain-ixa/admin/payment-accounts",
