@@ -164,9 +164,27 @@ if (!function_exists('easykash_inquire_payment')) {
         $decoded = json_decode($response, true);
 
         if ($httpCode < 200 || $httpCode >= 300 || !is_array($decoded)) {
+            $reason = easykash_describe_rejection($decoded, $response);
+
+            // "Error your payment is not attempted yet!" (HTTP 400) is not a failure to inquire -
+            // it is the answer. The payment link exists and nobody has paid it. Reporting that as
+            // an unreachable gateway was both wrong and alarming: it told an admin to retry and
+            // told a student their payment could not be confirmed, when the truthful answer is
+            // simply that no payment has been made yet.
+            if (stripos($reason, 'not attempted') !== false) {
+                return [
+                    'status' => 'error',
+                    'error_code' => 'not_attempted',
+                    'message' => 'No payment has been attempted for this transaction yet',
+                    'reason' => $reason,
+                    'http_code' => $httpCode,
+                ];
+            }
+
             return [
                 'status' => 'error',
                 'message' => 'EasyKash rejected the inquiry',
+                'reason' => $reason,
                 'http_code' => $httpCode,
                 'response' => $decoded ?: $response,
             ];

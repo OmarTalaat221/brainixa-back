@@ -245,10 +245,30 @@ if (!function_exists('adminRecheckGatewayPayment')) {
         easykash_log('Admin recheck of transaction ' . $transactionId . ' (ref ' . $reference . '): ' . json_encode($inquiry, JSON_UNESCAPED_UNICODE));
 
         if ($inquiry['status'] !== 'success') {
+            // Distinguish "the gateway answered, and the answer is that nobody paid" from "the
+            // gateway could not be reached". Both used to read as an outage, which sent an admin
+            // chasing a problem that did not exist.
+            if (($inquiry['error_code'] ?? '') === 'not_attempted') {
+                return [
+                    'status' => 'success',
+                    'message' => app_text(
+                        $con,
+                        'لسه مفيش محاولة دفع على العملية دي.',
+                        'No payment has been attempted for this transaction yet.'
+                    ),
+                    'data' => [
+                        'transaction_id' => $transactionId,
+                        'local_status' => $tx['status'],
+                        'gateway_status' => 'NOT_ATTEMPTED',
+                        'changed' => false,
+                    ],
+                ];
+            }
+
             return [
                 'status' => 'error',
                 'message' => 'Could not reach EasyKash to check this transaction',
-                'gateway_reason' => $inquiry['message'] ?? null,
+                'gateway_reason' => $inquiry['reason'] ?? $inquiry['message'] ?? null,
             ];
         }
 

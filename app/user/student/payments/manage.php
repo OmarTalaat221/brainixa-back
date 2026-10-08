@@ -427,6 +427,17 @@ if (!function_exists('studentConfirmPayment')) {
         easykash_log('Inquiry for transaction ' . $transactionId . ' (ref ' . $inquiryRef . '): ' . json_encode($inquiry, JSON_UNESCAPED_UNICODE));
 
         if ($inquiry['status'] !== 'success') {
+            // A student who opened the gateway and came back without paying gets this answer.
+            // It is not an error on their part or ours, and telling them their payment "could not
+            // be confirmed" would suggest money might have moved when none did.
+            if (($inquiry['error_code'] ?? '') === 'not_attempted') {
+                return [
+                    'status' => 'success',
+                    'message' => trans('payment_still_pending') ?: 'Payment is still pending.',
+                    'data' => ['transaction_id' => $transactionId, 'payment_status' => 'pending'],
+                ];
+            }
+
             // The gateway being unreachable is not a failed payment. The transaction is left
             // pending so the callback - or a later retry - can still settle it.
             return [
