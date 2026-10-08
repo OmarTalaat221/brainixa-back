@@ -10,6 +10,65 @@ require_once __DIR__ . '/../../../../helpers/app_settings.php';
 require_once __DIR__ . '/../../../../helpers/pricing.php';
 
 
+if (!function_exists('payments_new_gateway_reference')) {
+    /**
+     * A customerReference that EasyKash has certainly never seen.
+     *
+     * Shaped `BX<transaction id>-<8 random hex>` so a reference found in the gateway's dashboard
+     * still points at the local row, while the random tail survives a database rebuild and a
+     * second site sharing the merchant account. The UNIQUE index added in migration 098 is the
+     * real guarantee; the retry here only keeps an astronomically unlikely clash from surfacing
+     * as an error the student would see.
+     */
+    function payments_new_gateway_reference($con, int $transactionId): string {
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $candidate = 'BX' . $transactionId . '-' . bin2hex(random_bytes(4));
+
+            $stmt = mysqli_prepare($con, "SELECT id FROM payment_transactions WHERE gateway_reference = ? LIMIT 1");
+            mysqli_stmt_bind_param($stmt, "s", $candidate);
+            mysqli_stmt_execute($stmt);
+            $taken = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+
+            if (!$taken) {
+                return $candidate;
+            }
+        }
+
+        // Five collisions on 4 random bytes is not a thing that happens; falling back to the
+        // clock rather than returning something known-duplicate.
+        return 'BX' . $transactionId . '-' . bin2hex(random_bytes(4)) . dechex(time());
+    }
+}
+
+if (!function_exists('payments_resolve_transaction_by_reference')) {
+    /**
+     * Finds the transaction a gateway reference belongs to.
+     *
+     * Two forms are accepted on purpose: the `BX<id>-<hex>` reference sent since migration 098,
+     * and a bare integer id, which is what transactions created before it carry. Dropping the
+     * second would strand any payment that was already in flight at deploy time.
+     */
+    function payments_resolve_transaction_by_reference($con, string $reference): int {
+        $reference = trim($reference);
+        if ($reference === '') {
+            return 0;
+        }
+
+        $stmt = mysqli_prepare($con, "SELECT id FROM payment_transactions WHERE gateway_reference = ? LIMIT 1");
+        mysqli_stmt_bind_param($stmt, "s", $reference);
+        mysqli_stmt_execute($stmt);
+        $row = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+
+        if ($row) {
+            return (int)$row['id'];
+        }
+
+        // Legacy: the reference WAS the id. Only honoured when the whole string is a number, so
+        // "BX8-a1b2c3d4" can never be read as transaction 8 by a sloppy integer cast.
+        return ctype_digit($reference) ? (int)$reference : 0;
+    }
+}
+
 if (!function_exists('studentInitiatePayment')) {
     function studentInitiatePayment($con, $studentData = null) {
         $stId = 0;
@@ -91,6 +150,17 @@ if (!function_exists('studentInitiatePayment')) {
         }
         $transactionId = mysqli_insert_id($con);
 
+        // EasyKash burns a customerReference permanently, and does so per MERCHANT ACCOUNT. The
+        // row id was being sent, which collides three ways: Brainixa and Najeh share the account,
+        // a rebuilt database restarts the counter onto references already spent, and a failed
+        // attempt still consumes its own. The random tail makes the reference unique for all
+        // time; the row id stays the local key and is still readable inside it.
+        $gatewayRef = payments_new_gateway_reference($con, $transactionId);
+
+        $refStmt = mysqli_prepare($con, "UPDATE payment_transactions SET gateway_reference = ? WHERE id = ?");
+        mysqli_stmt_bind_param($refStmt, "si", $gatewayRef, $transactionId);
+        mysqli_stmt_execute($refStmt);
+
         $result = easykash_create_payment([
             'amount' => $amount,
             'currency' => $currency,
@@ -98,7 +168,7 @@ if (!function_exists('studentInitiatePayment')) {
             'email' => $student['email'],
             'mobile' => $student['phone'] ?? '',
             'redirectUrl' => $redirectUrl,
-            'customerReference' => $transactionId,
+            'customerReference' => $gatewayRef,
         ]);
 
         if ($result['status'] !== 'success') {
@@ -134,7 +204,14 @@ if (!function_exists('studentInitiatePayment')) {
 if (!function_exists('payments_process_easykash_result')) {
     function payments_process_easykash_result($con, array $data, int $requireStudentId = 0, bool $requireSignature = true): array {
         $rawCallback = json_encode($data, JSON_UNESCAPED_UNICODE);
-        $transactionId = (int)easykash_ci_get($data, 'customerReference');
+
+        // `(int)` on the reference used to be enough, when the reference was the row id. It now
+        // arrives as "BX8-a1b2c3d4", which an integer cast would silently read as 8 - a real
+        // transaction belonging to someone else. Resolved through the lookup instead.
+        $transactionId = payments_resolve_transaction_by_reference(
+            $con,
+            easykash_ci_get($data, 'customerReference')
+        );
 
         if ($requireSignature && !easykash_verify_callback_signature($data)) {
             if ($transactionId > 0) {
@@ -254,7 +331,10 @@ if (!function_exists('studentConfirmPayment')) {
         // pending transaction>, status: "PAID"} and be granted the course without paying. The only
         // thing taken from the request now is WHICH transaction to ask about; the answer comes from
         // EasyKash itself, over a connection we open and authenticate with our own API key.
-        $transactionId = (int)easykash_ci_get($data, 'customerReference');
+        $transactionId = payments_resolve_transaction_by_reference(
+            $con,
+            easykash_ci_get($data, 'customerReference')
+        );
         if ($transactionId <= 0) {
             $transactionId = (int)($data['transaction_id'] ?? 0);
         }
@@ -264,7 +344,7 @@ if (!function_exists('studentConfirmPayment')) {
 
         // Ownership is checked before we ask EasyKash anything, so this cannot be used to probe
         // other students' transactions.
-        $ownStmt = mysqli_prepare($con, "SELECT id, status FROM payment_transactions WHERE id = ? AND student_id = ? LIMIT 1");
+        $ownStmt = mysqli_prepare($con, "SELECT id, status, gateway_reference FROM payment_transactions WHERE id = ? AND student_id = ? LIMIT 1");
         mysqli_stmt_bind_param($ownStmt, "ii", $transactionId, $stId);
         mysqli_stmt_execute($ownStmt);
         $own = mysqli_fetch_assoc(mysqli_stmt_get_result($ownStmt));
@@ -280,8 +360,16 @@ if (!function_exists('studentConfirmPayment')) {
             ];
         }
 
-        $inquiry = easykash_inquire_payment($transactionId);
-        easykash_log('Inquiry for transaction ' . $transactionId . ': ' . json_encode($inquiry, JSON_UNESCAPED_UNICODE));
+        // Ask about the reference that was actually sent. EasyKash knows nothing about our row
+        // ids, so querying by id would miss every transaction created since migration 098 - and
+        // worse, could match a DIFFERENT merchant's old reference that happens to be that number.
+        $inquiryRef = (string)($own['gateway_reference'] ?? '');
+        if ($inquiryRef === '') {
+            $inquiryRef = (string)$transactionId;
+        }
+
+        $inquiry = easykash_inquire_payment($inquiryRef);
+        easykash_log('Inquiry for transaction ' . $transactionId . ' (ref ' . $inquiryRef . '): ' . json_encode($inquiry, JSON_UNESCAPED_UNICODE));
 
         if ($inquiry['status'] !== 'success') {
             // The gateway being unreachable is not a failed payment. The transaction is left
@@ -308,7 +396,7 @@ if (!function_exists('studentConfirmPayment')) {
         // The processor expects callback-shaped input, so the inquiry answer is handed over under
         // the same field names. Signature checking stays off here on purpose and is safe now: this
         // data came from EasyKash, not from the caller.
-        $remote['customerReference'] = $transactionId;
+        $remote['customerReference'] = $inquiryRef;
 
         return payments_process_easykash_result($con, $remote, $stId, false);
     }

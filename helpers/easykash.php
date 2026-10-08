@@ -58,7 +58,10 @@ if (!function_exists('easykash_create_payment')) {
             'email' => $params['email'],
             'mobile' => $params['mobile'],
             'redirectUrl' => $params['redirectUrl'],
-            'customerReference' => (int)$params['customerReference'],
+            // A string, not an int. References carry a random tail now (see migration 098), and
+            // casting one to an integer turned "BX8-a1b2c3d4" into 8 - a reference the gateway
+            // had already consumed, which is the collision this all exists to avoid.
+            'customerReference' => (string)$params['customerReference'],
         ];
 
         $ch = curl_init();
@@ -98,7 +101,7 @@ if (!function_exists('easykash_create_payment')) {
 
             easykash_log(
                 'Pay request rejected: http=' . $httpCode .
-                ' customerReference=' . (int)$params['customerReference'] .
+                ' customerReference=' . (string)$params['customerReference'] .
                 ' amount=' . (float)$params['amount'] .
                 ' currency=' . ($payload['currency'] ?? '') .
                 ' reason=' . $reason
