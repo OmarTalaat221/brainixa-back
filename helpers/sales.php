@@ -83,6 +83,31 @@ if (!function_exists('sales_aggregate_courses')) {
             $add((int)$row['course_id'], (int)$row['sales_count'], (float)$row['revenue']);
         }
 
+        // Sales entered by hand - WhatsApp, cash, a transfer confirmed without an offline request.
+        // One subscription can cover several courses, so its price is split between them exactly
+        // as a subscription code's price is above; otherwise a two-course sale would report its
+        // full value against each course and double the revenue of both.
+        //
+        // `ss.price > 0` is also what keeps this from double-counting: payments_grant_access()
+        // leaves the column NULL, so gateway and approved-offline grants stay with their own
+        // sources above.
+        $manualDate = sales_date_filter('ss.created_at', $dateFrom, $dateTo);
+        foreach (dashboard_fetch_all($con, "
+            SELECT ssc.course_id AS course_id, COUNT(*) AS sales_count,
+                   SUM(ss.price / GREATEST(cc.course_count, 1)) AS revenue
+            FROM student_subscriptions ss
+            JOIN student_subscription_courses ssc ON ssc.student_subscription_id = ss.id
+            JOIN (
+                SELECT student_subscription_id, COUNT(*) AS course_count
+                FROM student_subscription_courses
+                GROUP BY student_subscription_id
+            ) cc ON cc.student_subscription_id = ss.id
+            WHERE ss.price > 0 {$manualDate}
+            GROUP BY ssc.course_id
+        ") as $row) {
+            $add((int)$row['course_id'], (int)$row['sales_count'], (float)$row['revenue']);
+        }
+
         $offlineDate = sales_date_filter('COALESCE(opr.reviewed_at, opr.created_at)', $dateFrom, $dateTo);
         foreach (dashboard_fetch_all($con, "
             SELECT opr.item_id AS course_id, COUNT(*) AS sales_count, SUM(opr.amount) AS revenue

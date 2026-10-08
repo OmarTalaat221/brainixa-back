@@ -98,6 +98,21 @@ if (!function_exists('dashboard_revenue_sources')) {
                 'amount' => "opr.amount",
                 'date' => "COALESCE(opr.reviewed_at, opr.created_at)",
             ],
+            // A sale agreed over WhatsApp, in cash, or by a transfer the admin confirmed without
+            // filing an offline request, entered by hand as a subscription. Before migration 099
+            // there was no price column here at all, so this money was invisible to every figure
+            // on the platform - the single largest hole in the revenue picture.
+            //
+            // It cannot double-count: payments_grant_access() leaves `price` NULL on the rows it
+            // creates, so gateway payments and approved offline requests are counted only at
+            // their own sources above, exactly as the book path already works.
+            'manual_subscriptions' => [
+                'label_ar' => 'بيع يدوي (واتساب/كاش)',
+                'from' => "student_subscriptions ss",
+                'where' => "ss.price > 0",
+                'amount' => "ss.price",
+                'date' => "ss.created_at",
+            ],
             'legacy_transactions' => [
                 'label_ar' => 'معاملات قديمة',
                 'from' => "transactions tr",

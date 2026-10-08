@@ -868,11 +868,31 @@ if (!function_exists('adminCreateStudentSubscription')) {
             }
         }
 
-        $stmt = mysqli_prepare($con, "INSERT INTO student_subscriptions (student_id, subscription_type, start_date, end_date, is_active) VALUES (?, ?, ?, ?, 1)");
+        // What was collected for this sale, if anything. A subscription agreed over WhatsApp and
+        // entered here used to record no price at all, so the money existed in the real world and
+        // nowhere in the platform's figures. NULL - not 0 - when none was given, so "a free grant"
+        // and "nobody wrote the amount down" stay distinguishable, and so that revenue queries
+        // filtering on `price > 0` skip it.
+        $salePrice = isset($body['price']) && $body['price'] !== '' && (float)$body['price'] > 0
+            ? (float)$body['price']
+            : null;
+
+        $saleCurrency = null;
+        $saleChannel = null;
+        if ($salePrice !== null) {
+            $saleCurrency = strtoupper(trim((string)($body['currency'] ?? ''))) ?: pricing_base_currency($con);
+
+            $channel = strtolower(trim((string)($body['sale_channel'] ?? '')));
+            $saleChannel = in_array($channel, ['whatsapp', 'cash', 'bank_transfer', 'other'], true)
+                ? $channel
+                : 'other';
+        }
+
+        $stmt = mysqli_prepare($con, "INSERT INTO student_subscriptions (student_id, subscription_type, start_date, end_date, price, currency, sale_channel, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, 1)");
         if (!$stmt) {
             return ['status' => 'error', 'message' => 'Failed to prepare subscription insert: ' . mysqli_error($con)];
         }
-        mysqli_stmt_bind_param($stmt, "isss", $studentId, $subType, $startDate, $endDate);
+        mysqli_stmt_bind_param($stmt, "isssdss", $studentId, $subType, $startDate, $endDate, $salePrice, $saleCurrency, $saleChannel);
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => 'Failed to create student subscription: ' . mysqli_error($con)];
         }
