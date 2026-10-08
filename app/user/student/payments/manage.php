@@ -103,7 +103,18 @@ if (!function_exists('studentInitiatePayment')) {
 
         if ($result['status'] !== 'success') {
             mysqli_query($con, "UPDATE payment_transactions SET status = 'failed' WHERE id = {$transactionId}");
-            return ['status' => 'error', 'message' => 'Failed to initiate payment with EasyKash', 'details' => $result['message'] ?? null];
+
+            // `details` used to carry only our own generic sentence, so the gateway's actual
+            // complaint - which it does state, field by field - never reached anyone. The
+            // specific reason goes out alongside it; the full response stays in the log.
+            return [
+                'status' => 'error',
+                'message' => 'Failed to initiate payment with EasyKash',
+                'details' => $result['message'] ?? null,
+                'gateway_reason' => $result['reason'] ?? ($result['error'] ?? null),
+                'gateway_http_code' => $result['http_code'] ?? null,
+                'transaction_id' => $transactionId,
+            ];
         }
 
         return [

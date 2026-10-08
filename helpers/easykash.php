@@ -10,6 +10,43 @@ if (!function_exists('easykash_config')) {
     }
 }
 
+if (!function_exists('easykash_describe_rejection')) {
+    /**
+     * Turns whatever EasyKash answered into one readable line.
+     *
+     * Their rejections come in at least three shapes: a list of field errors
+     * (`[{"message":"Currency is required","field":"currency"}]`), an object with a `message`,
+     * and occasionally a bare string. Anything unrecognised falls back to a trimmed copy of the
+     * body, so an unfamiliar shape still leaves a trail instead of an empty string.
+     */
+    function easykash_describe_rejection($decoded, $raw): string {
+        if (is_array($decoded)) {
+            $parts = [];
+
+            if (isset($decoded['message']) && is_string($decoded['message'])) {
+                $parts[] = $decoded['message'];
+            }
+
+            foreach ($decoded as $entry) {
+                if (is_array($entry) && isset($entry['message'])) {
+                    $field = isset($entry['field']) ? $entry['field'] . ': ' : '';
+                    $parts[] = $field . $entry['message'];
+                }
+            }
+
+            if ($parts) {
+                return implode('; ', array_unique($parts));
+            }
+        }
+
+        if (is_string($decoded) && $decoded !== '') {
+            return $decoded;
+        }
+
+        return trim(substr((string)$raw, 0, 300));
+    }
+}
+
 if (!function_exists('easykash_create_payment')) {
     function easykash_create_payment(array $params): array {
         $config = easykash_config();
@@ -43,13 +80,37 @@ if (!function_exists('easykash_create_payment')) {
         curl_close($ch);
 
         if ($response === false) {
+            // A blocked outbound connection from the host looks identical to a rejected payment
+            // from the student's side, so the two are told apart here rather than guessed at.
+            easykash_log('Pay request could not reach EasyKash: ' . $curlError);
             return ['status' => 'error', 'message' => 'Curl error while contacting EasyKash', 'error' => $curlError];
         }
 
         $decoded = json_decode($response, true);
 
         if ($httpCode < 200 || $httpCode >= 300 || empty($decoded['redirectUrl'])) {
-            return ['status' => 'error', 'message' => 'EasyKash rejected the payment request', 'http_code' => $httpCode, 'response' => $decoded ?: $response];
+            // EasyKash says exactly what is wrong - it answers a bad field with HTTP 460 and
+            // `[{"message":"Currency is required","field":"currency",...}]`. That answer used to
+            // be returned in a key nobody read and never written down, so every failure reached
+            // the student as "Failed to initiate payment with EasyKash" and reached the
+            // maintainer as nothing at all. It is recorded here and summarised for the caller.
+            $reason = easykash_describe_rejection($decoded, $response);
+
+            easykash_log(
+                'Pay request rejected: http=' . $httpCode .
+                ' customerReference=' . (int)$params['customerReference'] .
+                ' amount=' . (float)$params['amount'] .
+                ' currency=' . ($payload['currency'] ?? '') .
+                ' reason=' . $reason
+            );
+
+            return [
+                'status' => 'error',
+                'message' => 'EasyKash rejected the payment request',
+                'reason' => $reason,
+                'http_code' => $httpCode,
+                'response' => $decoded ?: $response,
+            ];
         }
 
         return ['status' => 'success', 'redirectUrl' => $decoded['redirectUrl']];
