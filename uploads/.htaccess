@@ -1,0 +1,36 @@
+# Uploads are data. They are never code.
+#
+# Everything in here arrives from a user - receipt images, avatars, question pictures - and the
+# root .htaccess serves any file that exists on disk without routing it through index.php. So if
+# a single executable file ever lands here, it runs. The upload helper now refuses anything
+# outside an extension allow-list, and this is the second lock: even a file that slips past it is
+# served as a plain download instead of being executed.
+
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php7.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php8.c>
+    php_flag engine off
+</IfModule>
+
+# On hosts where PHP runs through CGI/FPM the php_flag above is ignored, so the handler is
+# stripped explicitly as well.
+<IfModule mod_mime.c>
+    RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .shtml .cgi .pl
+    RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .shtml .cgi .pl
+    AddType text/plain .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .shtml .cgi .pl
+</IfModule>
+
+# And a flat refusal to serve them at all, for the same reason.
+<FilesMatch "\.(php|phtml|php[3-8]|phps|pht|shtml|cgi|pl|py|rb|sh|htaccess)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>

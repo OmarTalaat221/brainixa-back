@@ -303,6 +303,29 @@ if (!function_exists('process_image_input')) {
 
             $prefix = ($mediaType === 'video') ? 'vid_' : (($mediaType === 'audio') ? 'aud_' : 'img_');
             $ext = ($type === 'jpeg') ? 'jpg' : (($type === 'mpeg') ? 'mp3' : $type);
+
+            // REMOTE CODE EXECUTION GUARD. The extension used to be whatever subtype the caller
+            // put after "data:image/", and `\w+` happily matches "php" - so a student filing an
+            // offline-payment receipt as "data:image/php;base64,<webshell>" had a .php file
+            // written into uploads/ and served straight back by the rewrite rule, which passes
+            // any file that exists on disk. An allow-list is the fix: anything not named here is
+            // refused rather than coerced, because guessing an extension for unknown input is how
+            // this happened in the first place.
+            $allowed = [
+                'image' => ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
+                'video' => ['mp4', 'webm', 'ogg', 'mov'],
+                'audio' => ['mp3', 'wav', 'ogg', 'webm', 'm4a', 'aac'],
+            ];
+            if (!in_array($ext, $allowed[$mediaType] ?? [], true)) {
+                return null;
+            }
+
+            // A data URI is ~4/3 the size of its payload; 12MB of base64 is about 9MB of file.
+            // Without a ceiling a single request can fill the disk.
+            if (strlen($mediaData) > 12 * 1024 * 1024) {
+                return null;
+            }
+
             $fileName = uniqid($prefix, true) . '.' . $ext;
 
             $targetDir = __DIR__ . '/../uploads/' . $subfolder . '/';

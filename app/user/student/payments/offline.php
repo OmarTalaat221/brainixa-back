@@ -135,9 +135,17 @@ if (!function_exists('studentCreateOfflinePayment')) {
             )];
         }
 
-        $amount = (float)($body['amount'] ?? $quote['amount_due']);
+        // The amount owed is the server's number, full stop.
+        //
+        // This used to read `$body['amount'] ?? $quote['amount_due']`, so the figure the student
+        // typed replaced the one the pricing engine had just worked out. That number is what the
+        // reviewer sees on the approval screen, what a book subscription is recorded at, and what
+        // `helpers/sales.php` adds up as revenue - so a request filed for 1 against a 1000 course
+        // showed the reviewer "1" and, once approved, opened the course and understated the
+        // takings. Nothing the client sends is consulted any more.
+        $amount = (float)$quote['amount_due'];
         if ($amount <= 0) {
-            return ['status' => 'error', 'message' => app_offline_text($con, 'اكتب المبلغ اللي حوّلته.', 'Enter the amount you transferred.')];
+            return ['status' => 'error', 'message' => app_offline_text($con, 'المبلغ المطلوب غير صالح.', 'The amount due is not valid.')];
         }
 
         $accountId = (int)($body['payment_account_id'] ?? 0);

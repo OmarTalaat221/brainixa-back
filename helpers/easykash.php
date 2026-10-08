@@ -164,7 +164,17 @@ if (!function_exists('easykash_verify_callback_signature')) {
         $isValid = hash_equals($computed, (string)$signatureHash);
 
         if (!$isValid) {
-            easykash_log('Signature mismatch. Concatenated="' . $concatenated . '" computed=' . $computed . ' received=' . $signatureHash);
+            // The computed signature is NEVER written down. It used to be, next to the exact
+            // string it was computed from - which turned this function into a signing oracle:
+            // post any payload you like, let verification fail, read the log, and you have a
+            // valid signature for that payload without ever knowing the secret. Only the
+            // reference and the claimed hash are recorded, which is enough to investigate a
+            // genuine mismatch and useless to an attacker.
+            easykash_log(
+                'Signature mismatch for customerReference=' .
+                easykash_ci_get($data, 'customerReference') .
+                ' received=' . substr((string)$signatureHash, 0, 12) . '...'
+            );
         }
 
         return $isValid;

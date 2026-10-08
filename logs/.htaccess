@@ -1,0 +1,15 @@
+# Nothing in here is for the public.
+#
+# The root .htaccess passes any request whose path exists on disk straight to the file
+# (RewriteCond %{REQUEST_FILENAME} -f), so logs/easykash_callback.log was being SERVED - it
+# returned HTTP 200 with real transaction records in it. Directory listing was already off, but
+# that only hides the names; the files themselves were readable by anyone who guessed a path.
+
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>
