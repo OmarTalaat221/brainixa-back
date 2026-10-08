@@ -57,6 +57,62 @@ if (!function_exists('easykash_create_payment')) {
 }
 
 
+if (!function_exists('easykash_inquire_payment')) {
+    /**
+     * Asks EasyKash what actually happened to a transaction.
+     *
+     * This is the trustworthy way to settle a payment from the browser's "I'm back from the
+     * gateway" moment. The browser can claim anything; this answer comes from EasyKash over a
+     * connection we opened and authenticated with our own API key, so there is nothing for a
+     * caller to forge - which is why the result needs no HMAC of its own.
+     *
+     * `status` comes back as one of: DELIVERED, EXPIRED, FAILED, NEW, PAID, REFUNDED, CANCELED.
+     */
+    function easykash_inquire_payment($customerReference): array {
+        $config = easykash_config();
+        $url = $config['inquire_url'] ?? 'https://back.easykash.net/api/cash-api/inquire';
+
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_POST => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER => [
+                'authorization: ' . $config['api_key'],
+                'Content-Type: application/json',
+            ],
+            CURLOPT_POSTFIELDS => json_encode(
+                ['customerReference' => (string)$customerReference],
+                JSON_UNESCAPED_UNICODE
+            ),
+            CURLOPT_TIMEOUT => 30,
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        if ($response === false) {
+            return ['status' => 'error', 'message' => 'Curl error while contacting EasyKash', 'error' => $curlError];
+        }
+
+        $decoded = json_decode($response, true);
+
+        if ($httpCode < 200 || $httpCode >= 300 || !is_array($decoded)) {
+            return [
+                'status' => 'error',
+                'message' => 'EasyKash rejected the inquiry',
+                'http_code' => $httpCode,
+                'response' => $decoded ?: $response,
+            ];
+        }
+
+        return ['status' => 'success', 'data' => $decoded];
+    }
+}
+
+
 /**
  * EasyKash's own docs/examples are inconsistent about field casing (ProductCode vs
  * productCode, etc). Look up a callback field regardless of how it was actually cased.

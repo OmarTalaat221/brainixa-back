@@ -4,6 +4,8 @@ require_once __DIR__ . '/../../../../helpers/easykash.php';
 require_once __DIR__ . '/../../../../helpers/admin_notifications.php';
 
 require_once __DIR__ . '/../../../../helpers/payments_grant.php';
+// app_text() lives here and is used below for the bilingual refusal messages.
+require_once __DIR__ . '/../../../../helpers/app_settings.php';
 
 
 if (!function_exists('studentInitiatePayment')) {
@@ -43,6 +45,26 @@ if (!function_exists('studentInitiatePayment')) {
         $student = mysqli_fetch_assoc(mysqli_stmt_get_result($stStmt));
         if (!$student) {
             return ['status' => 'error', 'message' => trans('student_not_found')];
+        }
+
+        // EasyKash requires name, email AND mobile on every payment request. `students.email`
+        // became nullable in migration 095 so a student can sign up with a phone only, and
+        // `phone` can be blank too - so without this check the gateway rejects the request and
+        // the student sees a meaningless failure instead of being told what is missing.
+        $missing = [];
+        if (trim((string)($student['email'] ?? '')) === '') $missing[] = 'email';
+        if (trim((string)($student['phone'] ?? '')) === '') $missing[] = 'phone';
+        if ($missing) {
+            return [
+                'status' => 'error',
+                'error_code' => 'profile_incomplete',
+                'missing_fields' => $missing,
+                'message' => app_text(
+                    $con,
+                    'عشان تدفع أونلاين لازم يكون في إيميل ورقم تليفون في حسابك. كمّل بياناتك وجرب تاني.',
+                    'Online payment needs an email address and a phone number on your account. Please complete your profile and try again.'
+                ),
+            ];
         }
 
         $config = easykash_config();
@@ -127,8 +149,21 @@ if (!function_exists('payments_process_easykash_result')) {
         $easykashRef = easykash_ci_get($data, 'easykashRef') ?: (easykash_ci_get($data, 'providerRefNum') ?: null);
         $paymentMethod = easykash_ci_get($data, 'PaymentMethod') ?: null;
 
-        if ($paidStatus !== 'PAID') {
-            $newStatus = ($paidStatus === 'CANCELLED') ? 'cancelled' : 'failed';
+        // EasyKash's documented statuses are DELIVERED, EXPIRED, FAILED, NEW, PAID, REFUNDED,
+        // CANCELED. Three of those need saying out loud:
+        //
+        //   DELIVERED is a state a transaction reaches AFTER being paid, so treating it as
+        //   anything but paid would deny access to someone who has already paid.
+        //   CANCELED is spelled with one L by EasyKash; the old check looked for 'CANCELLED' and
+        //   therefore never matched, filing every cancellation as a failure.
+        //   REFUNDED means the money went back, so access should not stand - 'cancelled' is the
+        //   closest the column's enum gets.
+        $isPaid = in_array($paidStatus, ['PAID', 'DELIVERED'], true);
+
+        if (!$isPaid) {
+            $newStatus = in_array($paidStatus, ['CANCELED', 'CANCELLED', 'REFUNDED'], true)
+                ? 'cancelled'
+                : 'failed';
             $updStmt = mysqli_prepare($con, "UPDATE payment_transactions SET status = ?, easykash_ref = ?, payment_method = ?, raw_callback = ? WHERE id = ?");
             mysqli_stmt_bind_param($updStmt, "ssssi", $newStatus, $easykashRef, $paymentMethod, $rawCallback, $transactionId);
             mysqli_stmt_execute($updStmt);
@@ -184,10 +219,73 @@ if (!function_exists('studentConfirmPayment')) {
             return ['status' => 'error', 'message' => 'Student authentication is required'];
         }
 
-      $data = array_merge($_GET, read_json_body());
+        $data = array_merge($_GET, read_json_body());
         easykash_log('Frontend confirm received (student ' . $stId . '): ' . json_encode($data, JSON_UNESCAPED_UNICODE));
 
-        return payments_process_easykash_result($con, $data, $stId, false);
+        // SECURITY: nothing the browser sent is believed.
+        //
+        // This endpoint used to pass the request body straight into the processor with signature
+        // checking turned off, so a signed-in student could POST {customerReference: <their own
+        // pending transaction>, status: "PAID"} and be granted the course without paying. The only
+        // thing taken from the request now is WHICH transaction to ask about; the answer comes from
+        // EasyKash itself, over a connection we open and authenticate with our own API key.
+        $transactionId = (int)easykash_ci_get($data, 'customerReference');
+        if ($transactionId <= 0) {
+            $transactionId = (int)($data['transaction_id'] ?? 0);
+        }
+        if ($transactionId <= 0) {
+            return ['status' => 'error', 'message' => 'A transaction id is required'];
+        }
+
+        // Ownership is checked before we ask EasyKash anything, so this cannot be used to probe
+        // other students' transactions.
+        $ownStmt = mysqli_prepare($con, "SELECT id, status FROM payment_transactions WHERE id = ? AND student_id = ? LIMIT 1");
+        mysqli_stmt_bind_param($ownStmt, "ii", $transactionId, $stId);
+        mysqli_stmt_execute($ownStmt);
+        $own = mysqli_fetch_assoc(mysqli_stmt_get_result($ownStmt));
+        if (!$own) {
+            return ['status' => 'error', 'message' => 'This transaction does not belong to you'];
+        }
+
+        if ($own['status'] === 'paid') {
+            return [
+                'status' => 'success',
+                'message' => 'Transaction already processed',
+                'data' => ['transaction_id' => $transactionId, 'payment_status' => 'paid'],
+            ];
+        }
+
+        $inquiry = easykash_inquire_payment($transactionId);
+        easykash_log('Inquiry for transaction ' . $transactionId . ': ' . json_encode($inquiry, JSON_UNESCAPED_UNICODE));
+
+        if ($inquiry['status'] !== 'success') {
+            // The gateway being unreachable is not a failed payment. The transaction is left
+            // pending so the callback - or a later retry - can still settle it.
+            return [
+                'status' => 'error',
+                'message' => trans('payment_status_unavailable') ?: 'Could not reach EasyKash to confirm this payment. Please try again shortly.',
+            ];
+        }
+
+        $remote = $inquiry['data'];
+        $remoteStatus = strtoupper(trim(easykash_ci_get($remote, 'status')));
+
+        // NEW means the buyer has not finished paying - a cash voucher still waiting to be paid,
+        // for instance. Marking that 'failed' would bury a payment that is still perfectly alive.
+        if ($remoteStatus === 'NEW' || $remoteStatus === '') {
+            return [
+                'status' => 'success',
+                'message' => trans('payment_still_pending') ?: 'Payment is still pending.',
+                'data' => ['transaction_id' => $transactionId, 'payment_status' => 'pending'],
+            ];
+        }
+
+        // The processor expects callback-shaped input, so the inquiry answer is handed over under
+        // the same field names. Signature checking stays off here on purpose and is safe now: this
+        // data came from EasyKash, not from the caller.
+        $remote['customerReference'] = $transactionId;
+
+        return payments_process_easykash_result($con, $remote, $stId, false);
     }
 }
 
