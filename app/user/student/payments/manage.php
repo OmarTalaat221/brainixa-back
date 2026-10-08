@@ -226,7 +226,7 @@ if (!function_exists('payments_process_easykash_result')) {
             return ['status' => 'error', 'message' => 'Missing customerReference'];
         }
 
-        $stmt = mysqli_prepare($con, "SELECT id, student_id, item_type, item_id, amount, status FROM payment_transactions WHERE id = ? LIMIT 1");
+        $stmt = mysqli_prepare($con, "SELECT id, student_id, item_type, item_id, amount, status, granted_ref_id FROM payment_transactions WHERE id = ? LIMIT 1");
         mysqli_stmt_bind_param($stmt, "i", $transactionId);
         mysqli_stmt_execute($stmt);
         $tx = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
@@ -237,14 +237,6 @@ if (!function_exists('payments_process_easykash_result')) {
 
         if ($requireStudentId > 0 && (int)$tx['student_id'] !== $requireStudentId) {
             return ['status' => 'error', 'message' => 'This transaction does not belong to you'];
-        }
-
-        if ($tx['status'] === 'paid') {
-            return [
-                'status' => 'success',
-                'message' => 'Transaction already processed',
-                'data' => ['transaction_id' => $transactionId, 'payment_status' => 'paid'],
-            ];
         }
 
         $paidStatus = strtoupper(trim(easykash_ci_get($data, 'status')));
@@ -261,11 +253,74 @@ if (!function_exists('payments_process_easykash_result')) {
         //   REFUNDED means the money went back, so access should not stand - 'cancelled' is the
         //   closest the column's enum gets.
         $isPaid = in_array($paidStatus, ['PAID', 'DELIVERED'], true);
+        $isReversed = in_array($paidStatus, ['CANCELED', 'CANCELLED', 'REFUNDED'], true);
+
+        // A transaction already settled as paid used to return "already processed" here and stop,
+        // whatever the gateway had just said. That made a refund a no-op: EasyKash took the money
+        // back and the student kept the course for good. The short-circuit still stands for a
+        // repeated PAID - it is what keeps a double callback from granting twice - but a reversal
+        // arriving against a paid transaction is now acted on.
+        if ($tx['status'] === 'paid') {
+            if (!$isReversed) {
+                return [
+                    'status' => 'success',
+                    'message' => 'Transaction already processed',
+                    'data' => ['transaction_id' => $transactionId, 'payment_status' => 'paid'],
+                ];
+            }
+
+            // Flip the transaction first, and only act if THIS call is the one that flipped it.
+            // Two reversals racing - a callback and the student reopening the result page - would
+            // otherwise both pass the read above and revoke twice.
+            $revStmt = mysqli_prepare($con, "UPDATE payment_transactions SET status = 'cancelled', raw_callback = ? WHERE id = ? AND status = 'paid'");
+            mysqli_stmt_bind_param($revStmt, "si", $rawCallback, $transactionId);
+            mysqli_stmt_execute($revStmt);
+
+            if (mysqli_stmt_affected_rows($revStmt) < 1) {
+                return [
+                    'status' => 'success',
+                    'message' => 'Transaction already processed',
+                    'data' => ['transaction_id' => $transactionId, 'payment_status' => 'cancelled'],
+                ];
+            }
+
+            $revoked = payments_revoke_access(
+                $con,
+                (int)$tx['student_id'],
+                $tx['item_type'],
+                isset($tx['granted_ref_id']) ? (int)$tx['granted_ref_id'] : null
+            );
+
+            // The purchase had earned the referrer a pending commission; a reversed purchase
+            // should not keep earning it. Lives in payments_grant.php, required at the top.
+            $commissionCancelled = payments_cancel_pending_commission(
+                $con,
+                (int)$tx['student_id'],
+                $tx['item_type'],
+                (int)$tx['item_id']
+            );
+
+            // Worth a line in the log either way: `revoked=0` means the grant row was already
+            // closed or was never recorded, which is the case a human may need to finish by hand.
+            easykash_log(
+                'Reversal (' . $paidStatus . ') for transaction ' . $transactionId .
+                ': revoked=' . ($revoked ? '1' : '0') .
+                ' commission_cancelled=' . ($commissionCancelled ? '1' : '0')
+            );
+
+            return [
+                'status' => 'success',
+                'message' => 'Payment reversed and access withdrawn',
+                'data' => [
+                    'transaction_id' => $transactionId,
+                    'payment_status' => 'cancelled',
+                    'access_revoked' => $revoked,
+                ],
+            ];
+        }
 
         if (!$isPaid) {
-            $newStatus = in_array($paidStatus, ['CANCELED', 'CANCELLED', 'REFUNDED'], true)
-                ? 'cancelled'
-                : 'failed';
+            $newStatus = $isReversed ? 'cancelled' : 'failed';
             $updStmt = mysqli_prepare($con, "UPDATE payment_transactions SET status = ?, easykash_ref = ?, payment_method = ?, raw_callback = ? WHERE id = ?");
             mysqli_stmt_bind_param($updStmt, "ssssi", $newStatus, $easykashRef, $paymentMethod, $rawCallback, $transactionId);
             mysqli_stmt_execute($updStmt);

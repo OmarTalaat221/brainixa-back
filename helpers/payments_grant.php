@@ -83,3 +83,66 @@ if (!function_exists('payments_grant_access')) {
         return mysqli_insert_id($con);
     }
 }
+
+if (!function_exists('payments_revoke_access')) {
+    /**
+     * Closes access that a specific payment opened, when that payment is reversed.
+     *
+     * Deliberately narrow: it acts on the ONE row `payments_grant_access()` created, identified by
+     * the `granted_ref_id` stored on the transaction, and only if that row still belongs to the
+     * same student. A student who also bought the course offline, or was given it by an admin,
+     * holds a different row, and a refund of this payment must not take that away.
+     *
+     * Rows are deactivated rather than deleted, so the history of what was granted and withdrawn
+     * survives.
+     *
+     * Returns true only if a row was actually closed, so the caller can tell a real revocation
+     * from a repeat of one already done.
+     */
+    function payments_revoke_access($con, int $studentId, string $itemType, ?int $grantedRefId): bool {
+        if ($studentId <= 0 || !$grantedRefId || $grantedRefId <= 0) {
+            return false;
+        }
+
+        if ($itemType === 'course') {
+            // granted_ref_id is the student_subscriptions row. Its linked courses go with it:
+            // the access check joins through student_subscriptions.is_active, so closing the
+            // subscription closes every course it opened.
+            $stmt = mysqli_prepare($con, "UPDATE student_subscriptions SET is_active = 0 WHERE id = ? AND student_id = ? AND is_active = 1");
+        } elseif ($itemType === 'book') {
+            $stmt = mysqli_prepare($con, "UPDATE student_book_subscriptions SET is_active = 0 WHERE id = ? AND student_id = ? AND is_active = 1");
+        } else {
+            return false;
+        }
+
+        if (!$stmt) return false;
+
+        mysqli_stmt_bind_param($stmt, "ii", $grantedRefId, $studentId);
+        if (!mysqli_stmt_execute($stmt)) return false;
+
+        return mysqli_stmt_affected_rows($stmt) > 0;
+    }
+}
+
+if (!function_exists('payments_cancel_pending_commission')) {
+    /**
+     * Withdraws the affiliate commission a reversed purchase had earned.
+     *
+     * Only a commission still `pending` is touched. One already approved or paid means money has
+     * moved, or an admin has decided it should; reversing that silently here would make the
+     * affiliate's balance disagree with what they were told, so it is left for a human and
+     * reported back to the caller.
+     */
+    function payments_cancel_pending_commission($con, int $studentId, string $itemType, int $itemId): bool {
+        if ($studentId <= 0 || $itemId <= 0) return false;
+
+        $stmt = mysqli_prepare($con, "UPDATE affiliate_commissions SET status = 'rejected'
+            WHERE referred_student_id = ? AND item_type = ? AND item_id = ? AND status = 'pending'");
+        if (!$stmt) return false;
+
+        mysqli_stmt_bind_param($stmt, "isi", $studentId, $itemType, $itemId);
+        if (!mysqli_stmt_execute($stmt)) return false;
+
+        return mysqli_stmt_affected_rows($stmt) > 0;
+    }
+}
