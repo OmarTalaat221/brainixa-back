@@ -331,16 +331,67 @@ if (!function_exists('payments_process_easykash_result')) {
             ];
         }
 
+        // Claim the transaction BEFORE granting anything.
+        //
+        // The order used to be the other way round - grant, create the commission, then record
+        // the payment - with nothing but a plain SELECT a few lines above deciding whether this
+        // call should proceed. Two callers arriving together both read 'pending', both granted,
+        // and the student ended up with two subscriptions and the referrer with two commissions
+        // for one payment. And they do arrive together: EasyKash's own server-to-server callback
+        // and the student's browser landing on /payment/result fire at the same moment.
+        //
+        // `status <> 'paid'` rather than `= 'pending'` on purpose: a voucher we had already
+        // written off as failed can still be paid later, and that late PAID must be honoured.
+        // This is the pattern the offline path has always used.
+        $claimStmt = mysqli_prepare($con, "UPDATE payment_transactions
+            SET status = 'paid', easykash_ref = ?, payment_method = ?, raw_callback = ?, paid_at = NOW()
+            WHERE id = ? AND status <> 'paid'");
+        mysqli_stmt_bind_param($claimStmt, "sssi", $easykashRef, $paymentMethod, $rawCallback, $transactionId);
+        mysqli_stmt_execute($claimStmt);
+
+        if (mysqli_stmt_affected_rows($claimStmt) < 1) {
+            // Someone else got here first. Theirs is the call that grants.
+            return [
+                'status' => 'success',
+                'message' => 'Transaction already processed',
+                'data' => ['transaction_id' => $transactionId, 'payment_status' => 'paid'],
+            ];
+        }
+
         $grantedRefId = payments_grant_access($con, (int)$tx['student_id'], $tx['item_type'], (int)$tx['item_id'], (float)$tx['amount']);
+
+        if ($grantedRefId === null) {
+            // The money is real and stays recorded as paid - but the student has nothing. Said
+            // out loud rather than returning success, because this is the one case where a silent
+            // "paid" would leave somebody who has paid locked out with nobody aware of it. The
+            // admin gateway screen shows it as paid with no grant.
+            easykash_log(
+                'GRANT FAILED after payment. transaction=' . $transactionId .
+                ' student=' . (int)$tx['student_id'] .
+                ' item=' . $tx['item_type'] . '#' . (int)$tx['item_id'] .
+                ' - money taken, access NOT given'
+            );
+
+            return [
+                'status' => 'error',
+                'error_code' => 'grant_failed',
+                'message' => app_text(
+                    $con,
+                    'تم الدفع بنجاح بس حصلت مشكلة في فتح المحتوى. تواصل معانا وهنفتحه لك فورًا.',
+                    'Your payment went through, but we could not open the content. Contact us and we will open it right away.'
+                ),
+                'data' => ['transaction_id' => $transactionId, 'payment_status' => 'paid'],
+            ];
+        }
+
+        $refStmt = mysqli_prepare($con, "UPDATE payment_transactions SET granted_ref_id = ? WHERE id = ?");
+        mysqli_stmt_bind_param($refStmt, "ii", $grantedRefId, $transactionId);
+        mysqli_stmt_execute($refStmt);
 
         require_once __DIR__ . '/../affiliate/manage.php';
         if (function_exists('createPendingAffiliateCommission')) {
             createPendingAffiliateCommission($con, (int)$tx['student_id'], $tx['item_type'], (int)$tx['item_id'], (float)$tx['amount']);
         }
-
-        $updStmt = mysqli_prepare($con, "UPDATE payment_transactions SET status = 'paid', easykash_ref = ?, payment_method = ?, granted_ref_id = ?, raw_callback = ?, paid_at = NOW() WHERE id = ?");
-        mysqli_stmt_bind_param($updStmt, "ssisi", $easykashRef, $paymentMethod, $grantedRefId, $rawCallback, $transactionId);
-        mysqli_stmt_execute($updStmt);
 
         return [
             'status' => 'success',
