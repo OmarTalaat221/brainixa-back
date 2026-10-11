@@ -8,6 +8,13 @@ require_once __DIR__ . '/../../../../helpers/payments_grant.php';
 require_once __DIR__ . '/../../../../helpers/app_settings.php';
 // pricing_for_item() - the per-country price the student was actually shown.
 require_once __DIR__ . '/../../../../helpers/pricing.php';
+// offline_payment_quote() prices a purchase with its discount code and points. Despite the name
+// it is not specific to offline payments; the card path uses it so both charge the same figure.
+require_once __DIR__ . '/../../../../helpers/offline_payments.php';
+// points_spend() / points_refund() - points are held at checkout and returned if it never pays.
+require_once __DIR__ . '/../../../../helpers/points.php';
+// discount_apply_code() / get_discount_code_details() - the code is spent once payment succeeds.
+require_once __DIR__ . '/../../../../helpers/discounts.php';
 
 
 if (!function_exists('payments_new_gateway_reference')) {
@@ -135,17 +142,87 @@ if (!function_exists('studentInitiatePayment')) {
         // path takes them. Charging `$item['price']` in the configured currency - which is what
         // this used to do - ignores the per-country price table: a student shown "150 SAR" on the
         // course page would have been charged the base figure, in pounds.
-        $priced = pricing_for_item($con, $itemType, $itemId, (float)$item['price'], $stId);
-        $amount = (float)$priced['price'];
-        $currency = (string)$priced['currency']['code'];
+        // Price it through the same quote the offline path uses, so a discount code and points
+        // are worth exactly as much by card as they are by bank transfer. Until now this path
+        // charged the list price and ignored both: a student holding a code could only use it by
+        // transferring money manually and waiting for a human to approve it.
+        $discountCode = trim((string)($body['discount_code'] ?? ''));
+        $usePoints = (float)($body['use_points'] ?? 0);
+
+        $quote = offline_payment_quote($con, $stId, $itemType, $itemId, $discountCode, $usePoints);
+        if (empty($quote['ok'])) {
+            return ['status' => 'error', 'message' => $quote['message'] ?? trans('invalid_request')];
+        }
+
+        // A code the student asked for that could not be honoured is refused outright rather than
+        // quietly charged at full price - being billed more than the screen said is worse than
+        // being told the code did not work.
+        if ($discountCode !== '' && empty($quote['discount_code_id'])) {
+            return [
+                'status' => 'error',
+                'error_code' => 'discount_not_applied',
+                'message' => $quote['discount_message'] ?: app_text(
+                    $con,
+                    'كود الخصم ده مش سارٍ على العنصر ده.',
+                    'That discount code cannot be used for this item.'
+                ),
+            ];
+        }
+
+        $amount = (float)$quote['amount_due'];
+        $currency = (string)$quote['currency_code'];
+        $originalAmount = (float)$quote['original_amount'];
+        $discountCodeId = $quote['discount_code_id'];
+        $discountAmount = (float)$quote['discount_amount'];
+        $pointsSpent = (float)$quote['points_spent'];
+        $pointsDiscount = (float)$quote['points_discount'];
 
         if ($amount <= 0) {
             return ['status' => 'error', 'message' => trans('item_is_free')];
         }
 
-        $insStmt = mysqli_prepare($con, "INSERT INTO payment_transactions (student_id, item_type, item_id, amount, currency, status) VALUES (?, ?, ?, ?, ?, 'pending')");
-        mysqli_stmt_bind_param($insStmt, "isids", $stId, $itemType, $itemId, $amount, $currency);
+        // Points are taken now, with a guarded spend, exactly as the offline path takes them:
+        // two checkouts opened at the same instant must not spend the same balance twice. The
+        // code is NOT spent here - that happens only once the payment actually succeeds, so an
+        // abandoned checkout does not cost the student one of its uses.
+        if ($pointsSpent > 0) {
+            $spent = points_spend(
+                $con, $stId, $pointsSpent,
+                'استبدال نقاط في دفع إلكتروني',
+                in_array($itemType, ['course', 'book'], true) ? $itemType : 'other',
+                $itemId
+            );
+            if (!$spent) {
+                return ['status' => 'error', 'message' => app_text(
+                    $con,
+                    'رصيد نقاطك اتغير. راجع العملية وحاول تاني.',
+                    'Your points balance changed. Review the payment and try again.'
+                )];
+            }
+        }
+
+        $refundPoints = function () use ($con, $stId, $pointsSpent, $itemType, $itemId) {
+            if ($pointsSpent > 0) {
+                points_refund(
+                    $con, $stId, $pointsSpent, 'إلغاء استبدال نقاط - تعذر بدء الدفع',
+                    in_array($itemType, ['course', 'book'], true) ? $itemType : 'other',
+                    $itemId
+                );
+            }
+        };
+
+        $insStmt = mysqli_prepare($con, "INSERT INTO payment_transactions
+            (student_id, item_type, item_id, amount, original_amount, discount_code_id, discount_amount,
+             points_spent, points_discount, currency, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')");
+        mysqli_stmt_bind_param(
+            // 10 values: i s i d d i d d d s
+            $insStmt, "isiddiddds",
+            $stId, $itemType, $itemId, $amount, $originalAmount, $discountCodeId, $discountAmount,
+            $pointsSpent, $pointsDiscount, $currency
+        );
         if (!mysqli_stmt_execute($insStmt)) {
+            $refundPoints();
             return ['status' => 'error', 'message' => 'Failed to create payment transaction: ' . mysqli_error($con)];
         }
         $transactionId = mysqli_insert_id($con);
@@ -172,7 +249,10 @@ if (!function_exists('studentInitiatePayment')) {
         ]);
 
         if ($result['status'] !== 'success') {
-            mysqli_query($con, "UPDATE payment_transactions SET status = 'failed' WHERE id = {$transactionId}");
+            mysqli_query($con, "UPDATE payment_transactions SET status = 'failed', points_refunded_at = NOW() WHERE id = {$transactionId}");
+            // The gateway never opened, so nothing was ever going to be paid. The points the
+            // student put in have to come straight back.
+            $refundPoints();
 
             // `details` used to carry only our own generic sentence, so the gateway's actual
             // complaint - which it does state, field by field - never reached anyone. The
@@ -201,6 +281,43 @@ if (!function_exists('studentInitiatePayment')) {
     }
 }
 
+if (!function_exists('payments_return_transaction_points')) {
+    /**
+     * Hands back the points a transaction spent, once and only once.
+     *
+     * Points are taken at checkout, before anyone knows whether the payment will go through, so
+     * every way a transaction can end without being paid has to return them. The guard is the
+     * `points_refunded_at` stamp claimed by a conditional UPDATE: two reversals racing, or a
+     * refund followed by a recheck, both run this, and only the one that set the stamp refunds.
+     */
+    function payments_return_transaction_points($con, array $tx): float {
+        $points = (float)($tx['points_spent'] ?? 0);
+        if ($points <= 0 || !empty($tx['points_refunded_at'])) {
+            return 0.0;
+        }
+
+        $transactionId = (int)$tx['id'];
+        $claim = mysqli_prepare($con, "UPDATE payment_transactions SET points_refunded_at = NOW()
+            WHERE id = ? AND points_refunded_at IS NULL AND points_spent > 0");
+        mysqli_stmt_bind_param($claim, "i", $transactionId);
+        mysqli_stmt_execute($claim);
+
+        if (mysqli_stmt_affected_rows($claim) < 1) {
+            return 0.0;
+        }
+
+        $itemType = (string)($tx['item_type'] ?? '');
+        points_refund(
+            $con, (int)$tx['student_id'], $points,
+            'استرجاع نقاط بعد إلغاء/استرداد دفعة إلكترونية',
+            in_array($itemType, ['course', 'book'], true) ? $itemType : 'other',
+            (int)($tx['item_id'] ?? 0)
+        );
+
+        return $points;
+    }
+}
+
 if (!function_exists('payments_process_easykash_result')) {
     function payments_process_easykash_result($con, array $data, int $requireStudentId = 0, bool $requireSignature = true): array {
         $rawCallback = json_encode($data, JSON_UNESCAPED_UNICODE);
@@ -226,7 +343,9 @@ if (!function_exists('payments_process_easykash_result')) {
             return ['status' => 'error', 'message' => 'Missing customerReference'];
         }
 
-        $stmt = mysqli_prepare($con, "SELECT id, student_id, item_type, item_id, amount, status, granted_ref_id FROM payment_transactions WHERE id = ? LIMIT 1");
+        $stmt = mysqli_prepare($con, "SELECT id, student_id, item_type, item_id, amount, status, granted_ref_id,
+                                             discount_code_id, points_spent, points_refunded_at
+                                      FROM payment_transactions WHERE id = ? LIMIT 1");
         mysqli_stmt_bind_param($stmt, "i", $transactionId);
         mysqli_stmt_execute($stmt);
         $tx = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
@@ -300,6 +419,9 @@ if (!function_exists('payments_process_easykash_result')) {
                 (int)$tx['item_id']
             );
 
+            // Points put into a payment that was refunded belong back with the student.
+            $pointsReturned = payments_return_transaction_points($con, $tx);
+
             // Worth a line in the log either way: `revoked=0` means the grant row was already
             // closed or was never recorded, which is the case a human may need to finish by hand.
             easykash_log(
@@ -315,6 +437,7 @@ if (!function_exists('payments_process_easykash_result')) {
                     'transaction_id' => $transactionId,
                     'payment_status' => 'cancelled',
                     'access_revoked' => $revoked,
+                    'points_returned' => $pointsReturned,
                 ],
             ];
         }
@@ -324,10 +447,52 @@ if (!function_exists('payments_process_easykash_result')) {
             $updStmt = mysqli_prepare($con, "UPDATE payment_transactions SET status = ?, easykash_ref = ?, payment_method = ?, raw_callback = ? WHERE id = ?");
             mysqli_stmt_bind_param($updStmt, "ssssi", $newStatus, $easykashRef, $paymentMethod, $rawCallback, $transactionId);
             mysqli_stmt_execute($updStmt);
+
+            // The payment is over and nothing was bought, so any points it was holding go back.
+            payments_return_transaction_points($con, $tx);
+
             return [
                 'status' => 'success',
                 'message' => 'Callback recorded',
                 'data' => ['transaction_id' => $transactionId, 'payment_status' => $newStatus],
+            ];
+        }
+
+        // Does the gateway agree about how much was paid?
+        //
+        // Nothing checked this before: whatever EasyKash said had been paid, access was granted
+        // for the full item. The amount is NOT required to match exactly, and must not be -
+        // EasyKash adds its fee on top of the figure we ask for, so a 2.00 EGP course comes back
+        // as Amount "3.00". Verified against the live gateway on transaction BX11-37558847.
+        //
+        // So the rule is "not less than what we asked", which is what actually protects us: it
+        // catches a payment for less than the price while leaving a fee-inflated amount alone.
+        // A missing Amount is not treated as a failure - the field is absent from some callback
+        // shapes - but it is written down, so a gateway that silently stopped sending it does not
+        // quietly disable this check.
+        $reportedAmount = easykash_ci_get($data, 'Amount');
+        if ($reportedAmount === '') {
+            easykash_log('No Amount in the gateway answer for transaction ' . $transactionId . ' - amount not verified');
+        } elseif ((float)$reportedAmount + 0.01 < (float)$tx['amount']) {
+            easykash_log(
+                'AMOUNT MISMATCH on transaction ' . $transactionId .
+                ': gateway reported ' . (float)$reportedAmount .
+                ', we recorded ' . (float)$tx['amount'] . ' - access NOT granted'
+            );
+
+            $flagStmt = mysqli_prepare($con, "UPDATE payment_transactions SET status = 'failed', raw_callback = ? WHERE id = ? AND status <> 'paid'");
+            mysqli_stmt_bind_param($flagStmt, "si", $rawCallback, $transactionId);
+            mysqli_stmt_execute($flagStmt);
+
+            return [
+                'status' => 'error',
+                'error_code' => 'amount_mismatch',
+                'message' => app_text(
+                    $con,
+                    'المبلغ المدفوع أقل من سعر العنصر، فمقدرناش نفعّل الاشتراك. تواصل معانا.',
+                    'The amount paid is less than the item price, so the subscription was not activated. Please contact us.'
+                ),
+                'data' => ['transaction_id' => $transactionId, 'payment_status' => 'failed'],
             ];
         }
 
@@ -387,6 +552,19 @@ if (!function_exists('payments_process_easykash_result')) {
         $refStmt = mysqli_prepare($con, "UPDATE payment_transactions SET granted_ref_id = ? WHERE id = ?");
         mysqli_stmt_bind_param($refStmt, "ii", $grantedRefId, $transactionId);
         mysqli_stmt_execute($refStmt);
+
+        // The code is spent HERE, not at checkout - the same rule the offline path follows: a
+        // checkout the student abandoned at the gateway must not cost them one of its uses.
+        $codeId = !empty($tx['discount_code_id']) ? (int)$tx['discount_code_id'] : 0;
+        if ($codeId > 0 && $tx['item_type'] === 'course' && function_exists('discount_apply_code')) {
+            $codeRow = get_discount_code_details($con, $codeId);
+            if ($codeRow) {
+                discount_apply_code(
+                    $con, (string)$codeRow['code'], (int)$tx['student_id'],
+                    [(int)$tx['item_id']], 'student', (int)$tx['student_id'], $grantedRefId
+                );
+            }
+        }
 
         require_once __DIR__ . '/../affiliate/manage.php';
         if (function_exists('createPendingAffiliateCommission')) {
