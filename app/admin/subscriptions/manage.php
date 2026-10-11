@@ -955,9 +955,23 @@ if (!function_exists('adminCreateStudentSubscription')) {
             }
         }
 
+        // A code that could not be applied - exhausted, expired, or not valid for these courses -
+        // used to be buried inside `discount` while the response still said "created
+        // successfully". The admin walked away believing a discount had been given when none had.
+        // The subscription itself stands: it is already created, and the student should not lose
+        // access over a coupon. The failure is simply said out loud.
+        $discountFailed = is_array($discount) && empty($discount['valid']);
+
         return [
             'status' => 'success',
-            'message' => 'Student subscription created successfully',
+            'message' => $discountFailed
+                ? app_text(
+                    $con,
+                    'تم إنشاء الاشتراك، لكن كود الخصم لم يُطبَّق: ' . ($discount['message'] ?? ''),
+                    'The subscription was created, but the discount code was not applied: ' . ($discount['message'] ?? '')
+                )
+                : 'Student subscription created successfully',
+            'discount_applied' => is_array($discount) ? !empty($discount['valid']) : null,
             'data' => get_student_subscription_details($con, $subId),
             'discount' => $discount
         ];

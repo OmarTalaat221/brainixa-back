@@ -478,6 +478,32 @@ if (!function_exists('discount_apply_code')) {
             }
         }
 
+        // Take the use BEFORE writing the redemption, and take it conditionally.
+        //
+        // The bump used to be the last statement, an unconditional `used_count + 1`, while the
+        // only limit check sat back in discount_validate_code() reading a value that was already
+        // stale by the time it was used. Two admins approving at the same second both read
+        // "9 of 10 used", both passed, and a ten-use code was spent eleven times. The ten uses
+        // the code was issued for are untouched; only the eleventh is refused.
+        if ($code['max_uses'] !== null) {
+            $claimUse = mysqli_prepare($con, "UPDATE discount_codes SET used_count = used_count + 1
+                WHERE id = ? AND max_uses IS NOT NULL AND used_count < max_uses");
+            mysqli_stmt_bind_param($claimUse, "i", $codeId);
+            mysqli_stmt_execute($claimUse);
+
+            if (mysqli_stmt_affected_rows($claimUse) < 1) {
+                return ['valid' => false, 'message' => 'تم استهلاك كود الخصم بالكامل'];
+            }
+        } else {
+            mysqli_query($con, "UPDATE discount_codes SET used_count = used_count + 1 WHERE id = {$codeId}");
+        }
+
+        // From here on the use is already spent, so any failure has to hand it back rather than
+        // leave the code one short for nobody.
+        $releaseUse = function () use ($con, $codeId) {
+            mysqli_query($con, "UPDATE discount_codes SET used_count = GREATEST(used_count - 1, 0) WHERE id = {$codeId}");
+        };
+
         if ($claim) {
             $claimId = (int)$claim['id'];
             $upd = mysqli_prepare($con, "
@@ -493,6 +519,7 @@ if (!function_exists('discount_apply_code')) {
                 $byType, $byId, $claimId
             );
             if (!mysqli_stmt_execute($upd)) {
+                $releaseUse();
                 return ['valid' => false, 'message' => 'تعذر تسجيل استخدام كود الخصم: ' . mysqli_error($con)];
             }
             $check['redemption_id'] = $claimId;
@@ -510,13 +537,12 @@ if (!function_exists('discount_apply_code')) {
                 $byType, $byId
             );
             if (!mysqli_stmt_execute($ins)) {
+                $releaseUse();
                 return ['valid' => false, 'message' => 'تعذر تسجيل استخدام كود الخصم: ' . mysqli_error($con)];
             }
             $check['redemption_id'] = mysqli_insert_id($con);
             $check['promoted_from_student_claim'] = false;
         }
-
-        mysqli_query($con, "UPDATE discount_codes SET used_count = used_count + 1 WHERE id = {$codeId}");
 
         $check['status'] = 'applied';
         return $check;

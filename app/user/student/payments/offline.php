@@ -313,6 +313,14 @@ if (!function_exists('studentCancelOfflinePayment')) {
             return ['status' => 'error', 'message' => app_offline_text($con, 'حدد الطلب.', 'Specify the request.')];
         }
 
+        // Read the points before cancelling: once the row is 'cancelled' there is no telling
+        // what it had spent.
+        $pointsStmt = mysqli_prepare($con, "SELECT points_spent, item_type, item_id
+            FROM offline_payment_requests WHERE id = ? AND student_id = ? LIMIT 1");
+        mysqli_stmt_bind_param($pointsStmt, "ii", $id, $studentId);
+        mysqli_stmt_execute($pointsStmt);
+        $request = mysqli_fetch_assoc(mysqli_stmt_get_result($pointsStmt));
+
         $stmt = mysqli_prepare($con, "UPDATE offline_payment_requests SET status = 'cancelled'
             WHERE id = ? AND student_id = ? AND status = 'pending'");
         if (!$stmt) {
@@ -329,6 +337,37 @@ if (!function_exists('studentCancelOfflinePayment')) {
             )];
         }
 
-        return ['status' => 'success', 'message' => app_offline_text($con, 'تم إلغاء الطلب.', 'The request was cancelled.')];
+        // Points spent on a request that never completed have to come back. A rejection has
+        // always refunded them; cancelling did not, so a student who changed their mind - or
+        // simply filed the request twice - silently lost points they had earned, with no way to
+        // get them back and nothing recording where they went.
+        //
+        // Refunded only after the UPDATE reported a row, exactly as the rejection path does: if
+        // a reviewer settled the request first, the UPDATE matches nothing, we return above, and
+        // the same points cannot be handed back twice.
+        $pointsSpent = (float)($request['points_spent'] ?? 0);
+        $refunded = 0.0;
+        if ($pointsSpent > 0) {
+            $itemType = (string)($request['item_type'] ?? '');
+            points_refund(
+                $con, $studentId, $pointsSpent,
+                'استرجاع نقاط بعد إلغاء الطالب لطلب الدفع',
+                in_array($itemType, ['course', 'book'], true) ? $itemType : 'other',
+                (int)($request['item_id'] ?? 0)
+            );
+            $refunded = $pointsSpent;
+        }
+
+        return [
+            'status' => 'success',
+            'message' => $refunded > 0
+                ? app_offline_text(
+                    $con,
+                    'تم إلغاء الطلب، ورجعت لك ' . rtrim(rtrim(number_format($refunded, 2, '.', ''), '0'), '.') . ' نقطة.',
+                    'The request was cancelled, and ' . rtrim(rtrim(number_format($refunded, 2, '.', ''), '0'), '.') . ' points were returned to you.'
+                )
+                : app_offline_text($con, 'تم إلغاء الطلب.', 'The request was cancelled.'),
+            'points_refunded' => $refunded,
+        ];
     }
 }
