@@ -106,10 +106,15 @@ if (!function_exists('dashboard_revenue_sources')) {
             // It cannot double-count: payments_grant_access() leaves `price` NULL on the rows it
             // creates, so gateway payments and approved offline requests are counted only at
             // their own sources above, exactly as the book path already works.
+            //
+            // Cancelled is excluded, paused is not. There is no way to edit a manual sale's
+            // price, so cancelling and re-entering is the only correction available - and while
+            // cancelled rows counted, that correction DOUBLED the revenue instead of fixing it.
+            // Pausing says the access is suspended, not that the sale never happened.
             'manual_subscriptions' => [
                 'label_ar' => 'بيع يدوي (واتساب/كاش)',
                 'from' => "student_subscriptions ss",
-                'where' => "ss.price > 0",
+                'where' => "ss.price > 0 AND ss.cancelled_at IS NULL",
                 'amount' => "ss.price",
                 'date' => "ss.created_at",
             ],

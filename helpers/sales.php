@@ -102,7 +102,7 @@ if (!function_exists('sales_aggregate_courses')) {
                 FROM student_subscription_courses
                 GROUP BY student_subscription_id
             ) cc ON cc.student_subscription_id = ss.id
-            WHERE ss.price > 0 {$manualDate}
+            WHERE ss.price > 0 AND ss.cancelled_at IS NULL {$manualDate}
             GROUP BY ssc.course_id
         ") as $row) {
             $add((int)$row['course_id'], (int)$row['sales_count'], (float)$row['revenue']);
