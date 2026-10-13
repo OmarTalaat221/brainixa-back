@@ -640,7 +640,11 @@ if (!function_exists('adminDashboardStatistics')) {
         $citiesRes = mysqli_query($con, "SELECT COUNT(*) AS total, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active FROM cities");
         $cities = mysqli_fetch_assoc($citiesRes);
 
-        $courses = dashboard_fetch_row($con, "SELECT COUNT(*) AS total, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active FROM courses");
+        // Packages live in the `courses` table under kind = 'package', so counting the table
+        // whole reported every package as a course too. Split, so the two tiles on the dashboard
+        // describe different things instead of one containing the other.
+        $courses = dashboard_fetch_row($con, "SELECT COUNT(*) AS total, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active FROM courses WHERE kind <> 'package'");
+        $packages = dashboard_fetch_row($con, "SELECT COUNT(*) AS total, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active FROM courses WHERE kind = 'package'");
 
         return [
             'status' => 'success',
@@ -679,6 +683,10 @@ if (!function_exists('adminDashboardStatistics')) {
                     'courses' => [
                         'total' => (int)($courses['total'] ?? 0),
                         'active' => (int)($courses['active'] ?? 0)
+                    ],
+                    'packages' => [
+                        'total' => (int)($packages['total'] ?? 0),
+                        'active' => (int)($packages['active'] ?? 0)
                     ]
                 ],
                 'sales' => dashboard_sales_summary($con),
