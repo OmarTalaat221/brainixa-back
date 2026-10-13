@@ -1,5 +1,43 @@
 <?php
 require_once __DIR__ . '/../../../helpers/language.php';
+// app_text() for the bilingual refusal when a category is still in use.
+require_once __DIR__ . '/../../../helpers/app_settings.php';
+
+
+if (!function_exists('course_category_make_code')) {
+    /**
+     * A code for a category whose creator did not type one.
+     *
+     * `course_categories.code` is NOT NULL and UNIQUE, so "optional" cannot mean "empty" - it has
+     * to mean "we work one out". Derived from the name where that gives something usable: an
+     * English name slugs cleanly, an Arabic one does not survive a slug at all, so that falls
+     * back to a short readable stamp instead of an empty string.
+     */
+    function course_category_make_code($con, string $nameEn, string $nameAr): string {
+        $base = strtolower(trim($nameEn !== '' ? $nameEn : $nameAr));
+        $base = preg_replace('/[^a-z0-9]+/', '-', $base);
+        $base = trim((string)$base, '-');
+
+        if ($base === '' || strlen($base) < 2) {
+            $base = 'category';
+        }
+        $base = substr($base, 0, 60);
+
+        // UNIQUE means a clash is a refusal, not a warning - so walk until the name is free.
+        $candidate = $base;
+        for ($i = 2; $i < 200; $i++) {
+            $stmt = mysqli_prepare($con, "SELECT id FROM course_categories WHERE code = ? LIMIT 1");
+            mysqli_stmt_bind_param($stmt, "s", $candidate);
+            mysqli_stmt_execute($stmt);
+            if (!mysqli_fetch_assoc(mysqli_stmt_get_result($stmt))) {
+                return $candidate;
+            }
+            $candidate = $base . '-' . $i;
+        }
+
+        return $base . '-' . bin2hex(random_bytes(3));
+    }
+}
 
 if (!function_exists('adminListCourseCategories')) {
     function adminListCourseCategories($con) {
@@ -123,8 +161,19 @@ if (!function_exists('adminCreateCourseCategory')) {
         $image = trim($body['image'] ?? '');
         $isActive = isset($body['is_active']) ? (int)$body['is_active'] : 1;
 
-        if (empty($code) || empty($nameAr)) {
-            return ['status' => 'error', 'message' => 'Course category code and name_ar are required'];
+        // Only the Arabic name is actually required. The code is worked out when left blank, and
+        // the English name falls back to the Arabic one - it always did, the form just insisted
+        // on it anyway.
+        if (empty($nameAr)) {
+            return ['status' => 'error', 'message' => app_text(
+                $con,
+                'اسم التصنيف بالعربي مطلوب.',
+                'The Arabic category name is required.'
+            )];
+        }
+
+        if ($code === '') {
+            $code = course_category_make_code($con, $nameEn, $nameAr);
         }
 
         $stmt = mysqli_prepare($con, "INSERT INTO course_categories (code, image, is_active) VALUES (?, ?, ?)");
@@ -209,12 +258,39 @@ if (!function_exists('adminDeleteCourseCategory')) {
             return ['status' => 'error', 'message' => 'Course category ID is required'];
         }
 
+        // Courses point at this category with a foreign key that has no ON DELETE action, so the
+        // database refuses the delete. That refusal used to be handed to the admin verbatim -
+        // "Cannot delete or update a parent row: a foreign key constraint fails ..." - which says
+        // nothing about what to do. Ask first, and answer in terms of the thing they can act on.
+        $useStmt = mysqli_prepare($con, "SELECT COUNT(*) AS total FROM courses WHERE category_id = ?");
+        mysqli_stmt_bind_param($useStmt, "i", $id);
+        mysqli_stmt_execute($useStmt);
+        $inUse = (int)(mysqli_fetch_assoc(mysqli_stmt_get_result($useStmt))['total'] ?? 0);
+
+        if ($inUse > 0) {
+            return [
+                'status' => 'error',
+                'error_code' => 'category_in_use',
+                'courses_count' => $inUse,
+                'message' => app_text(
+                    $con,
+                    'مينفعش تمسح التصنيف ده لأن فيه ' . $inUse . ' كورس مرتبط بيه. غيّر تصنيف الكورسات دي الأول، أو اعمله غير نشط عشان يختفي من القوائم.',
+                    'This category cannot be deleted because ' . $inUse . ' course(s) still use it. Move those courses to another category first, or set it inactive to hide it from the lists.'
+                ),
+            ];
+        }
+
         $stmt = mysqli_prepare($con, "DELETE FROM course_categories WHERE id = ?");
         mysqli_stmt_bind_param($stmt, "i", $id);
 
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => 'Failed to delete course category: ' . mysqli_error($con)];
         }
+
+        // Translations are the category's own rows, not another feature's data.
+        $trStmt = mysqli_prepare($con, "DELETE FROM course_categories_translations WHERE course_category_id = ?");
+        mysqli_stmt_bind_param($trStmt, "i", $id);
+        mysqli_stmt_execute($trStmt);
 
         return ['status' => 'success', 'message' => 'Course category deleted successfully'];
     }
