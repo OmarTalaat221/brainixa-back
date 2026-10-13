@@ -267,7 +267,12 @@ if (!function_exists('adminDeleteCourseCategory')) {
         mysqli_stmt_execute($useStmt);
         $inUse = (int)(mysqli_fetch_assoc(mysqli_stmt_get_result($useStmt))['total'] ?? 0);
 
-        if ($inUse > 0) {
+        // `with_courses` is the deliberate second choice: delete the category AND the courses
+        // filed under it. Opt-in only, because it is not a tidy-up - deleting a course cascades
+        // to its units, questions and resources, and none of that comes back.
+        $withCourses = !empty($body['with_courses']) || ($_GET['with_courses'] ?? '') === '1';
+
+        if ($inUse > 0 && !$withCourses) {
             return [
                 'status' => 'error',
                 'error_code' => 'category_in_use',
@@ -278,6 +283,44 @@ if (!function_exists('adminDeleteCourseCategory')) {
                     'This category cannot be deleted because ' . $inUse . ' course(s) still use it. Move those courses to another category first, or set it inactive to hide it from the lists.'
                 ),
             ];
+        }
+
+        if ($inUse > 0 && $withCourses) {
+            // One line nobody may cross: a course somebody paid for. Deleting it strips access
+            // the student bought and leaves their subscription and payment rows pointing at a
+            // course that no longer exists - student_subscription_courses has no foreign key to
+            // catch it. There is no undo and no refund path, so this is refused outright rather
+            // than confirmed away.
+            $soldStmt = mysqli_prepare($con, "SELECT COUNT(DISTINCT ss.student_id) AS students
+                FROM student_subscription_courses ssc
+                JOIN student_subscriptions ss ON ss.id = ssc.student_subscription_id
+                JOIN courses c ON c.id = ssc.course_id
+                WHERE c.category_id = ? AND ss.is_active = 1");
+            mysqli_stmt_bind_param($soldStmt, "i", $id);
+            mysqli_stmt_execute($soldStmt);
+            $subscribed = (int)(mysqli_fetch_assoc(mysqli_stmt_get_result($soldStmt))['students'] ?? 0);
+
+            if ($subscribed > 0) {
+                return [
+                    'status' => 'error',
+                    'error_code' => 'courses_have_students',
+                    'students_count' => $subscribed,
+                    'courses_count' => $inUse,
+                    'message' => app_text(
+                        $con,
+                        'مينفعش يتحذف: فيه ' . $subscribed . ' طالب مشترك في كورسات التصنيف ده. امسح أو انقل الكورسات دي بنفسك الأول.',
+                        'Cannot delete: ' . $subscribed . ' student(s) are subscribed to courses in this category. Remove or move those courses yourself first.'
+                    ),
+                ];
+            }
+
+            // Cascades take the units, questions, resources, translations and teacher links.
+            $delCourses = mysqli_prepare($con, "DELETE FROM courses WHERE category_id = ?");
+            mysqli_stmt_bind_param($delCourses, "i", $id);
+            if (!mysqli_stmt_execute($delCourses)) {
+                return ['status' => 'error', 'message' => 'Failed to delete the category courses: ' . mysqli_error($con)];
+            }
+            $deletedCourses = mysqli_stmt_affected_rows($delCourses);
         }
 
         $stmt = mysqli_prepare($con, "DELETE FROM course_categories WHERE id = ?");
@@ -292,6 +335,18 @@ if (!function_exists('adminDeleteCourseCategory')) {
         mysqli_stmt_bind_param($trStmt, "i", $id);
         mysqli_stmt_execute($trStmt);
 
-        return ['status' => 'success', 'message' => 'Course category deleted successfully'];
+        $deletedCourses = $deletedCourses ?? 0;
+
+        return [
+            'status' => 'success',
+            'deleted_courses' => $deletedCourses,
+            'message' => $deletedCourses > 0
+                ? app_text(
+                    $con,
+                    'تم حذف التصنيف و' . $deletedCourses . ' كورس كانوا تحته.',
+                    'The category and ' . $deletedCourses . ' course(s) under it were deleted.'
+                )
+                : app_text($con, 'تم حذف التصنيف.', 'Course category deleted successfully'),
+        ];
     }
 }
