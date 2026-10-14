@@ -14,6 +14,16 @@ if (!function_exists('teacherRegister')) {
         $specialization = trim($body['specialization'] ?? '');
         $image = trim($body['image'] ?? '');
 
+        // These columns have always existed on `teachers`, and the public application form has
+        // always sent them - but this handler never read them, so every applicant's sample
+        // lesson video was thrown away at the door. The video is the one thing the application
+        // is judged on, which made the form ask for something nobody could ever watch.
+        $video = trim($body['video'] ?? '');
+        $experience = trim($body['experience'] ?? '');
+        $qualifications = trim($body['qualifications'] ?? '');
+        $biography = trim($body['biography'] ?? '');
+        $description = trim($body['description'] ?? '');
+
         $subjectIds = [];
         if (isset($body['subject_ids']) && is_array($body['subject_ids'])) {
             foreach ($body['subject_ids'] as $sid) {
@@ -50,8 +60,13 @@ if (!function_exists('teacherRegister')) {
         $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
         $primarySubjectId = $subjectIds[0];
 
-        $stmt = mysqli_prepare($con, "INSERT INTO teachers (name, email, password, subject_id, city_id, whatsapp, specialization, image, is_email_verified, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)");
-        mysqli_stmt_bind_param($stmt, "sssiisss", $name, $email, $hashedPassword, $primarySubjectId, $cityId, $whatsapp, $specialization, $image);
+        $stmt = mysqli_prepare($con, "INSERT INTO teachers (name, email, password, subject_id, city_id, whatsapp, specialization, image, video, experience, qualifications, biography, description, is_email_verified, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)");
+        mysqli_stmt_bind_param(
+            $stmt,
+            "sssiissssssss",
+            $name, $email, $hashedPassword, $primarySubjectId, $cityId, $whatsapp,
+            $specialization, $image, $video, $experience, $qualifications, $biography, $description
+        );
 
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => 'Failed to create teacher account: ' . mysqli_error($con)];
@@ -81,6 +96,7 @@ if (!function_exists('teacherRegister')) {
                     'whatsapp' => $whatsapp,
                     'specialization' => $specialization,
                     'image' => $image,
+                    'video' => $video,
                     'is_email_verified' => 0,
                     'is_active' => 0,
                     'subjects' => $expandedSubjects,
