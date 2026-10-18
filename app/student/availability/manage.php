@@ -27,13 +27,22 @@ if (!function_exists('studentListAvailableSlots')) {
 
         $teacherId = (int)($_GET['teacher_id'] ?? 0);
         $courseId = (int)($_GET['course_id'] ?? 0);
-        if ($teacherId <= 0 && $courseId <= 0) {
-            return ['status' => 'error', 'message' => 'teacher_id or course_id is required'];
-        }
+        // Neither filter is required. Demanding a teacher or a course before answering left
+        // the student staring at an empty calendar with nothing to pick from and no way to
+        // discover what to ask for.
+        //
+        // Without a course named, the answer is the packages this student actually has - not
+        // every package on the platform. Booking already refuses a slot the student has no
+        // subscription for, so listing them was offering a calendar full of dates that each
+        // turned into an error on the way back.
+        $courseIds = $courseId > 0
+            ? null
+            : availability_student_course_ids($con, $studentId);
 
         return availability_list_slots($con, [
             'teacher_id' => $teacherId ?: null,
             'course_id' => $courseId ?: null,
+            'course_ids' => $courseIds,
             'subject_id' => $_GET['subject_id'] ?? null,
             'date_from' => $_GET['date_from'] ?? $_GET['from'] ?? null,
             'date_to' => $_GET['date_to'] ?? $_GET['to'] ?? null,

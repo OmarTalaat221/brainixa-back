@@ -146,3 +146,41 @@ if (!function_exists('notify_consultation_cancelled')) {
         }
     }
 }
+
+if (!function_exists('notify_consultation_started')) {
+    /**
+     * The consultation has just been started. This is the one notification the student is
+     * actually waiting for: it is what tells them the hour has come and the room is open.
+     */
+    function notify_consultation_started($con, int $slotId, int $studentId, int $teacherId): void {
+        if ($studentId <= 0) return;
+
+        $teacherName = consultation_person_name($con, 'teachers', $teacherId);
+        $with = $teacherName !== '' ? " مع {$teacherName}" : '';
+
+        @send_notification_to_users(
+            $con, 'student', [$studentId],
+            'بدأت الاستشارة',
+            "بدأت الاستشارة{$with} الآن، يمكنك الدخول.",
+            ['type' => 'consultation_started', 'slot_id' => $slotId],
+            'system', null, ['push']
+        );
+    }
+}
+
+if (!function_exists('notify_consultation_ended')) {
+    function notify_consultation_ended($con, int $slotId, int $studentId, int $teacherId): void {
+        if ($studentId <= 0) return;
+
+        $teacherName = consultation_person_name($con, 'teachers', $teacherId);
+        $with = $teacherName !== '' ? " مع {$teacherName}" : '';
+
+        @send_notification_to_users(
+            $con, 'student', [$studentId],
+            'انتهت الاستشارة',
+            "انتهت الاستشارة{$with}.",
+            ['type' => 'consultation_ended', 'slot_id' => $slotId],
+            'system', null, ['push']
+        );
+    }
+}

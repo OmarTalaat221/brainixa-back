@@ -1681,6 +1681,26 @@ $routes = [
         },
     ],
     [
+        "method" => "POST",
+        "path" => "/brain-ixa/teacher/consultations/start",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/teacher/consultations/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherStartConsultation($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/teacher/consultations/end",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/teacher/consultations/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherEndConsultation($con, $teacherData);
+        },
+    ],
+    [
         "method" => "DELETE",
         "path" => "/brain-ixa/teacher/consultations",
         "handler" => function ($con) {
@@ -4960,6 +4980,41 @@ $routes = [
             },
         ],
         [
+            // Approve or refuse a booking a student made, and start / end the consultation.
+            // The student's screen is waiting on the last two.
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/consultations/respond",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/consultations/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_consultations');
+                return adminRespondToConsultationBooking($con, $adminData);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/consultations/start",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/consultations/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_consultations');
+                return adminStartConsultation($con, $adminData);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/consultations/end",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/consultations/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_consultations');
+                return adminEndConsultation($con, $adminData);
+            },
+        ],
+        [
             "method" => "POST",
             "path" => "/brain-ixa/admin/consultations/recurring",
             "handler" => function ($con) {
@@ -5063,6 +5118,30 @@ $routes = [
             },
         ],
         [
+            // Start / end a package session. The meeting link stays hidden from the students
+            // booked into it until it has been started, or its own hour has arrived.
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/availability/start",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/availability/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_sessions');
+                return adminStartAvailabilitySlot($con);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/availability/end",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/availability/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_sessions');
+                return adminEndAvailabilitySlot($con);
+            },
+        ],
+        [
             "method" => "POST",
             "path" => "/brain-ixa/admin/availability/generate",
             "handler" => function ($con) {
@@ -5154,6 +5233,26 @@ $routes = [
                 include_once "./app/teacher/availability/manage.php";
                 $teacherData = teacherAuthMiddleware();
                 return teacherGenerateAvailabilitySlots($con, $teacherData);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/teacher/availability/start",
+            "handler" => function ($con) {
+                include_once "./middlewares/teacherauthmiddleware.php";
+                include_once "./app/teacher/availability/manage.php";
+                $teacherData = teacherAuthMiddleware();
+                return teacherStartAvailabilitySlot($con, $teacherData);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/teacher/availability/end",
+            "handler" => function ($con) {
+                include_once "./middlewares/teacherauthmiddleware.php";
+                include_once "./app/teacher/availability/manage.php";
+                $teacherData = teacherAuthMiddleware();
+                return teacherEndAvailabilitySlot($con, $teacherData);
             },
         ],
         [

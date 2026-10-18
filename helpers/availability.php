@@ -154,6 +154,24 @@ if (!function_exists('availability_slot_bookings')) {
     }
 }
 
+if (!function_exists('availability_has_live_state')) {
+    /**
+     * Migration 109 adds `started_at` and `ended_at`. Until it has run a session never reads
+     * as started by a person; the clock gate below still works on its own.
+     */
+    function availability_has_live_state($con): bool {
+        static $cached = null;
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $res = @mysqli_query($con, "SHOW COLUMNS FROM `teacher_availability_slots` LIKE 'started_at'");
+
+        return $cached = (bool)($res && mysqli_num_rows($res) > 0);
+    }
+}
+
 if (!function_exists('get_availability_slot_details')) {
     function get_availability_slot_details($con, int $slotId, bool $withBookings = true): ?array {
         $stmt = mysqli_prepare($con, "SELECT * FROM teacher_availability_slots WHERE id = ? LIMIT 1");
@@ -179,6 +197,36 @@ if (!function_exists('availability_format_slot_row')) {
         $row['created_by_id'] = $row['created_by_id'] ? (int)$row['created_by_id'] : null;
         $row['remaining_places'] = max(0, $row['capacity'] - $row['booked_count']);
         $row['is_bookable'] = $row['status'] === 'available' && $row['remaining_places'] > 0;
+
+        $row['started_at'] = $row['started_at'] ?? null;
+        $row['ended_at'] = $row['ended_at'] ?? null;
+
+        // TWO GATES, AND EITHER ONE OPENS THE LINK.
+        //
+        // The clock is the rule: the session's own hour decides, so a teacher who forgets to
+        // press Start does not lock out a room full of students who turned up on time. Ten
+        // minutes early, because people arrive early.
+        //
+        // The human is the override: Start opens it ahead of the window when a session is
+        // brought forward, and End closes it for good - which is why End is checked first and
+        // beats everything. Without the clock a forgotten press locks everyone out; without
+        // the human a forgotten End would leave the link open all night.
+        $row['window_opens_at'] = date(
+            'Y-m-d H:i:s',
+            strtotime($row['slot_date'] . ' ' . $row['start_time']) - (10 * 60)
+        );
+        $row['window_closes_at'] = date(
+            'Y-m-d H:i:s',
+            strtotime($row['slot_date'] . ' ' . $row['end_time'])
+        );
+
+        $now = function_exists('get_request_now')
+            ? get_request_now()->format('Y-m-d H:i:s')
+            : date('Y-m-d H:i:s');
+        $inWindow = $now >= $row['window_opens_at'] && $now <= $row['window_closes_at'];
+
+        $row['is_live'] = empty($row['ended_at'])
+            && (!empty($row['started_at']) || $inWindow);
 
         $labels = availability_slot_status_labels($row['status']);
         $row['status_label_ar'] = $labels['ar'];
@@ -525,6 +573,14 @@ if (!function_exists('availability_book_slot')) {
         }
 
         $subscription = availability_find_student_subscription($con, $studentId, $slot['course_id']);
+        // A slot with no course belongs to no package, so there is no subscription that could
+        // cover it. Without this, find_student_subscription(null) matches ANY active
+        // subscription the student has and lets them into a session they bought nothing for.
+        // An admin booking (requireSubscription = false) may still place somebody in one.
+        if ($requireSubscription && empty($slot['course_id'])) {
+            return ['status' => 'error', 'message' => 'This slot does not belong to any package'];
+        }
+
         if ($requireSubscription && !$subscription) {
             return ['status' => 'error', 'message' => 'This student has no active subscription covering this slot'];
         }
@@ -645,6 +701,22 @@ if (!function_exists('availability_list_slots')) {
             $params[] = (int)$filters['teacher_id'];
             $types .= 'i';
         }
+        // The packages one student is allowed to see sessions of.
+        //
+        // A slot with no course belongs to no package, so it is NOT shown. Letting those
+        // through offers every student a session they bought nothing to earn.
+        //
+        // isset, not !empty: a student with no packages at all has an EMPTY list, and that is
+        // an answer - skipping the filter there would show them every package on the platform.
+        if (isset($filters['course_ids']) && is_array($filters['course_ids'])) {
+            $ids = array_values(array_unique(array_filter(array_map('intval', $filters['course_ids']))));
+            if (!empty($ids)) {
+                $where[] = 's.course_id IN (' . implode(',', $ids) . ')';
+            } else {
+                // In no package: there is nothing on this calendar for them.
+                $where[] = '1 = 0';
+            }
+        }
         if (!empty($filters['course_id'])) {
             $where[] = 's.course_id = ?';
             $params[] = (int)$filters['course_id'];
@@ -711,5 +783,151 @@ if (!function_exists('availability_list_slots')) {
         }
 
         return build_paginated_response($rows, $page, $limit, $total);
+    }
+}
+
+if (!function_exists('availability_student_course_ids')) {
+    /**
+     * The packages a student is actually in, as course ids.
+     *
+     * Read from the same two tables as availability_find_student_subscription rather than
+     * through the subscriptions app file, so the calendar does not depend on that file being
+     * included.
+     *
+     * NULL means "do not filter at all": that is the answer for the demo account, which
+     * reaches the whole catalogue without owning a subscription row. An EMPTY ARRAY is a real
+     * answer - a student who is in no package - and the caller must tell the two apart.
+     */
+    function availability_student_course_ids($con, int $studentId): ?array {
+        if (function_exists('student_is_demo_account') && student_is_demo_account($con, $studentId)) {
+            return null;
+        }
+
+        $stmt = mysqli_prepare($con, "
+            SELECT DISTINCT ssc.course_id
+            FROM student_subscriptions ss
+            JOIN student_subscription_courses ssc ON ssc.student_subscription_id = ss.id
+            WHERE ss.student_id = ? AND ss.is_active = 1
+        ");
+        if (!$stmt) {
+            return null;
+        }
+
+        mysqli_stmt_bind_param($stmt, "i", $studentId);
+        mysqli_stmt_execute($stmt);
+        $res = mysqli_stmt_get_result($stmt);
+
+        $ids = [];
+        while ($row = mysqli_fetch_assoc($res)) {
+            $courseId = (int)$row['course_id'];
+            if ($courseId > 0) {
+                $ids[] = $courseId;
+            }
+        }
+
+        return $ids;
+    }
+}
+
+if (!function_exists('availability_set_live_state')) {
+    /**
+     * Start or end a package session.
+     *
+     * The same shape as consultations: a stored state, not a link somebody opens privately.
+     * Until Start is pressed - or the session's own hour arrives - the students booked into
+     * the slot are shown no meeting link at all.
+     *
+     * $teacherScope limits the action to one teacher's own slots; null lets the admin act on
+     * any of them.
+     */
+    function availability_set_live_state($con, int $slotId, bool $start, ?int $teacherScope = null): array {
+        if ($slotId <= 0) {
+            return ['status' => 'error', 'message' => 'Slot id is required'];
+        }
+
+        if (!availability_has_live_state($con)) {
+            return ['status' => 'error', 'message' => 'هذه الميزة تحتاج تحديث قاعدة البيانات (migration 109).'];
+        }
+
+        $scopeClause = $teacherScope !== null ? " AND teacher_id = " . (int)$teacherScope : "";
+        $slot = mysqli_fetch_assoc(mysqli_query(
+            $con,
+            "SELECT id, teacher_id, slot_date, start_time, started_at, ended_at FROM teacher_availability_slots WHERE id = {$slotId}{$scopeClause} LIMIT 1"
+        ));
+
+        if (!$slot) {
+            return ['status' => 'error', 'message' => 'Slot not found'];
+        }
+
+        if ($start) {
+            // Starting again after an end re-opens it, so a session cut off by a dropped
+            // connection is simply started once more.
+            $sql = "UPDATE teacher_availability_slots SET started_at = NOW(), ended_at = NULL, status = 'in_progress' WHERE id = ?";
+        } else {
+            if (empty($slot['started_at'])) {
+                return ['status' => 'error', 'message' => 'لم تبدأ هذه الحصة بعد.'];
+            }
+            $sql = "UPDATE teacher_availability_slots SET ended_at = NOW(), status = 'completed' WHERE id = ?";
+        }
+
+        $stmt = mysqli_prepare($con, $sql);
+        mysqli_stmt_bind_param($stmt, "i", $slotId);
+        if (!mysqli_stmt_execute($stmt)) {
+            return ['status' => 'error', 'message' => 'تعذر تحديث حالة الحصة'];
+        }
+
+        availability_notify_live_state($con, $slotId, $slot, $start);
+
+        return [
+            'status' => 'success',
+            'message' => $start ? 'بدأت الحصة، وتم إخطار الطلاب.' : 'انتهت الحصة، وتم إخطار الطلاب.',
+            'data' => get_availability_slot_details($con, $slotId)
+        ];
+    }
+}
+
+if (!function_exists('availability_notify_live_state')) {
+    /**
+     * Everybody holding a live booking on this slot, told at once.
+     *
+     * A package session holds several students, unlike a consultation, so this is one send to
+     * many rather than one each. Best-effort: the session must still start even if the
+     * notification service is unreachable.
+     */
+    function availability_notify_live_state($con, int $slotId, array $slot, bool $start): void {
+        $res = @mysqli_query($con, "SELECT student_id FROM availability_slot_bookings WHERE slot_id = {$slotId} AND status <> 'cancelled'");
+        if (!$res) {
+            return;
+        }
+
+        $studentIds = [];
+        while ($row = mysqli_fetch_assoc($res)) {
+            $studentId = (int)$row['student_id'];
+            if ($studentId > 0) {
+                $studentIds[] = $studentId;
+            }
+        }
+
+        if (empty($studentIds)) {
+            return;
+        }
+
+        $when = trim(($slot['slot_date'] ?? '') . ' ' . substr((string)($slot['start_time'] ?? ''), 0, 5));
+
+        if ($start) {
+            $title = 'بدأت الحصة';
+            $body = 'بدأت حصتك' . ($when !== '' ? " ({$when})" : '') . ' الآن، يمكنك الدخول.';
+            $type = 'availability_session_started';
+        } else {
+            $title = 'انتهت الحصة';
+            $body = 'انتهت حصتك' . ($when !== '' ? " ({$when})" : '') . '.';
+            $type = 'availability_session_ended';
+        }
+
+        @send_notification_to_users(
+            $con, 'student', $studentIds, $title, $body,
+            ['type' => $type, 'slot_id' => $slotId],
+            'system', null, ['push']
+        );
     }
 }
