@@ -1,9 +1,9 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Brainixa Backend - Session Changelog API (update-5)",
-    "version": "5.0.0",
-    "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code."
+    "title": "Brainixa Backend - Session Changelog API (update-6)",
+    "version": "6.0.0",
+    "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109."
   },
   "servers": [
     {
@@ -1126,6 +1126,28 @@
                 }
               }
             }
+          },
+          "started_at": {
+            "type": "string",
+            "nullable": true,
+            "description": "update-6. When Start was pressed, if it was."
+          },
+          "ended_at": {
+            "type": "string",
+            "nullable": true,
+            "description": "update-6. When End was pressed. Beats everything else."
+          },
+          "window_opens_at": {
+            "type": "string",
+            "description": "update-6. Ten minutes before start_time on slot_date; the clock gate opens here."
+          },
+          "window_closes_at": {
+            "type": "string",
+            "description": "update-6. end_time on slot_date; the clock gate closes here."
+          },
+          "is_live": {
+            "type": "boolean",
+            "description": "update-6. TRUE when the session is open to its students, and the ONLY thing a client should gate the meeting link on - not the clock it could read itself, and not the booking.\n\nTwo gates, either one opens it, and ended_at closes it over both:\n  ended_at set           -> false, always\n  started_at set         -> true (a person started it, possibly early)\n  now within the window  -> true (the hour itself)\n\nThe clock is there because a teacher who forgets to press Start would otherwise lock out a room of students who arrived on time; the person is there because a forgotten End would leave the link open all night."
           }
         }
       },
@@ -1759,6 +1781,110 @@
             "type": "string",
             "nullable": true,
             "description": "Whatever identifies this specific sale in its own channel - a payment reference, a subscription code, a bank transfer reference."
+          }
+        }
+      },
+      "ConsultationSlot": {
+        "type": "object",
+        "description": "One consultation. Every slot belongs to a real teacher.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "teacher_id": {
+            "type": "integer"
+          },
+          "teacher": {
+            "type": "object"
+          },
+          "student_id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "student": {
+            "type": "object",
+            "nullable": true
+          },
+          "subject_id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "slot_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "slot_time": {
+            "type": "string",
+            "example": "18:30:00"
+          },
+          "meeting_link": {
+            "type": "string",
+            "nullable": true,
+            "description": "update-6, migration 107. Where the consultation is held. Null on every row until that migration has run - the column is read behind an existence check, so the endpoint still answers."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "available",
+              "pending",
+              "approved",
+              "in_progress",
+              "completed",
+              "cancelled"
+            ],
+            "description": "available -> pending (a student booked) -> approved (admin or teacher agreed) -> in_progress (started) -> completed (ended). A VARCHAR since migration 108, not an enum: an enum stores a value it has not been told about as the empty string and says nothing."
+          },
+          "is_booked": {
+            "type": "integer",
+            "enum": [
+              0,
+              1
+            ]
+          },
+          "booked_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "started_at": {
+            "type": "string",
+            "nullable": true,
+            "description": "update-6, migration 108."
+          },
+          "ended_at": {
+            "type": "string",
+            "nullable": true,
+            "description": "update-6, migration 108."
+          },
+          "is_live": {
+            "type": "boolean",
+            "description": "started_at is set and ended_at is not. Gate the Join button on this, never on `approved` - approved only means the date is agreed, and a link handed out then is an invitation to wait in an empty room. Consultations have no end time recorded, so unlike a package session there is no clock gate here: a person starts and ends them."
+          },
+          "is_active": {
+            "type": "integer",
+            "enum": [
+              0,
+              1
+            ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "educational",
+              "psychological"
+            ]
+          },
+          "meeting_type": {
+            "type": "string",
+            "enum": [
+              "video_call",
+              "chat",
+              "online",
+              "offline"
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
           }
         }
       }
@@ -6729,9 +6855,9 @@
     "/student/home": {
       "get": {
         "tags": [
-          "old / Student / Home"
+          "update-6 / Student / Home"
         ],
-        "summary": "Student home/dashboard (now grade-filtered sessions)",
+        "summary": "MOVED FROM `old / Student / Home`. Student home/dashboard (now grade-filtered sessions)",
         "security": [
           {
             "StudentAuth": []
@@ -6748,7 +6874,8 @@
               }
             }
           }
-        }
+        },
+        "description": "\n\nupdate-6 (CHANGED): every row of `subscribed_courses` now carries `kind` (`normal` | `package`). The list already included packages - a package IS a course, with kind = 'package' - but without the field the app could not tell one from the other."
       }
     },
     "/student/exams/submit": {
@@ -9049,10 +9176,10 @@
     "/teacher/consultations/recurring": {
       "post": {
         "tags": [
-          "update-2 / Teacher / Consultations (NEW - update-2)"
+          "update-6 / Teacher / Consultations"
         ],
-        "summary": "update-2 (NEW): Create a repeating weekly consultation slot for the logged-in teacher, bounded by an end date",
-        "description": "update-2 (Teacher): companion to the existing single-slot POST /teacher/consultations. Instead of creating one dated slot, this materializes one consultation_slots row PER matching calendar date for every selected weekday between today and end_date (inclusive) — e.g. days=[Saturday,Thursday] with end_date next month creates one slot for every upcoming Saturday and every upcoming Thursday up to that date, all at the same slot_time. Safety caps: end_date cannot be more than 180 days out, and a single call cannot generate more than 200 dates total (split into multiple calls if needed). Any date that would collide with an existing (teacher_id, slot_time, slot_date) slot is silently skipped, not duplicated or erroring the whole request — the response reports how many were created vs skipped. Exactly ONE notification is sent for the whole batch (not one per generated slot).",
+        "summary": "MOVED FROM `update-2 / Teacher / Consultations (NEW - update-2)`. update-2 (NEW): Create a repeating weekly consultation slot for the logged-in teacher, bounded by an end date",
+        "description": "update-2 (Teacher): companion to the existing single-slot POST /teacher/consultations. Instead of creating one dated slot, this materializes one consultation_slots row PER matching calendar date for every selected weekday between today and end_date (inclusive) — e.g. days=[Saturday,Thursday] with end_date next month creates one slot for every upcoming Saturday and every upcoming Thursday up to that date, all at the same slot_time. Safety caps: end_date cannot be more than 180 days out, and a single call cannot generate more than 200 dates total (split into multiple calls if needed). Any date that would collide with an existing (teacher_id, slot_time, slot_date) slot is silently skipped, not duplicated or erroring the whole request — the response reports how many were created vs skipped. Exactly ONE notification is sent for the whole batch (not one per generated slot).\n\nupdate-6 (CHANGED): accepts an optional `meeting_link`, written to every slot the run creates (migration 107).",
         "security": [
           {
             "TeacherAuth": []
@@ -9179,10 +9306,10 @@
     "/admin/consultations/recurring": {
       "post": {
         "tags": [
-          "update-2 / Admin / Consultations (NEW - update-2)"
+          "update-6 / Admin / Consultations"
         ],
-        "summary": "update-2 (NEW), update-4 (ENHANCED): Admin creates a repeating weekly consultation slot on behalf of any teacher - optionally already booked for one student",
-        "description": "update-2 (Admin): identical behavior and validation to POST /teacher/consultations/recurring (same shared core function under the hood, so the two routes cannot drift out of sync), except the target teacher is chosen by the admin via `teacher_id` in the body instead of being taken from the caller's own auth token. Returns an error if teacher_id doesn't reference an existing teacher.\n\nupdate-4: accepts an optional `student_id`. With it, the whole run is created already booked for that student and both sides get one summary notification; the response then also carries `booked_for_student_id` and `booked_count`. Without it, nothing changes.",
+        "summary": "MOVED FROM `update-2 / Admin / Consultations (NEW - update-2)`. update-2 (NEW), update-4 (ENHANCED): Admin creates a repeating weekly consultation slot on behalf of any teacher - optionally already booked for one student",
+        "description": "update-2 (Admin): identical behavior and validation to POST /teacher/consultations/recurring (same shared core function under the hood, so the two routes cannot drift out of sync), except the target teacher is chosen by the admin via `teacher_id` in the body instead of being taken from the caller's own auth token. Returns an error if teacher_id doesn't reference an existing teacher.\n\nupdate-4: accepts an optional `student_id`. With it, the whole run is created already booked for that student and both sides get one summary notification; the response then also carries `booked_for_student_id` and `booked_count`. Without it, nothing changes.\n\nupdate-6 (CHANGED): accepts an optional `meeting_link`, written to every slot the run creates (migration 107). Where that migration has not run the field is ignored rather than failing the call.",
         "security": [
           {
             "AdminAuth": []
@@ -13781,10 +13908,10 @@
     "/student/availability": {
       "get": {
         "tags": [
-          "update-4 / Scheduling / Dated Availability"
+          "update-6 / Scheduling / Dated Availability"
         ],
-        "summary": "update-4 (NEW): Available slots I can book (student)",
-        "description": "Only slots that are still open: status 'available', with a free place, and dated today or later. `teacher_id` or `course_id` is required - this endpoint never returns the whole platform's calendar.",
+        "summary": "MOVED FROM `update-4 / Scheduling / Dated Availability`. update-4 (NEW): Available slots I can book (student)",
+        "description": "Only slots that are still open: status 'available', with a free place, and dated today or later. `teacher_id` or `course_id` is required - this endpoint never returns the whole platform's calendar.\n\nupdate-6 (CHANGED): teacher_id and course_id are no longer required - asking for a scope before answering left the student with an empty calendar and no way to discover what to ask for.\n\nWithout a course named, the answer is the packages THIS student holds, not every package on the platform. Booking already refused a slot they had no subscription for, so listing them was offering dates that each turned into an error on the way back. A student in no package gets an empty list, which is the honest answer, and a slot attached to no course is returned to nobody: it belongs to no package, so it belongs to no student.",
         "security": [
           {
             "StudentAuth": []
@@ -13797,7 +13924,7 @@
             "schema": {
               "type": "integer"
             },
-            "description": "Required unless course_id is given."
+            "description": "OPTIONAL since update-6."
           },
           {
             "name": "course_id",
@@ -13805,7 +13932,7 @@
             "schema": {
               "type": "integer"
             },
-            "description": "Required unless teacher_id is given."
+            "description": "OPTIONAL since update-6. Narrows the slots to one package."
           },
           {
             "name": "date_from",
@@ -13824,13 +13951,6 @@
               "format": "date"
             },
             "description": "Alias: `to`. Inclusive. Pair it with date_from to fetch exactly one month for a calendar screen."
-          },
-          {
-            "name": "course_id",
-            "in": "query",
-            "schema": {
-              "type": "integer"
-            }
           },
           {
             "name": "subject_id",
@@ -14021,10 +14141,10 @@
     "/student/availability/book": {
       "post": {
         "tags": [
-          "update-4 / Scheduling / Dated Availability"
+          "update-6 / Scheduling / Dated Availability"
         ],
-        "summary": "update-4 (NEW): Book a slot (student)",
-        "description": "Books the authenticated student into the slot. Unlike the admin/teacher routes this REQUIRES a live subscription: the request is rejected when the student has no active subscription covering the slot's course, and when the slot's date falls after that subscription's end date - which for a package is set by `courses.duration_months`. The teacher is notified.",
+        "summary": "MOVED FROM `update-4 / Scheduling / Dated Availability`. update-4 (NEW): Book a slot (student)",
+        "description": "Books the authenticated student into the slot. Unlike the admin/teacher routes this REQUIRES a live subscription: the request is rejected when the student has no active subscription covering the slot's course, and when the slot's date falls after that subscription's end date - which for a package is set by `courses.duration_months`. The teacher is notified.\n\nupdate-6 (CHANGED): a slot with NO course is refused outright. Asked about one, the subscription lookup matched ANY active subscription the student had and let them into a session they had bought nothing for. An admin booking a student into such a slot by hand still works - that is a person deciding, not a gap.",
         "security": [
           {
             "StudentAuth": []
@@ -20350,6 +20470,546 @@
           }
         }
       }
+    },
+    "/admin/consultations/respond": {
+      "post": {
+        "tags": [
+          "update-6 / Admin / Consultations"
+        ],
+        "summary": "update-6 (NEW): Admin approves or refuses a booking a student made",
+        "description": "Until now the teacher was the only one who could move a booking, so a request could sit unanswered with nobody able to settle it.\n\napprove -> status becomes approved, and the student is notified.\nreject -> the consultation is FREED, not marked refused: is_booked = 0, student_id = NULL, booked_at = NULL, status = available. The date is still open and the next student should be able to take it. The student is told either way.\n\nRefused if the consultation has no student on it.",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id",
+                  "action"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "approve",
+                      "reject"
+                    ],
+                    "description": "Also accepts approved / accept / accepted, and rejected / decline / declined / cancel / cancelled."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The consultation as it now stands.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "error"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ConsultationSlot"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/consultations/start": {
+      "post": {
+        "tags": [
+          "update-6 / Admin / Consultations"
+        ],
+        "summary": "update-6 (NEW): Start the consultation - the student's screen waits on this",
+        "description": "Reveals the meeting link to the student booked into this consultation and pushes them a `consultation_started` notification. Stamps started_at, clears any previous ended_at and sets status = in_progress; starting again after an end re-opens it.\n\nA consultation records a time but no END time, so there is no clock gate here as there is on package sessions: a person starts it and a person ends it.\n\nREQUIRES MIGRATION 108. Without it the endpoint answers status = error saying the database needs updating, rather than reporting a success that changed nothing.",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The consultation, now in_progress.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "error"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ConsultationSlot"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/consultations/end": {
+      "post": {
+        "tags": [
+          "update-6 / Admin / Consultations"
+        ],
+        "summary": "update-6 (NEW): End the consultation and tell the student it is over",
+        "description": "Stamps ended_at, sets status = completed and pushes `consultation_ended`. Refused if the consultation was never started.\n\nREQUIRES MIGRATION 108.",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The consultation, now completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "error"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ConsultationSlot"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/consultations/start": {
+      "post": {
+        "tags": [
+          "update-6 / Teacher / Consultations"
+        ],
+        "summary": "update-6 (NEW): Teacher starts their own consultation",
+        "description": "Reveals the meeting link to the student booked into this consultation and pushes them a `consultation_started` notification. Stamps started_at, clears any previous ended_at and sets status = in_progress; starting again after an end re-opens it.\n\nA consultation records a time but no END time, so there is no clock gate here as there is on package sessions: a person starts it and a person ends it.\n\nREQUIRES MIGRATION 108. Without it the endpoint answers status = error saying the database needs updating, rather than reporting a success that changed nothing.\n\nScoped to the caller's own consultations.",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The consultation, now in_progress.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "error"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ConsultationSlot"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/consultations/end": {
+      "post": {
+        "tags": [
+          "update-6 / Teacher / Consultations"
+        ],
+        "summary": "update-6 (NEW): Teacher ends their own consultation",
+        "description": "Stamps ended_at, sets status = completed and pushes `consultation_ended`. Refused if the consultation was never started.\n\nREQUIRES MIGRATION 108.\n\nScoped to the caller's own consultations.",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The consultation, now completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "error"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ConsultationSlot"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/availability/start": {
+      "post": {
+        "tags": [
+          "update-6 / Scheduling / Dated Availability"
+        ],
+        "summary": "update-6 (NEW): Start a package session - this shows its students the link",
+        "description": "Reveals the meeting link to every student booked into the session and pushes them an `availability_session_started` notification - one send to many, since a package session holds several students, unlike a consultation.\n\nThis is the manual half of the gate. The session also opens on its own from ten minutes before start_time until end_time, so pressing this is only needed to open one EARLY - see `is_live` on the slot schema.\n\nREQUIRES MIGRATION 109.\n\nThe admin may start any session.",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The session, now in_progress.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "error"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AvailabilitySlot"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/availability/end": {
+      "post": {
+        "tags": [
+          "update-6 / Scheduling / Dated Availability"
+        ],
+        "summary": "update-6 (NEW): End a package session and tell its students it is over",
+        "description": "Stamps ended_at, sets status = completed and pushes `availability_session_ended`. ended_at beats both gates, so this closes the link even inside the session's own hour. Refused if the session was never started.\n\nREQUIRES MIGRATION 109.",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The session, now completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "error"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AvailabilitySlot"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/availability/start": {
+      "post": {
+        "tags": [
+          "update-6 / Scheduling / Dated Availability"
+        ],
+        "summary": "update-6 (NEW): Teacher starts one of their own package sessions",
+        "description": "Reveals the meeting link to every student booked into the session and pushes them an `availability_session_started` notification - one send to many, since a package session holds several students, unlike a consultation.\n\nThis is the manual half of the gate. The session also opens on its own from ten minutes before start_time until end_time, so pressing this is only needed to open one EARLY - see `is_live` on the slot schema.\n\nREQUIRES MIGRATION 109.\n\nScoped to the caller's own sessions.",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The session, now in_progress.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "error"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AvailabilitySlot"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/availability/end": {
+      "post": {
+        "tags": [
+          "update-6 / Scheduling / Dated Availability"
+        ],
+        "summary": "update-6 (NEW): Teacher ends one of their own package sessions",
+        "description": "Stamps ended_at, sets status = completed and pushes `availability_session_ended`. ended_at beats both gates, so this closes the link even inside the session's own hour. Refused if the session was never started.\n\nREQUIRES MIGRATION 109.\n\nScoped to the caller's own sessions.",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The session, now completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "error"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AvailabilitySlot"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "tags": [
@@ -20411,9 +21071,6 @@
       "name": "old / Student / Exams"
     },
     {
-      "name": "old / Student / Home"
-    },
-    {
       "name": "old / Student / Notifications"
     },
     {
@@ -20471,9 +21128,6 @@
       "name": "update-1 / Student / Onboard (NEW - update-1)"
     },
     {
-      "name": "update-2 / Admin / Consultations (NEW - update-2)"
-    },
-    {
       "name": "update-2 / Admin / Courses (NEW - update-2)"
     },
     {
@@ -20487,9 +21141,6 @@
     },
     {
       "name": "update-2 / Student / Sessions"
-    },
-    {
-      "name": "update-2 / Teacher / Consultations (NEW - update-2)"
     },
     {
       "name": "update-2 / Teacher / Courses (NEW - update-2)"
@@ -20673,6 +21324,18 @@
     },
     {
       "name": "update-5 / Teacher / Questions"
+    },
+    {
+      "name": "update-6 / Admin / Consultations"
+    },
+    {
+      "name": "update-6 / Teacher / Consultations"
+    },
+    {
+      "name": "update-6 / Scheduling / Dated Availability"
+    },
+    {
+      "name": "update-6 / Student / Home"
     }
   ]
 }
