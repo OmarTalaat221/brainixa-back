@@ -30,6 +30,26 @@ if (!function_exists('manual_sale_enum_value')) {
     }
 }
 
+if (!function_exists('manual_sale_split_phone')) {
+    /**
+     * Keeps the dial code out of the number itself.
+     *
+     * The dashboard's phone control hands back one joined string ("201012345678") and the
+     * chosen country's dial code separately. Storing both as given would leave the code in
+     * the column twice, and "+20" + "201012345678" is not a phone number.
+     */
+    function manual_sale_split_phone(string $phone, string $dial): array {
+        $phone = preg_replace('/[^0-9]/', '', $phone) ?? '';
+        $dial = preg_replace('/[^0-9]/', '', $dial) ?? '';
+
+        if ($dial !== '' && $phone !== '' && str_starts_with($phone, $dial)) {
+            $phone = substr($phone, strlen($dial));
+        }
+
+        return [$phone, $dial];
+    }
+}
+
 if (!function_exists('manual_sale_row')) {
     function manual_sale_row(array $row): array {
         $row['id'] = (int)$row['id'];
@@ -191,8 +211,10 @@ if (!function_exists('adminCreateManualSale')) {
             return ['status' => 'error', 'message' => 'student_name and item_name are required'];
         }
 
-        $phone = trim($body['phone'] ?? '');
-        $dial = ltrim(trim($body['phone_country_code'] ?? ''), '+');
+        [$phone, $dial] = manual_sale_split_phone(
+            trim($body['phone'] ?? ''),
+            trim($body['phone_country_code'] ?? '')
+        );
         $itemType = manual_sale_enum_value($body['item_type'] ?? null, 'item_type', 'course');
         $channel = manual_sale_enum_value($body['channel'] ?? null, 'channel', 'whatsapp');
         $status = manual_sale_enum_value($body['status'] ?? null, 'status', 'pending');
@@ -246,7 +268,7 @@ if (!function_exists('adminUpdateManualSale')) {
 
         // Only what was sent is written, so changing one cell does not blank the rest of the
         // row - and a field sent empty really does empty it.
-        foreach (['student_name', 'phone', 'item_name', 'currency', 'note', 'paid_at'] as $text) {
+        foreach (['student_name', 'item_name', 'currency', 'note', 'paid_at'] as $text) {
             if (array_key_exists($text, $body)) {
                 $fields[] = "{$text} = ?";
                 $types .= 's';
@@ -255,10 +277,18 @@ if (!function_exists('adminUpdateManualSale')) {
             }
         }
 
-        if (array_key_exists('phone_country_code', $body)) {
+        // Split together, because the number is only meaningful next to its dial code.
+        if (array_key_exists('phone', $body) || array_key_exists('phone_country_code', $body)) {
+            [$phone, $dial] = manual_sale_split_phone(
+                trim((string)($body['phone'] ?? '')),
+                trim((string)($body['phone_country_code'] ?? ''))
+            );
+            $fields[] = 'phone = ?';
+            $types .= 's';
+            $values[] = $phone;
             $fields[] = 'phone_country_code = ?';
             $types .= 's';
-            $values[] = ltrim(trim((string)$body['phone_country_code']), '+');
+            $values[] = $dial;
         }
 
         foreach (['item_type' => 'course', 'channel' => 'whatsapp', 'status' => 'pending'] as $field => $default) {
