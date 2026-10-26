@@ -61,7 +61,7 @@ if (!function_exists('adminListAdmins')) {
         $countRes = mysqli_stmt_get_result($countStmt);
         $totalRecords = (int)(mysqli_fetch_assoc($countRes)['total'] ?? 0);
 
-        $sql = "SELECT a.id, a.name, a.email, a.role, a.role_id, a.image, a.is_active, a.created_at, r.name AS role_name, r.code AS role_code FROM admins a LEFT JOIN roles r ON a.role_id = r.id {$whereClause} ORDER BY a.id DESC LIMIT ? OFFSET ?";
+        $sql = "SELECT a.id, a.name, a.email, a.phone, a.role, a.role_id, a.image, a.is_active, a.created_at, r.name AS role_name, r.code AS role_code FROM admins a LEFT JOIN roles r ON a.role_id = r.id {$whereClause} ORDER BY a.id DESC LIMIT ? OFFSET ?";
         
         $params[] = $limit;
         $params[] = $offset;
@@ -91,7 +91,7 @@ if (!function_exists('adminGetAdmin')) {
         $id = (int)($_GET['id'] ?? read_json_body()['id'] ?? 0);
         if ($id <= 0) return ['status' => 'error', 'message' => trans('admin_not_found')];
 
-        $stmt = mysqli_prepare($con, "SELECT a.id, a.name, a.email, a.role, a.role_id, a.image, a.is_active, a.created_at, r.name AS role_name, r.code AS role_code FROM admins a LEFT JOIN roles r ON a.role_id = r.id WHERE a.id = ? LIMIT 1");
+        $stmt = mysqli_prepare($con, "SELECT a.id, a.name, a.email, a.phone, a.role, a.role_id, a.image, a.is_active, a.created_at, r.name AS role_name, r.code AS role_code FROM admins a LEFT JOIN roles r ON a.role_id = r.id WHERE a.id = ? LIMIT 1");
         mysqli_stmt_bind_param($stmt, "i", $id);
         mysqli_stmt_execute($stmt);
         $res = mysqli_stmt_get_result($stmt);
@@ -136,8 +136,10 @@ if (!function_exists('adminCreateAdminUser')) {
         }
 
         $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
-        $stmt = mysqli_prepare($con, "INSERT INTO admins (name, email, password, role, role_id, image, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)");
-        mysqli_stmt_bind_param($stmt, "ssssisi", $name, $email, $hashedPassword, $role, $roleId, $image, $isActive);
+        $phone = trim($body['phone'] ?? '');
+
+        $stmt = mysqli_prepare($con, "INSERT INTO admins (name, email, phone, password, role, role_id, image, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        mysqli_stmt_bind_param($stmt, "sssssisi", $name, $email, $phone, $hashedPassword, $role, $roleId, $image, $isActive);
 
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => 'Failed to create admin user: ' . mysqli_error($con)];
@@ -183,6 +185,14 @@ if (!function_exists('adminUpdateAdminUser')) {
         if (!empty($name)) {
             $stmt = mysqli_prepare($con, "UPDATE admins SET name = ? WHERE id = ?");
             mysqli_stmt_bind_param($stmt, "si", $name, $id);
+            mysqli_stmt_execute($stmt);
+        }
+        // Sent at all, even empty: that is how a number gets cleared. Testing for a value
+        // instead would make a wrongly typed number impossible to remove.
+        if (array_key_exists('phone', $body)) {
+            $phone = trim($body['phone']);
+            $stmt = mysqli_prepare($con, "UPDATE admins SET phone = ? WHERE id = ?");
+            mysqli_stmt_bind_param($stmt, "si", $phone, $id);
             mysqli_stmt_execute($stmt);
         }
         if (!empty($email)) {

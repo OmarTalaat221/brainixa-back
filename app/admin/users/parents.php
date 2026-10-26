@@ -39,7 +39,7 @@ if (!function_exists('adminListParents')) {
             $totalRecords = (int)(mysqli_fetch_assoc($countRes)['total'] ?? 0);
         }
 
-        $sql = "SELECT p.id, p.name, p.email, p.image, p.city_id, p.is_email_verified, p.is_active, p.created_at FROM parents p {$whereClause} ORDER BY p.id DESC LIMIT ? OFFSET ?";
+        $sql = "SELECT p.id, p.name, p.email, p.phone, p.image, p.city_id, p.is_email_verified, p.is_active, p.created_at FROM parents p {$whereClause} ORDER BY p.id DESC LIMIT ? OFFSET ?";
         
         $params[] = $limit;
         $params[] = $offset;
@@ -95,7 +95,7 @@ if (!function_exists('adminGetParent')) {
         $id = (int)($_GET['id'] ?? read_json_body()['id'] ?? 0);
         if ($id <= 0) return ['status' => 'error', 'message' => 'Parent ID is required'];
 
-        $stmt = mysqli_prepare($con, "SELECT id, name, email, image, city_id, is_email_verified, is_active, created_at FROM parents WHERE id = ? LIMIT 1");
+        $stmt = mysqli_prepare($con, "SELECT id, name, email, phone, image, city_id, is_email_verified, is_active, created_at FROM parents WHERE id = ? LIMIT 1");
         mysqli_stmt_bind_param($stmt, "i", $id);
         mysqli_stmt_execute($stmt);
         $res = mysqli_stmt_get_result($stmt);
@@ -159,9 +159,11 @@ if (!function_exists('adminCreateParent')) {
             return ['status' => 'error', 'message' => 'Email already registered'];
         }
 
+        $phone = trim($body['phone'] ?? '');
+
         $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
-        $stmt = mysqli_prepare($con, "INSERT INTO parents (name, email, password, image, city_id, is_email_verified, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)");
-        mysqli_stmt_bind_param($stmt, "ssssiii", $name, $email, $hashedPassword, $image, $cityId, $isVerified, $isActive);
+        $stmt = mysqli_prepare($con, "INSERT INTO parents (name, email, phone, password, image, city_id, is_email_verified, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        mysqli_stmt_bind_param($stmt, "sssssiii", $name, $email, $phone, $hashedPassword, $image, $cityId, $isVerified, $isActive);
 
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => 'Failed to create parent: ' . mysqli_error($con)];
@@ -207,6 +209,15 @@ if (!function_exists('adminUpdateParent')) {
         if (!empty($name)) {
             $stmt = mysqli_prepare($con, "UPDATE parents SET name = ? WHERE id = ?");
             mysqli_stmt_bind_param($stmt, "si", $name, $id);
+            mysqli_stmt_execute($stmt);
+        }
+        // Sent at all, even empty: that is how a number gets cleared. The fields above test
+        // for a value instead, which quietly makes them impossible to empty - a parent whose
+        // number was entered wrongly could never have it removed.
+        if (array_key_exists('phone', $body)) {
+            $phone = trim($body['phone']);
+            $stmt = mysqli_prepare($con, "UPDATE parents SET phone = ? WHERE id = ?");
+            mysqli_stmt_bind_param($stmt, "si", $phone, $id);
             mysqli_stmt_execute($stmt);
         }
         if (!empty($email)) {

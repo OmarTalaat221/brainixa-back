@@ -201,7 +201,9 @@ if (!function_exists('adminUpdateStudent')) {
             mysqli_stmt_bind_param($stmt, "si", $image, $id);
             mysqli_stmt_execute($stmt);
         }
-        if (!empty($phone)) {
+        // Sent at all, even empty: that is how a number gets cleared. Testing for a value
+        // instead made a wrongly typed number impossible to remove.
+        if (array_key_exists('phone', $body)) {
             $stmt = mysqli_prepare($con, "UPDATE students SET phone = ? WHERE id = ?");
             mysqli_stmt_bind_param($stmt, "si", $phone, $id);
             mysqli_stmt_execute($stmt);

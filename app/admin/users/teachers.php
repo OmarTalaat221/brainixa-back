@@ -243,7 +243,9 @@ if (!function_exists('adminUpdateTeacher')) {
             mysqli_stmt_bind_param($stmt, "si", $hashedPassword, $id);
             mysqli_stmt_execute($stmt);
         }
-        if (!empty($whatsapp)) {
+        // Sent at all, even empty: that is how a number gets cleared. Testing for a value
+        // instead made a wrongly typed number impossible to remove.
+        if (array_key_exists('whatsapp', $body)) {
             $stmt = mysqli_prepare($con, "UPDATE teachers SET whatsapp = ? WHERE id = ?");
             mysqli_stmt_bind_param($stmt, "si", $whatsapp, $id);
             mysqli_stmt_execute($stmt);
