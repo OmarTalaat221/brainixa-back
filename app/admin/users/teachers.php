@@ -167,10 +167,10 @@ if (!function_exists('adminCreateTeacher')) {
             return ['status' => 'error', 'message' => 'Name, email, and password are required'];
         }
 
-        if (empty($subjectAssignments)) {
-            return ['status' => 'error', 'message' => 'At least one subject_id is required'];
-        }
-
+        // A subject is no longer demanded here. An admin often creates the account first and
+        // works out what the teacher will teach afterwards, and `teachers.subject_id` has
+        // always been nullable with ON DELETE SET NULL - so a teacher with no subject is a
+        // state the schema already allows and the rest of the code already handles.
         $checkStmt = mysqli_prepare($con, "SELECT id FROM teachers WHERE email = ? LIMIT 1");
         mysqli_stmt_bind_param($checkStmt, "s", $email);
         mysqli_stmt_execute($checkStmt);
@@ -179,7 +179,8 @@ if (!function_exists('adminCreateTeacher')) {
         }
 
         $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
-        $primarySubjectId = $subjectIds[0];
+        // Null rather than a missing index when nothing was chosen; the column takes it.
+        $primarySubjectId = $subjectIds[0] ?? null;
 
         $stmt = mysqli_prepare($con, "INSERT INTO teachers (name, email, password, subject_id, city_id, whatsapp, specialization, image, video, experience, biography, description, qualifications, is_email_verified, is_active, can_view_profile) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         mysqli_stmt_bind_param($stmt, "sssiissssssssiii", $name, $email, $hashedPassword, $primarySubjectId, $cityId, $whatsapp, $specialization, $image, $video, $experience, $biography, $description, $qualifications, $isVerified, $isActive, $canViewProfile);
