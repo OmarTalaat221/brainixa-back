@@ -430,12 +430,19 @@ if (!function_exists('getPublicLandingConfig')) {
 
         $aboutUsData = getPublicAboutUsConfig($con)['data'] ?? null;
 
+        // The landing page's hero backgrounds. Added alongside `banners` rather than replacing
+        // it: `banners` is what the student app reads, and nothing already shipped may change
+        // shape. A client that does not know this key simply ignores it.
+        require_once __DIR__ . '/../hero_slides/manage.php';
+        $heroSlides = getPublicHeroSlides($con, $langCode);
+
         return [
             'status' => 'success',
             'data' => [
                 'language' => $langCode,
                 'settings' => $settings,
                 'banners' => $banners,
+                'hero_slides' => $heroSlides,
                 'courses' => $websiteCourses,
                 'books' => $websiteBooks,
                 'about_us' => $aboutUsData,

@@ -750,6 +750,16 @@ $routes = [
         },
     ],
     [
+        // The website's hero backgrounds. Public and read-only: the landing page is seen by
+        // visitors who have not signed in.
+        "method" => "GET",
+        "path" => "/brain-ixa/hero-slides",
+        "handler" => function ($con) {
+            include_once "./app/admin/hero_slides/manage.php";
+            return publicHeroSlides($con);
+        },
+    ],
+    [
         "method" => "POST",
         "path" => "/brain-ixa/banners/view",
         "handler" => function ($con) {
@@ -3030,6 +3040,64 @@ $routes = [
                 $adminData = adminAuthMiddleware();
                 requirePermission($con, $adminData, 'manage_banners');
                 return adminGetBannerViews($con);
+            },
+        ],
+
+        // Hero slides: the landing page hero's own backgrounds. Separate from banners on
+        // purpose - banners also feed the student app's home screen.
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/hero-slides",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/hero_slides/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_hero_slides');
+                return adminListHeroSlides($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/hero-slides/show",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/hero_slides/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_hero_slides');
+                return adminGetHeroSlide($con);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/hero-slides",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/hero_slides/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_hero_slides');
+                return adminCreateHeroSlide($con);
+            },
+        ],
+        [
+            "method" => "PUT",
+            "path" => "/brain-ixa/admin/hero-slides",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/hero_slides/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_hero_slides');
+                return adminUpdateHeroSlide($con);
+            },
+        ],
+        [
+            "method" => "DELETE",
+            "path" => "/brain-ixa/admin/hero-slides",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/hero_slides/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_hero_slides');
+                return adminDeleteHeroSlide($con);
             },
         ],
 
