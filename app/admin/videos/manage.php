@@ -765,10 +765,8 @@ if (!function_exists('adminCreateVideo')) {
         );
 
 
-        $durationSeconds = (int)(
-            $body['duration_seconds']
-            ?? $body['duration']
-            ?? 0
+        $durationSeconds = parse_duration_to_seconds(
+            $body['duration_seconds'] ?? $body['duration'] ?? 0
         );
 
         $orderNum = isset($body['order_num']) && (int)$body['order_num'] > 0
@@ -1156,21 +1154,10 @@ if (!function_exists('adminUpdateVideo')) {
         $durationSeconds = null;
 
 
-        if (
-            isset(
-                $body['duration_seconds']
-            )
-        ) {
-
-            $durationSeconds =
-                (int)$body['duration_seconds'];
-
-        } elseif (
-            isset($body['duration'])
-        ) {
-
-            $durationSeconds =
-                (int)$body['duration'];
+        if (isset($body['duration_seconds'])) {
+            $durationSeconds = parse_duration_to_seconds($body['duration_seconds']);
+        } elseif (isset($body['duration'])) {
+            $durationSeconds = parse_duration_to_seconds($body['duration']);
         }
 
 

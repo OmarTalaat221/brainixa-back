@@ -165,7 +165,7 @@ if (!function_exists('teacherCreateVideo')) {
         $descEn = trim($body['description_en'] ?? $descAr);
 
         $code = trim($body['code'] ?? $body['video_code'] ?? ('video-' . uniqid()));
-        $durationSeconds = (int)($body['duration_seconds'] ?? $body['duration'] ?? 0);
+        $durationSeconds = parse_duration_to_seconds($body['duration_seconds'] ?? $body['duration'] ?? 0);
         $publishStatus = in_array(strtolower($body['publish_status'] ?? ''), ['draft', 'published']) ? strtolower($body['publish_status']) : 'published';
         $isActive = 1;
         $videoUrl = video_normalize_url($body['video_url'] ?? $body['url'] ?? null);

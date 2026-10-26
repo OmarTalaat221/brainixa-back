@@ -153,7 +153,7 @@ if (!function_exists('generateStudentAffiliateCode')) {
         }
 
         if (empty($code)) {
-            $code = "NAJEH-STU-" . $studentId;
+            $code = "BRX-STU-" . $studentId;
 
             // Ensure uniqueness
             $checkStmt = mysqli_prepare($con, "SELECT id FROM students WHERE affiliate_code = ? LIMIT 1");
@@ -161,7 +161,7 @@ if (!function_exists('generateStudentAffiliateCode')) {
                 mysqli_stmt_bind_param($checkStmt, "s", $code);
                 mysqli_stmt_execute($checkStmt);
                 if (mysqli_fetch_assoc(mysqli_stmt_get_result($checkStmt))) {
-                    $code = "NAJEH-STU-" . $studentId . "-" . rand(100, 999);
+                    $code = "BRX-STU-" . $studentId . "-" . rand(100, 999);
                 }
             }
 

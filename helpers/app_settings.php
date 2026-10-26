@@ -81,6 +81,30 @@ if (!function_exists('app_settings')) {
     }
 }
 
+if (!function_exists('platform_name')) {
+    /**
+     * What the platform calls itself, for text the user reads.
+     *
+     * The automatic-report sender was the string 'منصة نجاح' written into the code - the name
+     * of the platform this one was built from. A white-label twin cannot carry its origin's
+     * name in a column the customer reads, and the next rebrand should not need a code change,
+     * so it comes from site_settings like every other piece of branding.
+     */
+    function platform_name($con, string $langCode = 'ar'): string {
+        $settings = app_settings($con);
+        $name = $langCode === 'en'
+            ? ($settings['site_name_en'] ?? '')
+            : ($settings['site_name_ar'] ?? '');
+
+        $name = trim((string)$name);
+        if ($name === '') {
+            $name = trim((string)($settings['site_name_en'] ?? $settings['site_name_ar'] ?? ''));
+        }
+
+        return $name !== '' ? $name : 'Brainixa';
+    }
+}
+
 if (!function_exists('app_setting_flag')) {
     function app_setting_flag($con, string $key, bool $default = false): bool {
         $settings = app_settings($con);

@@ -193,7 +193,7 @@ if (!function_exists('adminCreateVideo')) {
         $descEn = trim($body['description_en'] ?? $descAr);
 
         $code = trim($body['code'] ?? $body['video_code'] ?? ('video-' . uniqid()));
-        $durationSeconds = (int)($body['duration_seconds'] ?? $body['duration'] ?? 0);
+        $durationSeconds = parse_duration_to_seconds($body['duration_seconds'] ?? $body['duration'] ?? 0);
         $publishStatus = in_array(strtolower($body['publish_status'] ?? ''), ['draft', 'published']) ? strtolower($body['publish_status']) : 'published';
         $isActive = isset($body['is_active']) ? (int)$body['is_active'] : 1;
 
@@ -252,7 +252,9 @@ if (!function_exists('adminUpdateVideo')) {
 
         $unitId = isset($body['unit_id']) ? (int)$body['unit_id'] : (int)$existing['unit_id'];
         $code = isset($body['code']) ? trim($body['code']) : null;
-        $durationSeconds = isset($body['duration_seconds']) ? (int)$body['duration_seconds'] : (isset($body['duration']) ? (int)$body['duration'] : null);
+        $durationSeconds = isset($body['duration_seconds'])
+            ? parse_duration_to_seconds($body['duration_seconds'])
+            : (isset($body['duration']) ? parse_duration_to_seconds($body['duration']) : null);
         $publishStatus = isset($body['publish_status']) ? strtolower(trim($body['publish_status'])) : null;
         $isActive = isset($body['is_active']) ? (int)$body['is_active'] : null;
 

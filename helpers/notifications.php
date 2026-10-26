@@ -225,7 +225,9 @@ if (!function_exists('_send_notification_to_users_impl')) {
                     $failedCount++;
                     $error = $access['message'] ?? 'Failed to obtain Firebase access token';
                 } else {
-                    $result = sendFirebaseNotification($access['access_token'], $access['project_id'], $token, $title, $body, $data, "", get_notification_click_link($userType));
+                    // The image travels inside $data, so it is also handed to Firebase as the
+                    // message's own image field - some clients read one, some the other.
+                    $result = sendFirebaseNotification($access['access_token'], $access['project_id'], $token, $title, $body, $data, (string)($data['image'] ?? ''), get_notification_click_link($userType));
                     if (($result['status'] ?? 'error') === 'success') {
                         $isSent = 1;
                         $sentCount++;

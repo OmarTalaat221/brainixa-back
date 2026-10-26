@@ -324,7 +324,7 @@ if (!function_exists('adminCreateSubscriptionCode')) {
         }
 
         $createdCodes = [];
-        $prefix = trim($body['code_prefix'] ?? 'NAJEH');
+        $prefix = trim($body['code_prefix'] ?? 'BRX');
 
         for ($i = 0; $i < $batchCount; $i++) {
             $codeStr = trim($body['code'] ?? '');

@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../../helpers/functions.php';
 require_once __DIR__ . '/../../../helpers/language.php';
+require_once __DIR__ . '/../../../helpers/app_settings.php';
 require_once __DIR__ . '/../../../helpers/upload.php';
 
 if (!function_exists('get_student_report_details')) {
@@ -61,7 +62,9 @@ if (!function_exists('get_student_report_details')) {
             $senderName = $row['admin_name'] ?: 'إدارة المدرسة';
             $senderRole = 'إدارة (تلقائي)';
         } elseif ($row['sender_type'] === 'system') {
-            $senderName = 'منصة نجاح';
+            // Read from site_settings, not written here: this is the platform's own name
+            // shown to a customer, and it used to be the upstream platform's.
+            $senderName = platform_name($con);
             $senderRole = 'تقرير تلقائي';
         } elseif ($row['sender_type'] === 'admin') {
             $senderName = $row['admin_name'] ?: 'إدارة المدرسة';

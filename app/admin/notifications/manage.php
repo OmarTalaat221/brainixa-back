@@ -22,6 +22,15 @@ if (!function_exists('adminSendNotification')) {
         $message = trim($body['body'] ?? $body['message'] ?? '');
         $data = is_array($body['data'] ?? null) ? $body['data'] : [];
 
+        // Optional picture. It rides inside `data`, which is already stored as JSON on the
+        // notification row and already forwarded to Firebase as the message's data payload -
+        // so nothing needs a new column and no existing response changes shape. The dashboard
+        // uploads the file first and sends the resulting URL.
+        $image = trim((string)($body['image'] ?? $body['image_url'] ?? ''));
+        if ($image !== '') {
+            $data['image'] = $image;
+        }
+
         $rawChannels = $body['channels'] ?? ['push'];
         if (!is_array($rawChannels)) { $rawChannels = [$rawChannels]; }
         $channels = array_values(array_intersect(array_map(fn($c) => strtolower(trim($c)), $rawChannels), ['push', 'email']));

@@ -462,3 +462,50 @@ if (!function_exists('demo_account_condition')) {
         return "{$prefix}is_demo_account = 0";
     }
 }
+
+if (!function_exists('parse_duration_to_seconds')) {
+    /**
+     * Turns a lesson length into a whole number of seconds.
+     *
+     * The dashboards collect this as text - "12:15" for twelve minutes and fifteen seconds,
+     * "01:14:10" for an hour and a quarter - and every handler used to cast that straight to
+     * int. PHP reads "12:15" as 12, so a twelve-minute lesson was stored as twelve seconds and
+     * every total built on it was wrong.
+     *
+     * A bare number still means seconds, which is what `duration_seconds` has always meant and
+     * what any client sending it expects.
+     */
+    function parse_duration_to_seconds($value): int {
+        if ($value === null || $value === '') {
+            return 0;
+        }
+
+        if (is_int($value) || is_float($value)) {
+            return max(0, (int)$value);
+        }
+
+        $text = trim((string)$value);
+        if ($text === '') {
+            return 0;
+        }
+
+        if (strpos($text, ':') === false) {
+            return max(0, (int)$text);
+        }
+
+        // Read right to left - seconds, then minutes, then hours - so the same code handles
+        // "MM:SS" and "HH:MM:SS" without having to know which one it was given.
+        $parts = array_reverse(array_map('trim', explode(':', $text)));
+        $multipliers = [1, 60, 3600];
+        $total = 0;
+
+        foreach ($parts as $index => $part) {
+            if ($index > 2 || !is_numeric($part)) {
+                return 0;
+            }
+            $total += (int)$part * $multipliers[$index];
+        }
+
+        return max(0, $total);
+    }
+}
