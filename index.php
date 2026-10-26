@@ -3045,6 +3045,62 @@ $routes = [
 
         // Hero slides: the landing page hero's own backgrounds. Separate from banners on
         // purpose - banners also feed the student app's home screen.
+        // The manual sales sheet: what was sold off the platform, written down by the owner.
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/manual-sales",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/manual_sales/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_manual_sales');
+                return adminListManualSales($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/manual-sales/show",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/manual_sales/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_manual_sales');
+                return adminGetManualSale($con);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/manual-sales",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/manual_sales/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_manual_sales');
+                return adminCreateManualSale($con, $adminData);
+            },
+        ],
+        [
+            "method" => "PUT",
+            "path" => "/brain-ixa/admin/manual-sales",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/manual_sales/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_manual_sales');
+                return adminUpdateManualSale($con);
+            },
+        ],
+        [
+            "method" => "DELETE",
+            "path" => "/brain-ixa/admin/manual-sales",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/manual_sales/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_manual_sales');
+                return adminDeleteManualSale($con);
+            },
+        ],
         [
             "method" => "GET",
             "path" => "/brain-ixa/admin/hero-slides",
