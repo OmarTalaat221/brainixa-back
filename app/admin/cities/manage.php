@@ -100,6 +100,40 @@ if (!function_exists('adminGetCity')) {
     }
 }
 
+if (!function_exists('city_code_from_name')) {
+    /**
+     * A unique code for a city whose admin did not type one.
+     *
+     * Latin letters are kept, everything else becomes a hyphen, and an Arabic-only name leaves
+     * nothing usable - so it falls back to a plain "city" stem. A numeric suffix is added
+     * until the code is free, because the column is UNIQUE and two governorates can easily
+     * reduce to the same stem.
+     */
+    function city_code_from_name($con, string $name): string {
+        $slug = strtolower(trim($name));
+        $slug = preg_replace('/[^a-z0-9]+/i', '-', $slug);
+        $slug = trim((string)$slug, '-');
+
+        if ($slug === '') {
+            $slug = 'city';
+        }
+        $slug = substr($slug, 0, 80);
+
+        $candidate = $slug;
+        $suffix = 1;
+        while (true) {
+            $stmt = mysqli_prepare($con, "SELECT id FROM cities WHERE code = ? LIMIT 1");
+            mysqli_stmt_bind_param($stmt, "s", $candidate);
+            mysqli_stmt_execute($stmt);
+            if (!mysqli_fetch_assoc(mysqli_stmt_get_result($stmt))) {
+                return $candidate;
+            }
+            $suffix++;
+            $candidate = $slug . '-' . $suffix;
+        }
+    }
+}
+
 if (!function_exists('adminCreateCity')) {
     function adminCreateCity($con) {
         $body = read_json_body();
@@ -108,8 +142,15 @@ if (!function_exists('adminCreateCity')) {
         $nameEn = trim($body['name_en'] ?? $nameAr);
         $isActive = isset($body['is_active']) ? (int)$body['is_active'] : 1;
 
-        if (empty($code) || empty($nameAr)) {
-            return ['status' => 'error', 'message' => 'City code and name_ar are required'];
+        if (empty($nameAr)) {
+            return ['status' => 'error', 'message' => 'City name_ar is required'];
+        }
+
+        // The code is no longer asked of the admin. `cities.code` is NOT NULL and has to stay
+        // unique, so when none is given one is derived from the Arabic name - which is the
+        // only field an admin genuinely has to think about.
+        if ($code === '') {
+            $code = city_code_from_name($con, $nameAr);
         }
 
         $stmt = mysqli_prepare($con, "INSERT INTO cities (code, is_active) VALUES (?, ?)");
