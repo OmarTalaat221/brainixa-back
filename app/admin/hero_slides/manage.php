@@ -33,7 +33,7 @@ if (!function_exists('adminListHeroSlides')) {
     function adminListHeroSlides($con) {
         $activeFilter = isset($_GET['is_active']) ? (int)$_GET['is_active'] : null;
 
-        $sql = "SELECT id, title_ar, title_en, media_ar, media_en, type, link, order_num, is_active,
+        $sql = "SELECT id, title_ar, title_en, subtitle_ar, subtitle_en, btn_text_ar, btn_text_en, media_ar, media_en, type, link, order_num, is_active,
                        created_at, updated_at
                 FROM hero_slides";
         if ($activeFilter === 0 || $activeFilter === 1) {
@@ -77,7 +77,7 @@ if (!function_exists('adminGetHeroSlide')) {
             return ['status' => 'error', 'message' => 'Hero slide ID is required'];
         }
 
-        $stmt = mysqli_prepare($con, "SELECT id, title_ar, title_en, media_ar, media_en, type, link,
+        $stmt = mysqli_prepare($con, "SELECT id, title_ar, title_en, subtitle_ar, subtitle_en, btn_text_ar, btn_text_en, media_ar, media_en, type, link,
                                              order_num, is_active, created_at, updated_at
                                       FROM hero_slides WHERE id = ? LIMIT 1");
         mysqli_stmt_bind_param($stmt, "i", $id);
@@ -98,6 +98,10 @@ if (!function_exists('adminCreateHeroSlide')) {
 
         $titleAr = trim($body['title_ar'] ?? '');
         $titleEn = trim($body['title_en'] ?? '');
+        $subtitleAr = trim($body['subtitle_ar'] ?? '');
+        $subtitleEn = trim($body['subtitle_en'] ?? '');
+        $btnTextAr = trim($body['btn_text_ar'] ?? '');
+        $btnTextEn = trim($body['btn_text_en'] ?? '');
         $link = trim($body['link'] ?? '');
         $type = strtolower(trim($body['type'] ?? 'image'));
         if (!in_array($type, ['image', 'video'], true)) {
@@ -124,15 +128,20 @@ if (!function_exists('adminCreateHeroSlide')) {
         }
 
         $stmt = mysqli_prepare($con, "
-            INSERT INTO hero_slides (title_ar, title_en, media_ar, media_en, type, link, order_num, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO hero_slides (title_ar, title_en, subtitle_ar, subtitle_en, btn_text_ar, btn_text_en,
+                                     media_ar, media_en, type, link, order_num, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         if (!$stmt) {
             return ['status' => 'error', 'message' => 'Failed to prepare hero slide insert: ' . mysqli_error($con)];
         }
 
         $linkOrNull = $link !== '' ? $link : null;
-        mysqli_stmt_bind_param($stmt, "ssssssii", $titleAr, $titleEn, $mediaAr, $mediaEn, $type, $linkOrNull, $orderNum, $isActive);
+        mysqli_stmt_bind_param(
+            $stmt, "ssssssssssii",
+            $titleAr, $titleEn, $subtitleAr, $subtitleEn, $btnTextAr, $btnTextEn,
+            $mediaAr, $mediaEn, $type, $linkOrNull, $orderNum, $isActive
+        );
 
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => 'Failed to create the hero slide: ' . mysqli_error($con)];
@@ -166,6 +175,11 @@ if (!function_exists('adminUpdateHeroSlide')) {
         }
         if (array_key_exists('title_en', $body)) {
             $fields[] = 'title_en = ?'; $types .= 's'; $values[] = trim($body['title_en']);
+        }
+        foreach (['subtitle_ar', 'subtitle_en', 'btn_text_ar', 'btn_text_en'] as $copyField) {
+            if (array_key_exists($copyField, $body)) {
+                $fields[] = "$copyField = ?"; $types .= 's'; $values[] = trim($body[$copyField]);
+            }
         }
         if (array_key_exists('link', $body)) {
             $link = trim($body['link']);
@@ -262,7 +276,7 @@ if (!function_exists('getPublicHeroSlides')) {
         try {
             // is_active is selected even though the WHERE already pins it: heroSlideRow()
             // casts that column, and leaving it out would make it read a key that is not there.
-            $res = @mysqli_query($con, "SELECT id, title_ar, title_en, media_ar, media_en, type, link, order_num, is_active
+            $res = @mysqli_query($con, "SELECT id, title_ar, title_en, subtitle_ar, subtitle_en, btn_text_ar, btn_text_en, media_ar, media_en, type, link, order_num, is_active
                                         FROM hero_slides
                                         WHERE is_active = 1
                                         ORDER BY order_num ASC, id ASC");
@@ -273,9 +287,15 @@ if (!function_exists('getPublicHeroSlides')) {
         if ($res) {
             while ($row = mysqli_fetch_assoc($res)) {
                 $row = heroSlideRow($row);
-                $row['title'] = $langCode === 'en'
-                    ? ($row['title_en'] ?: $row['title_ar'])
-                    : ($row['title_ar'] ?: $row['title_en']);
+                // One resolved value per piece of copy, so the website does not repeat the
+                // language rules. Each falls back to the other language before giving up,
+                // because a slide written in Arabic only should still read in Arabic for an
+                // English visitor rather than vanish.
+                foreach (['title', 'subtitle', 'btn_text'] as $field) {
+                    $ar = $row[$field . '_ar'] ?? '';
+                    $en = $row[$field . '_en'] ?? '';
+                    $row[$field] = $langCode === 'en' ? ($en ?: $ar) : ($ar ?: $en);
+                }
                 // English falls back to the Arabic file, which is the usual case: most artwork
                 // carries no words at all and one copy serves both.
                 $row['media'] = $langCode === 'en'
