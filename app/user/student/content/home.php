@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../../../helpers/pricing.php';
 require_once __DIR__ . '/../../../content/helpers.php';
 require_once __DIR__ . '/../subscriptions/manage.php';
 require_once __DIR__ . '/../../../teacher/sessions/manage.php'; // get_class_session_details / class_session_is_available_now
+require_once __DIR__ . '/../../../teacher/consultations/manage.php'; // get_consultation_slot_details
 
 if (!function_exists('studentHome')) {
     function studentHome($con, $studentData = null) {
@@ -66,17 +67,23 @@ if (!function_exists('studentHome')) {
 
         $studentAcademicYearId = get_student_academic_year_id($con, $stId);
 
+        // A session tied to a specific course (scope='course') must be gated on course access
+        // alone - it used to also pass through on subject-wide access, which let a student with
+        // a broad subject subscription see every teacher's weekly class in that subject, not
+        // only the course they actually subscribed to. A session with no course (scope='subject',
+        // a teacher's general class for the whole subject) still goes through subject access,
+        // since that is exactly what a subject-level subscription is for.
         $subWhere = [];
+        if (!empty($courseIds)) {
+            $cList = implode(',', array_map('intval', $courseIds));
+            $subWhere[] = "(course_id IS NOT NULL AND course_id IN ({$cList}))";
+        }
         if (!empty($subjectIds)) {
             $sList = implode(',', array_map('intval', $subjectIds));
             $gradeCondition = $studentAcademicYearId
                 ? "(academic_year_id IS NULL OR academic_year_id = " . (int)$studentAcademicYearId . ")"
                 : "academic_year_id IS NULL";
-            $subWhere[] = "(subject_id IN ({$sList}) AND {$gradeCondition})";
-        }
-        if (!empty($courseIds)) {
-            $cList = implode(',', array_map('intval', $courseIds));
-            $subWhere[] = "course_id IN ({$cList})";
+            $subWhere[] = "(course_id IS NULL AND subject_id IN ({$sList}) AND {$gradeCondition})";
         }
 
         if (empty($subWhere)) {
@@ -105,6 +112,63 @@ if (!function_exists('studentHome')) {
                     }
                     $todaySessions[] = $sessDetails;
                 }
+            }
+        }
+
+        // ---- Upcoming consultations booked by this student (approved, from today onward) ----
+        // Folded into the same list the "next session" card reads, normalized to the same
+        // shape class_sessions already returns - so nothing downstream needs to learn a second
+        // vocabulary. Before this, a confirmed consultation never appeared here at all; the
+        // card only ever knew about recurring weekly classes.
+        $todayDateStr = $now->format('Y-m-d');
+        $consultRes = @mysqli_query($con, "
+            SELECT id FROM consultation_slots
+            WHERE student_id = {$stId} AND is_booked = 1 AND status = 'approved'
+              AND is_active = 1 AND slot_date >= '{$todayDateStr}'
+            ORDER BY slot_date ASC, slot_time ASC
+            LIMIT 5
+        ");
+        if ($consultRes) {
+            while ($cRow = mysqli_fetch_assoc($consultRes)) {
+                $slot = get_consultation_slot_details($con, (int)$cRow['id']);
+                if (!$slot) continue;
+
+                $isEndedConsult = !empty($slot['ended_at']);
+                $isLiveConsult = !empty($slot['is_live']);
+
+                $todaySessions[] = [
+                    'id' => $slot['id'],
+                    'teacher_id' => $slot['teacher_id'],
+                    'subject_id' => $slot['subject_id'],
+                    'course_id' => null,
+                    'course' => null,
+                    'code' => null,
+                    'scope' => 'consultation',
+                    // Additive field, ignored by anything that does not know it yet: lets the
+                    // card show "استشارة تربوية" instead of falling back to a bare subject name.
+                    'type_label' => $slot['type_label'] ?? null,
+                    'is_online' => 1,
+                    'date' => $slot['slot_date'],
+                    'session_date' => $slot['slot_date'],
+                    'start_time' => $slot['slot_time'],
+                    'end_time' => null,
+                    'subject' => $slot['subject'],
+                    'teacher' => $slot['teacher'],
+                    'meeting_link' => $slot['meeting_link'],
+                    'is_available_now' => $isLiveConsult ? 1 : 0,
+                    // Translated into the same three words class_sessions uses, so the frontend's
+                    // existing status filter keeps working without needing to know this came
+                    // from a different table.
+                    'status' => $isEndedConsult ? 'ended' : ($isLiveConsult ? 'started' : 'not_started'),
+                    'is_started' => $isLiveConsult || $isEndedConsult ? 1 : 0,
+                    'is_ended' => $isEndedConsult ? 1 : 0,
+                    // Always this student's own confirmed booking - there is no "not subscribed"
+                    // state for a consultation the way there is for a shared class.
+                    'has_access' => true,
+                    'is_subscribed' => true,
+                    'is_locked' => false,
+                    'is_open' => true,
+                ];
             }
         }
 
