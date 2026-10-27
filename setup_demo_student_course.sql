@@ -325,26 +325,30 @@ SET @student_id := (SELECT id FROM students WHERE email = @student_email LIMIT 1
 
 
 -- ─── ٧. الاشتراك: يفتح هذا الكورس تحديدًا، سارٍ ستّة أشهر ────────────────────
-INSERT INTO `student_subscriptions` (`student_id`, `subscription_type`, `start_date`, `end_date`, `is_active`)
-SELECT @student_id, 'course', NOW(), DATE_ADD(NOW(), INTERVAL 6 MONTH), 1
-FROM DUAL
-WHERE NOT EXISTS (
-    SELECT 1 FROM (
-        SELECT ss.id FROM student_subscriptions ss
-        JOIN student_subscription_courses ssc ON ssc.student_subscription_id = ss.id
-        WHERE ss.student_id = @student_id AND ssc.course_id = @course_id AND ss.is_active = 1
-    ) x
-);
-
-SET @sub_id := (
+-- مُعرَّف الاشتراك القائم (إن وُجد) يُحسَب أوّلًا، قبل أي إدراج — لأن حساب
+-- معرّف اشتراكٍ جديد عبر الربط بالكورس مستحيل بداهةً: الربط نفسه لم يُكتب بعد.
+-- هذا بالضبط ما كُسر في أوّل نسخة من هذا الملفّ: حاولت قراءة معرّف الاشتراك
+-- عبر جدول الربط قبل إدراج الربط، فجاء NULL دائمًا، وبقي الاشتراك يتيمًا —
+-- موجودًا، نشطًا، لكن غير مربوط بأي كورس. من شغّل تلك النسخة يُصلحه بملفّ
+-- fix_demo_subscription_link.sql المرفق، لا بإعادة تشغيل هذا الملفّ، لأن
+-- إعادة التشغيل هنا كانت ستُنشئ اشتراكًا يتيمًا ثانيًا بجوار الأوّل.
+SET @existing_sub_id := (
     SELECT ss.id FROM student_subscriptions ss
     JOIN student_subscription_courses ssc ON ssc.student_subscription_id = ss.id
     WHERE ss.student_id = @student_id AND ssc.course_id = @course_id AND ss.is_active = 1
     ORDER BY ss.id DESC LIMIT 1
 );
 
--- لو أُنشئ الاشتراك للتوّ، لا رابط بعد بينه وبين الكورس — يُضاف هنا، لا أعلى،
--- لأن معرّف الاشتراك (mysqli_insert_id المكافئ هنا) غير معروف قبل الإدراج.
+INSERT INTO `student_subscriptions` (`student_id`, `subscription_type`, `start_date`, `end_date`, `is_active`)
+SELECT @student_id, 'course', NOW(), DATE_ADD(NOW(), INTERVAL 6 MONTH), 1
+FROM DUAL
+WHERE @existing_sub_id IS NULL;
+
+-- الموجود إن وُجد، وإلا معرّف ما أُدرِج للتوّ — لا طريق ثالث. LAST_INSERT_ID()
+-- يبقى على قيمته السابقة ما لم يُنفَّذ إدراجٌ فعليّ، فلا خطر من قراءته هنا
+-- حين لا حاجة إليه أصلًا (حالة @existing_sub_id الموجودة).
+SET @sub_id := IF(@existing_sub_id IS NOT NULL, @existing_sub_id, LAST_INSERT_ID());
+
 INSERT INTO `student_subscription_courses` (`student_subscription_id`, `course_id`)
 SELECT @sub_id, @course_id
 FROM DUAL
