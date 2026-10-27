@@ -52,7 +52,7 @@ if (!function_exists('teacherCreateCourse')) {
         }
 
         $body = read_json_body();
-        $subjectId = (int)($body['subject_id'] ?? 0);
+        $subjectId = isset($body['subject_id']) && (int)$body['subject_id'] > 0 ? (int)$body['subject_id'] : null;
         $nameAr = trim($body['name_ar'] ?? $body['name'] ?? '');
         $nameEn = trim($body['name_en'] ?? $nameAr);
         $descAr = trim($body['description_ar'] ?? $body['description'] ?? '');
@@ -67,15 +67,15 @@ if (!function_exists('teacherCreateCourse')) {
         $durationMonths = parse_package_duration_months($body['duration_months'] ?? $body['duration'] ?? null);
         $allowVideoDownload = isset($body['allow_video_download']) ? (int)(bool)$body['allow_video_download'] : 0;
 
-        if ($subjectId <= 0) {
-            return ['status' => 'error', 'message' => 'subject_id is required'];
-        }
-
         if (empty($nameAr)) {
             return ['status' => 'error', 'message' => 'Course name (name_ar) is required'];
         }
 
-        if (!is_subject_assigned_to_teacher($con, $teacherId, $subjectId)) {
+        // A subject is no longer demanded up front - a package in particular may span several
+        // subjects, so there is no single one to require. The ownership check only has something
+        // to verify once a subject is actually given; skipping it for a subject-less course is not
+        // a hole, since the course is still filed under this teacher's own id either way.
+        if ($subjectId !== null && !is_subject_assigned_to_teacher($con, $teacherId, $subjectId)) {
             return [
                 'status' => 'error',
                 'message' => 'يمكنك إنشاء كورسات في المواد المسندة إليك فقط (You can only create courses for subjects assigned to you)'
