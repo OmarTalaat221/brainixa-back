@@ -324,6 +324,36 @@ $routes = [
         ],
         [
             "method" => "GET",
+            "path" => "/brain-ixa/teacher/chat/directory",
+            "handler" => function ($con) {
+                include_once "./middlewares/teacherauthmiddleware.php";
+                include_once "./app/chat/directory.php";
+                $teacherData = teacherAuthMiddleware();
+                return chatListDirectory($con, $teacherData, 'teacher');
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/student/chat/directory",
+            "handler" => function ($con) {
+                include_once "./middlewares/studentauthmiddleware.php";
+                include_once "./app/chat/directory.php";
+                $studentData = studentAuthMiddleware();
+                return chatListDirectory($con, $studentData, 'student');
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/parent/chat/directory",
+            "handler" => function ($con) {
+                include_once "./middlewares/parentauthmiddleware.php";
+                include_once "./app/chat/directory.php";
+                $parentData = parentAuthMiddleware();
+                return chatListDirectory($con, $parentData, 'parent');
+            },
+        ],
+        [
+            "method" => "GET",
             "path" => "/brain-ixa/teacher/content/home",
             "handler" => function ($con) {
                 include_once "./middlewares/teacherauthmiddleware.php";
