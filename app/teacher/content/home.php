@@ -85,6 +85,17 @@ if (!function_exists('teacherHome')) {
         ");
         $totalCourses = (int)(mysqli_fetch_assoc($coursesCountRes)['total'] ?? 0);
 
+        $packagesCountRes = @mysqli_query($con, "
+            SELECT COUNT(DISTINCT c.id) AS total FROM courses c
+            LEFT JOIN course_teachers ct ON c.id = ct.course_id
+            WHERE c.is_active = 1 AND c.kind = 'package' AND (
+                c.teacher_id = {$teacherId}
+                OR (ct.teacher_id = {$teacherId} AND ct.is_active = 1)
+                OR (c.created_by_type = 'teacher' AND c.created_by_id = {$teacherId})
+            )
+        ");
+        $totalPackages = (int)(mysqli_fetch_assoc($packagesCountRes)['total'] ?? 0);
+
         $activeSessionsRes = @mysqli_query($con, "SELECT COUNT(*) AS total FROM class_sessions WHERE teacher_id = {$teacherId} AND is_active = 1");
         $totalActiveSessions = (int)(mysqli_fetch_assoc($activeSessionsRes)['total'] ?? 0);
 
@@ -215,6 +226,7 @@ if (!function_exists('teacherHome')) {
                 'kpis' => [
                     'total_students' => $totalStudents,
                     'total_courses' => $totalCourses,
+                    'total_packages' => $totalPackages,
                     'total_subjects' => count($teacher['subjects']),
                     'total_active_sessions' => $totalActiveSessions,
                     'wallet_balance' => $walletBalance,
