@@ -4,15 +4,18 @@
 -- deliberately left non-retroactive, same as every other prefix fix in this project: any student
 -- who had already seen their code before that fix keeps whatever was stored, "NAJEH-STU-...".
 --
--- This clears just that stale value so it regenerates in the current "BRX-STU-..." form the next
--- time that student opens the "التسويق والدعوة" page. Scoped to the prefix itself, so it only
--- touches rows that actually still carry the old branding - running it twice is a no-op.
+-- This rewrites that stale prefix in place, directly, rather than clearing the column and waiting
+-- for the student to reopen "التسويق والدعوة" to regenerate it - the owner asked for the old
+-- codes to be changed now. Only the "NAJEH-" text is swapped for "BRX-"; the rest of each code
+-- (the student id, and the "-NNN" disambiguation suffix a collision would have added) is kept
+-- exactly as it was, so uniqueness is untouched. Safe to run twice: a code with no "NAJEH-" left
+-- in it does not match the WHERE clause a second time.
 
 UPDATE students
-SET affiliate_code = NULL
+SET affiliate_code = REPLACE(affiliate_code, 'NAJEH-', 'BRX-')
 WHERE affiliate_code LIKE 'NAJEH-%';
 
 SELECT id, name, affiliate_code
 FROM students
-WHERE affiliate_code IS NULL
+WHERE affiliate_code LIKE 'BRX-%'
 LIMIT 50;

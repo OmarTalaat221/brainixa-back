@@ -62,7 +62,8 @@ if (!function_exists('studentHome')) {
 
         
         $todaySessions = [];
-        $todayName = get_request_now()->format('l');
+        $now = get_request_now();
+        $todayName = $now->format('l');
         $sessionWhere = ["is_active = 1", "day_of_week = '{$todayName}'"];
 
         $studentAcademicYearId = get_student_academic_year_id($con, $stId);
