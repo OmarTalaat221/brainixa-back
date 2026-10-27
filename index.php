@@ -2391,6 +2391,16 @@ $routes = [
             },
         ],
         [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/chat/directory",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/chat/directory.php";
+                $adminData = adminAuthMiddleware();
+                return chatListDirectory($con, $adminData, 'admin');
+            },
+        ],
+        [
             "method" => ["PUT", "POST", "PATCH"],
             "path" => "/brain-ixa/admin/auth/profile",
             "handler" => function ($con) {
