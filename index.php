@@ -322,6 +322,58 @@ $routes = [
                 return teacherHome($con, $teacherData);
             },
         ],
+        // A teacher's own manual sales sheet - same feature and table as the admin's, scoped to
+        // rows this teacher wrote (see app/teacher/manual_sales/manage.php).
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/teacher/manual-sales",
+            "handler" => function ($con) {
+                include_once "./middlewares/teacherauthmiddleware.php";
+                include_once "./app/teacher/manual_sales/manage.php";
+                $teacherData = teacherAuthMiddleware();
+                return teacherListManualSales($con, $teacherData);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/teacher/manual-sales/show",
+            "handler" => function ($con) {
+                include_once "./middlewares/teacherauthmiddleware.php";
+                include_once "./app/teacher/manual_sales/manage.php";
+                $teacherData = teacherAuthMiddleware();
+                return teacherGetManualSale($con, $teacherData);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/teacher/manual-sales",
+            "handler" => function ($con) {
+                include_once "./middlewares/teacherauthmiddleware.php";
+                include_once "./app/teacher/manual_sales/manage.php";
+                $teacherData = teacherAuthMiddleware();
+                return teacherCreateManualSale($con, $teacherData);
+            },
+        ],
+        [
+            "method" => "PUT",
+            "path" => "/brain-ixa/teacher/manual-sales",
+            "handler" => function ($con) {
+                include_once "./middlewares/teacherauthmiddleware.php";
+                include_once "./app/teacher/manual_sales/manage.php";
+                $teacherData = teacherAuthMiddleware();
+                return teacherUpdateManualSale($con, $teacherData);
+            },
+        ],
+        [
+            "method" => "DELETE",
+            "path" => "/brain-ixa/teacher/manual-sales",
+            "handler" => function ($con) {
+                include_once "./middlewares/teacherauthmiddleware.php";
+                include_once "./app/teacher/manual_sales/manage.php";
+                $teacherData = teacherAuthMiddleware();
+                return teacherDeleteManualSale($con, $teacherData);
+            },
+        ],
         [
             "method" => "GET",
             "path" => "/brain-ixa/teacher/chat/directory",
