@@ -21,7 +21,7 @@ if (!function_exists('teacherProfile')) {
         unset($teacher['city_id']);
 
         $teacher['id'] = (int)$teacher['id'];
-        $teacher['rating'] = $teacher['rating'] ? (float)$teacher['rating'] : 4.8;
+        $teacher['rating'] = $teacher['rating'] ? (float)$teacher['rating'] : 0;
         $teacher['can_view_profile'] = (int)($teacher['can_view_profile'] ?? 1) === 1;
         $teacher['is_email_verified'] = (int)$teacher['is_email_verified'];
         $teacher['is_active'] = (int)$teacher['is_active'];
@@ -37,14 +37,12 @@ if (!function_exists('teacherProfile')) {
         $teacher['description'] = $teacher['bio'];
 
         $expVal = trim((string)($teacher['experience'] ?? ''));
-        if (empty($expVal)) {
-            $expVal = "5 سنوات";
-        } elseif (is_numeric($expVal)) {
+        if (!empty($expVal) && is_numeric($expVal)) {
             $expVal = $expVal . " سنوات";
         }
         $teacher['experience'] = $expVal;
         $teacher['experience_text'] = $expVal;
-        $teacher['years_of_experience'] = (int)preg_replace('/[^0-9]/', '', $expVal) ?: 5;
+        $teacher['years_of_experience'] = (int)preg_replace('/[^0-9]/', '', $expVal);
 
         $teacher['status_badge'] = $teacher['is_active'] === 1 ? 'معلم متاح ومعتمد' : 'غير متاح';
         $teacher['is_verified'] = $teacher['is_active'] === 1 && $teacher['is_email_verified'] === 1;
@@ -69,7 +67,7 @@ if (!function_exists('teacherProfile')) {
         if ($stCountRes && ($stRow = mysqli_fetch_assoc($stCountRes))) {
             $calcStudents = (int)($stRow['total'] ?? 0);
         }
-        $teacher['students_count'] = $calcStudents > 0 ? $calcStudents : 2580;
+        $teacher['students_count'] = $calcStudents;
         $teacher['total_students'] = $teacher['students_count'];
 
         $calcSessions = 0;
@@ -80,7 +78,7 @@ if (!function_exists('teacherProfile')) {
         if ($sessCountRes && ($sessRow = mysqli_fetch_assoc($sessCountRes))) {
             $calcSessions = (int)($sessRow['total'] ?? 0);
         }
-        $teacher['sessions_count'] = $calcSessions > 0 ? $calcSessions : 12;
+        $teacher['sessions_count'] = $calcSessions;
         $teacher['total_sessions'] = $teacher['sessions_count'];
 
         $teacher['metrics'] = [
