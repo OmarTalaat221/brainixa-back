@@ -120,23 +120,35 @@ if (!function_exists('adminCreateAdminUser')) {
         $image = trim($body['image'] ?? '');
         $isActive = isset($body['is_active']) ? (int)$body['is_active'] : 1;
 
-        if (empty($name) || empty($email) || empty($password)) {
-            return ['status' => 'error', 'message' => trans('name_email_password_required')];
+        $phone = trim($body['phone'] ?? '');
+
+        if (empty($name) || empty($password)) {
+            return ['status' => 'error', 'message' => 'Name and password are required'];
         }
+        // Email and phone are both optional, but not both empty: an admin signs in by email
+        // alone today - the phone column is a contact detail, not a second login path - so an
+        // account saved with neither could not authenticate until someone later edits in an
+        // email. Phone-only is still a legitimate way to start one: another admin can add the
+        // email afterward from the edit screen.
+        if (empty($email) && empty($phone)) {
+            return ['status' => 'error', 'message' => 'Provide at least an email or a phone number'];
+        }
+        $email = $email !== '' ? $email : null;
 
         if (!in_array($role, ['super_admin', 'admin', 'moderator'])) {
             $role = 'admin';
         }
 
-        $checkStmt = mysqli_prepare($con, "SELECT id FROM admins WHERE email = ? LIMIT 1");
-        mysqli_stmt_bind_param($checkStmt, "s", $email);
-        mysqli_stmt_execute($checkStmt);
-        if (mysqli_fetch_assoc(mysqli_stmt_get_result($checkStmt))) {
-            return ['status' => 'error', 'message' => trans('email_already_registered')];
+        if ($email !== null) {
+            $checkStmt = mysqli_prepare($con, "SELECT id FROM admins WHERE email = ? LIMIT 1");
+            mysqli_stmt_bind_param($checkStmt, "s", $email);
+            mysqli_stmt_execute($checkStmt);
+            if (mysqli_fetch_assoc(mysqli_stmt_get_result($checkStmt))) {
+                return ['status' => 'error', 'message' => trans('email_already_registered')];
+            }
         }
 
         $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
-        $phone = trim($body['phone'] ?? '');
 
         $stmt = mysqli_prepare($con, "INSERT INTO admins (name, email, phone, password, role, role_id, image, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
         mysqli_stmt_bind_param($stmt, "sssssisi", $name, $email, $phone, $hashedPassword, $role, $roleId, $image, $isActive);

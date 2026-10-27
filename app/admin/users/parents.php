@@ -148,18 +148,26 @@ if (!function_exists('adminCreateParent')) {
         $isActive = isset($body['is_active']) ? (int)$body['is_active'] : 1;
         $isVerified = isset($body['is_email_verified']) ? (int)$body['is_email_verified'] : 1;
 
-        if (empty($name) || empty($email) || empty($password)) {
-            return ['status' => 'error', 'message' => 'Name, email, and password are required'];
-        }
-
-        $checkStmt = mysqli_prepare($con, "SELECT id FROM parents WHERE email = ? LIMIT 1");
-        mysqli_stmt_bind_param($checkStmt, "s", $email);
-        mysqli_stmt_execute($checkStmt);
-        if (mysqli_fetch_assoc(mysqli_stmt_get_result($checkStmt))) {
-            return ['status' => 'error', 'message' => 'Email already registered'];
-        }
-
         $phone = trim($body['phone'] ?? '');
+
+        if (empty($name) || empty($password)) {
+            return ['status' => 'error', 'message' => 'Name and password are required'];
+        }
+        // Email and phone are both optional, but not both empty: a parent currently signs in
+        // by email alone, so an account with neither could never be reached by anyone.
+        if (empty($email) && empty($phone)) {
+            return ['status' => 'error', 'message' => 'Provide at least an email or a phone number'];
+        }
+        $email = $email !== '' ? $email : null;
+
+        if ($email !== null) {
+            $checkStmt = mysqli_prepare($con, "SELECT id FROM parents WHERE email = ? LIMIT 1");
+            mysqli_stmt_bind_param($checkStmt, "s", $email);
+            mysqli_stmt_execute($checkStmt);
+            if (mysqli_fetch_assoc(mysqli_stmt_get_result($checkStmt))) {
+                return ['status' => 'error', 'message' => 'Email already registered'];
+            }
+        }
 
         $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
         $stmt = mysqli_prepare($con, "INSERT INTO parents (name, email, phone, password, image, city_id, is_email_verified, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");

@@ -163,19 +163,30 @@ if (!function_exists('adminCreateTeacher')) {
         $subjectAssignments = parse_teacher_subject_assignments($body);
         $subjectIds = array_values(array_unique(array_column($subjectAssignments, 'subject_id')));
 
-        if (empty($name) || empty($email) || empty($password)) {
-            return ['status' => 'error', 'message' => 'Name, email, and password are required'];
+        if (empty($name) || empty($password)) {
+            return ['status' => 'error', 'message' => 'Name and password are required'];
         }
+        // Email and WhatsApp are both optional, but not both empty: a teacher currently signs
+        // in by email alone - there is no phone-based login path the way a student has - so an
+        // account with neither could never be reached by anyone, including its own owner.
+        if (empty($email) && empty($whatsapp)) {
+            return ['status' => 'error', 'message' => 'Provide at least an email or a WhatsApp number'];
+        }
+        // An empty string is not "no email" to a UNIQUE column - two empty strings collide
+        // where two NULLs do not.
+        $email = $email !== '' ? $email : null;
 
         // A subject is no longer demanded here. An admin often creates the account first and
         // works out what the teacher will teach afterwards, and `teachers.subject_id` has
         // always been nullable with ON DELETE SET NULL - so a teacher with no subject is a
         // state the schema already allows and the rest of the code already handles.
-        $checkStmt = mysqli_prepare($con, "SELECT id FROM teachers WHERE email = ? LIMIT 1");
-        mysqli_stmt_bind_param($checkStmt, "s", $email);
-        mysqli_stmt_execute($checkStmt);
-        if (mysqli_fetch_assoc(mysqli_stmt_get_result($checkStmt))) {
-            return ['status' => 'error', 'message' => 'Email already registered'];
+        if ($email !== null) {
+            $checkStmt = mysqli_prepare($con, "SELECT id FROM teachers WHERE email = ? LIMIT 1");
+            mysqli_stmt_bind_param($checkStmt, "s", $email);
+            mysqli_stmt_execute($checkStmt);
+            if (mysqli_fetch_assoc(mysqli_stmt_get_result($checkStmt))) {
+                return ['status' => 'error', 'message' => 'Email already registered'];
+            }
         }
 
         $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
