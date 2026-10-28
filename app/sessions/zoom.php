@@ -202,6 +202,11 @@ if (!function_exists('studentJoinZoomClass')) {
 
         $courseId  = (int)($session['course_id'] ?? 0);
         $subjectId = (int)($session['subject_id'] ?? 0);
+
+        // Lives in the subscriptions module, not in helpers/entities.php despite the name.
+        if (!function_exists('get_student_accessible_entities')) {
+            require_once __DIR__ . '/../subscriptions/student_subscriptions.php';
+        }
         $accessible = get_student_accessible_entities($con, $stId);
 
         $allowed = ($courseId > 0 && in_array($courseId, $accessible['course_ids']))
