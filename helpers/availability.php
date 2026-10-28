@@ -243,6 +243,12 @@ if (!function_exists('availability_format_slot_row')) {
         // link, without exposing the raw meeting id/password here - those only ever go out
         // through the dedicated zoom/start and zoom/join endpoints, after an entitlement check.
         $row['has_zoom'] = !empty($row['zoom_meeting_id']);
+        // Whether a Zoom room is actually open right now - unlike `is_live` below, this ignores
+        // the clock window entirely. The teacher UI's Start/End toggle for an online slot must
+        // key off this, not `is_live`: `is_live` turns true from the window alone (so students
+        // aren't locked out if the teacher forgets to press Start), which would show "End"
+        // before any meeting exists.
+        $row['zoom_is_live'] = !empty($row['zoom_meeting_id']) && empty($row['ended_at']);
 
         // TWO GATES, AND EITHER ONE OPENS THE LINK.
         //
