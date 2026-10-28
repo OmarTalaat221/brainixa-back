@@ -205,9 +205,18 @@ if (!function_exists('availability_redact_link_for_student')) {
         }
 
         foreach ($response['data'] as &$row) {
-            if (is_array($row) && empty($row['is_live'])) {
+            if (!is_array($row)) continue;
+
+            if (empty($row['is_live'])) {
                 $row['meeting_link'] = null;
             }
+
+            // The raw Zoom id/password are never a student's business directly - joining goes
+            // through /student/availability/zoom/join, which checks the booking and mints a
+            // short-lived signature. Handing these over here would let anyone who can list
+            // slots join the room outside that check.
+            $row['zoom_meeting_id'] = null;
+            $row['zoom_password'] = null;
         }
         unset($row);
 
@@ -230,6 +239,10 @@ if (!function_exists('availability_format_slot_row')) {
 
         $row['started_at'] = $row['started_at'] ?? null;
         $row['ended_at'] = $row['ended_at'] ?? null;
+        // Lets the frontend tell a Zoom-backed slot apart from one still using a bare external
+        // link, without exposing the raw meeting id/password here - those only ever go out
+        // through the dedicated zoom/start and zoom/join endpoints, after an entitlement check.
+        $row['has_zoom'] = !empty($row['zoom_meeting_id']);
 
         // TWO GATES, AND EITHER ONE OPENS THE LINK.
         //
