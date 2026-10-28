@@ -1866,6 +1866,48 @@ $routes = [
         },
     ],
 
+    // Teacher/Student Consultation Zoom Routes --------------------------------
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/teacher/consultations/zoom/start",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/consultations/zoom.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherStartConsultationZoom($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/teacher/consultations/zoom/end",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/consultations/zoom.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherEndConsultationZoom($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/student/consultations/zoom/join",
+        "handler" => function ($con) {
+            include_once "./middlewares/studentauthmiddleware.php";
+            include_once "./app/consultations/zoom.php";
+            $studentData = studentAuthMiddleware();
+            return studentJoinConsultationZoom($con, $studentData);
+        },
+    ],
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/student/consultations/zoom/status",
+        "handler" => function ($con) {
+            include_once "./middlewares/studentauthmiddleware.php";
+            include_once "./app/consultations/zoom.php";
+            $studentData = studentAuthMiddleware();
+            return studentConsultationZoomStatus($con, $studentData);
+        },
+    ],
+
     // Teacher Class Sessions Routes --------------------------------
     [
         "method" => "GET",
@@ -5264,6 +5306,28 @@ $routes = [
                 $adminData = adminAuthMiddleware();
                 requirePermission($con, $adminData, 'manage_consultations');
                 return adminCreateRecurringConsultationSlots($con, $adminData);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/consultations/zoom/start",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/consultations/zoom.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_consultations');
+                return adminStartConsultationZoom($con, $adminData);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/consultations/zoom/end",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/consultations/zoom.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_consultations');
+                return adminEndConsultationZoom($con, $adminData);
             },
         ],
 

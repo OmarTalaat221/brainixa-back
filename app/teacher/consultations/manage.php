@@ -54,12 +54,31 @@ if (!function_exists('consultation_slots_has_live_state')) {
     }
 }
 
+if (!function_exists('consultation_slots_has_zoom')) {
+    /**
+     * Migration 120 adds `zoom_meeting_id`/`zoom_password`. Until it has run, a consultation
+     * simply never reads as Zoom-backed - same fallback shape as the two checks above.
+     */
+    function consultation_slots_has_zoom($con): bool {
+        static $cached = null;
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $res = @mysqli_query($con, "SHOW COLUMNS FROM `consultation_slots` LIKE 'zoom_meeting_id'");
+
+        return $cached = (bool)($res && mysqli_num_rows($res) > 0);
+    }
+}
+
 if (!function_exists('get_consultation_slot_details')) {
     function get_consultation_slot_details($con, int $slotId) {
         ensure_consultation_slots_type_column($con);
         $linkColumn = consultation_slots_has_meeting_link($con) ? ", meeting_link" : "";
         $liveColumns = consultation_slots_has_live_state($con) ? ", started_at, ended_at" : "";
-        $stmt = mysqli_prepare($con, "SELECT id, teacher_id, subject_id, type, meeting_type, slot_date, slot_time, notes, is_booked, student_id, booked_at, status, is_active, created_at{$linkColumn}{$liveColumns} FROM consultation_slots WHERE id = ? LIMIT 1");
+        $zoomColumns = consultation_slots_has_zoom($con) ? ", zoom_meeting_id, zoom_password" : "";
+        $stmt = mysqli_prepare($con, "SELECT id, teacher_id, subject_id, type, meeting_type, slot_date, slot_time, notes, is_booked, student_id, booked_at, status, is_active, created_at{$linkColumn}{$liveColumns}{$zoomColumns} FROM consultation_slots WHERE id = ? LIMIT 1");
         if (!$stmt) return null;
         mysqli_stmt_bind_param($stmt, "i", $slotId);
         mysqli_stmt_execute($stmt);
@@ -88,6 +107,17 @@ if (!function_exists('get_consultation_slot_details')) {
         $row['ended_at'] = $row['ended_at'] ?? null;
         // What the student's screen asks: is it happening right now? Started and not yet ended.
         $row['is_live'] = (bool)($row['started_at'] && !$row['ended_at']);
+
+        // Lets the frontend tell a Zoom-backed consultation apart from one still using a bare
+        // external link, without exposing the raw meeting id/password here - those only ever go
+        // out through the dedicated zoom/start and zoom/join endpoints, after an ownership check.
+        $row['has_zoom'] = !empty($row['zoom_meeting_id']);
+        // Whether a Zoom room is actually open right now. `is_live` above is sticky to
+        // started_at/ended_at, same source, so the two happen to agree here - but the UI must
+        // key off this name, not `is_live`, for the Start/End toggle and the Join button: a
+        // reader should never have to know the two are computed from the same columns.
+        $row['zoom_is_live'] = !empty($row['zoom_meeting_id']) && empty($row['ended_at']);
+        unset($row['zoom_meeting_id'], $row['zoom_password']);
 
         $row['student_id'] = $row['student_id'] ? (int)$row['student_id'] : null;
         $row['is_booked'] = (int)$row['is_booked'];
