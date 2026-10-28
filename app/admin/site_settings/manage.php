@@ -408,8 +408,11 @@ if (!function_exists('getPublicLandingConfig')) {
             }
         }
 
+        // b.cover_image, not b.image: course_books has no `image` column at all, so this whole
+        // query returned false and the landing page's books section has been silently empty the
+        // entire time - the "an empty library lists nothing" branch made it look intentional.
         $booksRes = mysqli_query($con, "
-            SELECT b.id, b.unit_id, b.subject_id, b.course_id, b.image AS cover_image, b.price, b.show_on_website,
+            SELECT b.id, b.unit_id, b.subject_id, b.course_id, b.cover_image, b.price, b.show_on_website,
                    COALESCE((SELECT title FROM course_books_translations bt WHERE bt.book_id = b.id AND bt.language_id = {$langId} LIMIT 1),
                             (SELECT title FROM course_books_translations bt WHERE bt.book_id = b.id LIMIT 1),
                             CONCAT('كتاب رقم ', b.id)) AS title,

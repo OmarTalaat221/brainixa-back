@@ -768,8 +768,16 @@ if (!function_exists('studentGetPublicBookDetails')) {
         $owns = $stId > 0 && student_owns_book($con, $stId, $bookId);
 
         if (!$owns) {
-            $book['file_path'] = '';
-            $book['link'] = '';
+            // Every key that can carry the file, not just file_path. get_book_details() already
+            // ran format_response_images(), which copies file_path into `file` — and the pass
+            // that runs again on the way out does `file_path = file` whenever both keys exist.
+            // Blanking file_path alone was therefore undone a moment later, and the PDF URL went
+            // out to anonymous callers exactly as before.
+            foreach (['file_path', 'link', 'file', 'file_url', 'pdf', 'pdf_url', 'document', 'doc_url', 'view_url'] as $fileKey) {
+                if (array_key_exists($fileKey, $book)) {
+                    $book[$fileKey] = '';
+                }
+            }
         }
         $book['own'] = $owns;
         $book['is_subscribed'] = $owns;
