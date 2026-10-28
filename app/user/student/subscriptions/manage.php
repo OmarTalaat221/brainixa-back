@@ -1064,17 +1064,17 @@ if (!function_exists('studentTrackBookOpen')) {
             return ['status' => 'error', 'message' => trans('Book not found')];
         }
 
-        $courseId = (int)($bRow['course_id'] ?? 0);
-        $subjectId = (int)($bRow['subject_id'] ?? 0);
+        // This file is reached by routes that do not pull in the student book module, so make
+        // sure the shared ownership helper is loaded before leaning on it.
+        if (!function_exists('student_owns_book')) {
+            require_once __DIR__ . '/../content/books.php';
+        }
 
-        $accessible = get_student_accessible_entities($con, $stId);
-        $isSubscribed = (
-            in_array($courseId, $accessible['course_ids']) ||
-            in_array($subjectId, $accessible['subject_ids']) ||
-            ($bRow['created_by_type'] === 'teacher' && in_array((int)$bRow['created_by_id'], $accessible['teacher_ids']))
-        );
-
-        if (!$isSubscribed) {
+        // Ownership is decided by the one helper every other book endpoint uses, which also
+        // counts a direct purchase. The old check looked only at the course/subject the book
+        // belongs to, and a standalone purchasable book has neither by definition - so a student
+        // who had bought and been approved was still refused here, on every single open.
+        if (!student_owns_book($con, $stId, $bookId)) {
             return ['status' => 'error', 'message' => trans('You are not subscribed to the content containing this book')];
         }
 
