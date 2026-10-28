@@ -1927,6 +1927,49 @@ $routes = [
             return teacherEndSession($con, $teacherData);
         },
     ],
+    // Live classes over Zoom, embedded in Brainixa. These are deliberately separate from
+    // /sessions/start and /sessions/end, which also mark attendance and pay: a teacher may open
+    // the room before starting the class officially, or close the room and keep the record open.
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/teacher/sessions/zoom/start",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/sessions/zoom.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherStartZoomClass($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/teacher/sessions/zoom/end",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/sessions/zoom.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherEndZoomClass($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/student/sessions/zoom/join",
+        "handler" => function ($con) {
+            include_once "./middlewares/studentauthmiddleware.php";
+            include_once "./app/sessions/zoom.php";
+            $studentData = studentAuthMiddleware();
+            return studentJoinZoomClass($con, $studentData);
+        },
+    ],
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/student/sessions/zoom/status",
+        "handler" => function ($con) {
+            include_once "./middlewares/studentauthmiddleware.php";
+            include_once "./app/sessions/zoom.php";
+            $studentData = studentAuthMiddleware();
+            return studentZoomClassStatus($con, $studentData);
+        },
+    ],
     [
         "method" => "POST",
         "path" => "/brain-ixa/teacher/sessions/reschedule-request",
