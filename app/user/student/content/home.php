@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../../content/helpers.php';
 require_once __DIR__ . '/../subscriptions/manage.php';
 require_once __DIR__ . '/../../../teacher/sessions/manage.php'; // get_class_session_details / class_session_is_available_now
 require_once __DIR__ . '/../../../teacher/consultations/manage.php'; // get_consultation_slot_details
+require_once __DIR__ . '/../../../../helpers/availability.php'; // get_availability_slot_details
 
 if (!function_exists('studentHome')) {
     function studentHome($con, $studentData = null) {
@@ -156,6 +157,8 @@ if (!function_exists('studentHome')) {
                     'subject' => $slot['subject'],
                     'teacher' => $slot['teacher'],
                     'meeting_link' => $slot['meeting_link'],
+                    'has_zoom' => $slot['has_zoom'] ?? false,
+                    'zoom_is_live' => $slot['zoom_is_live'] ?? false,
                     'is_available_now' => $isLiveConsult ? 1 : 0,
                     // Translated into the same three words class_sessions uses, so the frontend's
                     // existing status filter keeps working without needing to know this came
@@ -165,6 +168,62 @@ if (!function_exists('studentHome')) {
                     'is_ended' => $isEndedConsult ? 1 : 0,
                     // Always this student's own confirmed booking - there is no "not subscribed"
                     // state for a consultation the way there is for a shared class.
+                    'has_access' => true,
+                    'is_subscribed' => true,
+                    'is_locked' => false,
+                    'is_open' => true,
+                ];
+            }
+        }
+
+        // ---- Upcoming package-session appointments booked by this student (مواعيد الباقات) ----
+        // Same fold-in as consultations just above, normalized to the same class_sessions-shaped
+        // entry - the "next session" card on home must not only know about the generic weekly
+        // schedule, which real live classes do not run on any more.
+        $availRes = @mysqli_query($con, "
+            SELECT sb.slot_id FROM availability_slot_bookings sb
+            INNER JOIN teacher_availability_slots s ON s.id = sb.slot_id
+            WHERE sb.student_id = {$stId} AND sb.status = 'booked'
+              AND s.slot_date >= '{$todayDateStr}'
+            ORDER BY s.slot_date ASC, s.start_time ASC
+            LIMIT 5
+        ");
+        if ($availRes) {
+            while ($aRow = mysqli_fetch_assoc($availRes)) {
+                $slot = get_availability_slot_details($con, (int)$aRow['slot_id'], false);
+                if (!$slot) continue;
+
+                $isEndedSlot = !empty($slot['ended_at']);
+                $isLiveSlot = !empty($slot['is_live']);
+
+                $todaySessions[] = [
+                    'id' => $slot['id'],
+                    'teacher_id' => $slot['teacher_id'],
+                    'subject_id' => $slot['subject_id'],
+                    'course_id' => $slot['course_id'],
+                    'course' => $slot['course'],
+                    'code' => $slot['course']['slug'] ?? null,
+                    'scope' => 'package',
+                    'is_online' => $slot['is_online'],
+                    'date' => $slot['slot_date'],
+                    'session_date' => $slot['slot_date'],
+                    'start_time' => $slot['start_time'],
+                    'end_time' => $slot['end_time'],
+                    'subject' => $slot['subject'],
+                    'teacher' => $slot['teacher'],
+                    'meeting_link' => $slot['meeting_link'],
+                    // Additive: lets the frontend open the embedded Zoom room instead of a bare
+                    // link, and tells a room that was opened once but already ended apart from
+                    // one that is actually open right now - same fields the availability and
+                    // consultation endpoints already expose.
+                    'has_zoom' => $slot['has_zoom'],
+                    'zoom_is_live' => $slot['zoom_is_live'],
+                    'is_available_now' => $isLiveSlot ? 1 : 0,
+                    'status' => $isEndedSlot ? 'ended' : ($isLiveSlot ? 'started' : 'not_started'),
+                    'is_started' => $isLiveSlot || $isEndedSlot ? 1 : 0,
+                    'is_ended' => $isEndedSlot ? 1 : 0,
+                    // Always this student's own confirmed booking - there is no "not subscribed"
+                    // state for a package appointment the way there is for a shared class.
                     'has_access' => true,
                     'is_subscribed' => true,
                     'is_locked' => false,
