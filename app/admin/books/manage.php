@@ -689,6 +689,7 @@ if (!function_exists('adminListBookPurchaseRequests')) {
                 sbpr.reviewed_by_type,
                 sbpr.reviewed_by_id,
                 sbpr.notes,
+                sbpr.review_notes,
                 sbpr.created_at,
                 sbpr.updated_at,
 
@@ -820,7 +821,9 @@ if (!function_exists('adminReviewBookRequest')) {
         $bookId = (int)$rRow['book_id'];
         $notesEsc = mysqli_real_escape_string($con, $notes);
 
-        mysqli_query($con, "UPDATE student_book_purchase_requests SET status = '{$newStatus}', reviewed_by_type = 'admin', reviewed_by_id = {$adminId}, notes = '{$notesEsc}' WHERE id = {$requestId}");
+        // review_notes, not notes: `notes` is the student's own note from when the request was
+        // filed. Writing the reviewer's note over it lost the student's words every time.
+        mysqli_query($con, "UPDATE student_book_purchase_requests SET status = '{$newStatus}', reviewed_by_type = 'admin', reviewed_by_id = {$adminId}, review_notes = '{$notesEsc}' WHERE id = {$requestId}");
 
         if ($newStatus === 'approved') {
             $bRes = mysqli_query($con, "SELECT price FROM course_books WHERE id = {$bookId} LIMIT 1");

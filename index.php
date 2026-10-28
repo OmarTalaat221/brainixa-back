@@ -1017,8 +1017,10 @@ $routes = [
         "method" => "GET",
         "path" => "/brain-ixa/books/show",
         "handler" => function ($con) {
-            include_once "./app/admin/courses/content.php";
-            return adminGetBook($con);
+            include_once "./middlewares/studentauthmiddleware.php";
+            include_once "./app/user/student/content/books.php";
+            $studentData = studentAuthMiddlewareOptional();
+            return studentGetPublicBookDetails($con, $studentData);
         },
     ],
     [
@@ -1250,14 +1252,7 @@ $routes = [
         "path" => "/brain-ixa/teacher/books/grant-access",
         "handler" => function ($con) {
             include_once "./middlewares/teacherauthmiddleware.php";
-            $bookManagePath = __DIR__ . "/app/teacher/books/manage.php";
-            if (!file_exists($bookManagePath)) {
-                return ['status' => 'error', 'message' => 'DIAGNOSTIC: file does not exist on server at ' . $bookManagePath];
-            }
-            include_once $bookManagePath;
-            if (!function_exists('teacherGrantBookAccessToStudent')) {
-                return ['status' => 'error', 'message' => 'DIAGNOSTIC: file exists (size ' . filesize($bookManagePath) . ' bytes) but function teacherGrantBookAccessToStudent is not defined after include'];
-            }
+            include_once "./app/teacher/books/manage.php";
             $teacherData = teacherAuthMiddleware();
             return teacherGrantBookAccessToStudent($con, $teacherData);
         },
@@ -1267,14 +1262,7 @@ $routes = [
         "path" => "/brain-ixa/teacher/books/purchase-requests",
         "handler" => function ($con) {
             include_once "./middlewares/teacherauthmiddleware.php";
-            $bookManagePath = __DIR__ . "/app/teacher/books/manage.php";
-            if (!file_exists($bookManagePath)) {
-                return ['status' => 'error', 'message' => 'DIAGNOSTIC: file does not exist on server at ' . $bookManagePath];
-            }
-            include_once $bookManagePath;
-            if (!function_exists('teacherListBookPurchaseRequests')) {
-                return ['status' => 'error', 'message' => 'DIAGNOSTIC: file exists (size ' . filesize($bookManagePath) . ' bytes) but function teacherListBookPurchaseRequests is not defined after include'];
-            }
+            include_once "./app/teacher/books/manage.php";
             $teacherData = teacherAuthMiddleware();
             return teacherListBookPurchaseRequests($con, $teacherData);
         },
@@ -1284,14 +1272,7 @@ $routes = [
         "path" => "/brain-ixa/teacher/books/purchase-requests/review",
         "handler" => function ($con) {
             include_once "./middlewares/teacherauthmiddleware.php";
-            $bookManagePath = __DIR__ . "/app/teacher/books/manage.php";
-            if (!file_exists($bookManagePath)) {
-                return ['status' => 'error', 'message' => 'DIAGNOSTIC: file does not exist on server at ' . $bookManagePath];
-            }
-            include_once $bookManagePath;
-            if (!function_exists('teacherReviewBookRequest')) {
-                return ['status' => 'error', 'message' => 'DIAGNOSTIC: file exists (size ' . filesize($bookManagePath) . ' bytes) but function teacherReviewBookRequest is not defined after include - check for a PHP parse error in that file (see server error log)'];
-            }
+            include_once "./app/teacher/books/manage.php";
             $teacherData = teacherAuthMiddleware();
             return teacherReviewBookRequest($con, $teacherData);
         },
@@ -3925,6 +3906,7 @@ $routes = [
                 include_once "./middlewares/adminauthmiddleware.php";
                 include_once "./app/admin/books/manage.php";
                 $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_books');
                 return adminReviewBookRequest($con, $adminData);
             },
         ],

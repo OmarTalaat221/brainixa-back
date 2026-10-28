@@ -267,6 +267,19 @@ if (!function_exists('studentGetAllBooksWithOwn')) {
             $row['is_open'] = $isOwn;
             $row['allow_download'] = (int)($row['allow_download'] ?? 1);
 
+            // The standing purchase request, so the card can show "قيد المراجعة" or the reason it
+            // was rejected without the app having to call a second endpoint — and so the state
+            // survives a page reload instead of living only in the browser.
+            $row['request_status'] = null;
+            $row['request_review_notes'] = null;
+            if ($stId > 0 && !$isOwn) {
+                $rqChk = @mysqli_query($con, "SELECT status, review_notes FROM student_book_purchase_requests WHERE student_id = {$stId} AND book_id = {$bId} ORDER BY id DESC LIMIT 1");
+                if ($rqChk && $rqRow = mysqli_fetch_assoc($rqChk)) {
+                    $row['request_status'] = $rqRow['status'];
+                    $row['request_review_notes'] = $rqRow['review_notes'] ?: null;
+                }
+            }
+
             if ($isOwn) {
                 apply_student_book_file_access($row, $bId);
             } else {
@@ -445,15 +458,10 @@ if (!function_exists('studentTrackBookOpen')) {
             return ['status' => 'error', 'message' => 'Book not found'];
         }
 
-        $courseId = (int)($bRow['course_id'] ?? 0);
-        $subjectId = (int)($bRow['subject_id'] ?? 0);
-        $accessible = get_student_accessible_entities($con, $stId);
-        $isOwn = (
-            in_array($courseId, $accessible['course_ids']) ||
-            in_array($subjectId, $accessible['subject_ids'])
-        );
-
-        if (!$isOwn) {
+        // Ownership is decided by the one helper every other book endpoint uses. The old check
+        // here looked only at the course/subject the book belongs to, and a standalone purchasable
+        // book has neither by definition — so every approved purchase was refused access.
+        if (!student_owns_book($con, $stId, $bookId)) {
             return ['status' => 'error', 'message' => 'You must be subscribed to access this book'];
         }
 
@@ -518,6 +526,24 @@ if (!function_exists('studentSubscribeBook')) {
             if ($rRow['status'] === 'approved') {
                 return ['status' => 'error', 'message' => 'You are already subscribed to this book'];
             }
+        }
+
+        // A free book has nothing to review. Making a teacher approve a price-0 book by hand was
+        // pure friction: there is no payment to confirm and no reason to refuse.
+        $priceRes = mysqli_query($con, "SELECT price FROM course_books WHERE id = {$bookId} LIMIT 1");
+        $priceRow = $priceRes ? mysqli_fetch_assoc($priceRes) : null;
+        if ($priceRow !== null && (float)$priceRow['price'] <= 0) {
+            mysqli_query($con, "INSERT INTO student_book_purchase_requests (student_id, book_id, status, review_notes) VALUES ({$stId}, {$bookId}, 'approved', 'كتاب مجاني — مُنح تلقائيًا')");
+            mysqli_query($con, "INSERT INTO student_book_subscriptions (student_id, book_id, granted_by_type, granted_by_id, price, is_active) VALUES ({$stId}, {$bookId}, 'student', {$stId}, 0.00, 1)");
+
+            return [
+                'status' => 'success',
+                'message' => 'Access to this free book has been granted',
+                'data' => [
+                    'book_id' => $bookId,
+                    'request_status' => 'approved'
+                ]
+            ];
         }
 
         mysqli_query($con, "INSERT INTO student_book_purchase_requests (student_id, book_id, status) VALUES ({$stId}, {$bookId}, 'pending')");
@@ -706,5 +732,50 @@ if (!function_exists('studentGetMyBookRequests')) {
         }
 
         return build_admin_paginated_response($items, $page, $limit, $total, ['total_count' => $total]);
+    }
+}
+
+if (!function_exists('studentGetPublicBookDetails')) {
+    /**
+     * Public book details for `/books/show`.
+     *
+     * That route is deliberately open — the landing page and a logged-out visitor both use it —
+     * but it used to hand `adminGetBook()`'s full record straight back, file path and all. Anyone
+     * who could guess an id could download any paid book without buying it.
+     *
+     * The record still comes back for any id, so no existing client starts seeing "not found"
+     * where it used to see a book. What changes is the file: `file_path` and `link` are blanked
+     * unless the caller is a logged-in student who actually owns the book. The keys stay present
+     * and stay strings, so nothing breaks on their absence.
+     */
+    function studentGetPublicBookDetails($con, $studentData = null) {
+        require_once __DIR__ . '/../../../content/books/manage.php';
+
+        $result = adminGetBook($con);
+        if (($result['status'] ?? '') !== 'success' || !is_array($result['data'] ?? null)) {
+            return $result;
+        }
+
+        $stId = 0;
+        if (is_array($studentData)) {
+            $stId = (int)($studentData['id'] ?? $studentData['student_id'] ?? 0);
+        } elseif (is_object($studentData)) {
+            $stId = (int)($studentData->id ?? $studentData->student_id ?? 0);
+        }
+
+        $book = $result['data'];
+        $bookId = (int)($book['id'] ?? 0);
+        $owns = $stId > 0 && student_owns_book($con, $stId, $bookId);
+
+        if (!$owns) {
+            $book['file_path'] = '';
+            $book['link'] = '';
+        }
+        $book['own'] = $owns;
+        $book['is_subscribed'] = $owns;
+        $book['is_locked'] = !$owns;
+
+        $result['data'] = $book;
+        return $result;
     }
 }

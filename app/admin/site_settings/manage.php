@@ -409,13 +409,15 @@ if (!function_exists('getPublicLandingConfig')) {
         }
 
         $booksRes = mysqli_query($con, "
-            SELECT b.id, b.unit_id, b.subject_id, b.course_id, b.file_path, b.image AS cover_image, b.price, b.show_on_website,
+            SELECT b.id, b.unit_id, b.subject_id, b.course_id, b.image AS cover_image, b.price, b.show_on_website,
                    COALESCE((SELECT title FROM course_books_translations bt WHERE bt.book_id = b.id AND bt.language_id = {$langId} LIMIT 1),
-                            (SELECT title FROM course_books_translations bt WHERE bt.book_id = b.id LIMIT 1), b.file_path) AS title,
+                            (SELECT title FROM course_books_translations bt WHERE bt.book_id = b.id LIMIT 1),
+                            CONCAT('كتاب رقم ', b.id)) AS title,
                    COALESCE((SELECT description FROM course_books_translations bt WHERE bt.book_id = b.id AND bt.language_id = {$langId} LIMIT 1),
-                            (SELECT description FROM course_books_translations bt WHERE bt.book_id = b.id LIMIT 1)) AS description
+                            (SELECT description FROM course_books_translations bt WHERE bt.book_id = b.id LIMIT 1)) AS description,
+                   COALESCE((SELECT t.name FROM teachers t WHERE t.id = b.created_by_id AND b.created_by_type = 'teacher' LIMIT 1), '') AS teacher_name
             FROM course_books b
-            WHERE b.is_active = 1
+            WHERE b.is_active = 1 AND b.show_on_website = 1
             ORDER BY b.id DESC
             LIMIT 10
         ");
@@ -424,8 +426,18 @@ if (!function_exists('getPublicLandingConfig')) {
             while ($bRow = mysqli_fetch_assoc($booksRes)) {
                 $bRow['id'] = (int)$bRow['id'];
                 $bRow['price'] = (float)($bRow['price'] ?? 0.00);
+                // The public site never gets the PDF itself. The key stays in the payload so no
+                // existing client breaks on its absence, but it is always empty here: a paid book
+                // whose file_path is published is a paid book anyone can download without paying.
+                $bRow['file_path'] = '';
                 $websiteBooks[] = format_response_images($bRow);
             }
+        }
+
+        // A bare number is not a price. Decorate with the default country's currency so the
+        // landing page can print "150 ج.م" instead of "150".
+        if ($websiteBooks && function_exists('pricing_decorate_rows')) {
+            pricing_decorate_rows($con, $websiteBooks, 'book', 0);
         }
 
         $aboutUsData = getPublicAboutUsConfig($con)['data'] ?? null;

@@ -80,7 +80,19 @@ if (!function_exists('payments_grant_access')) {
         $stmt = mysqli_prepare($con, "INSERT INTO student_book_subscriptions (student_id, book_id, granted_by_type, granted_by_id, price, is_active) VALUES (?, ?, 'student', ?, ?, 1)");
         mysqli_stmt_bind_param($stmt, "iiid", $studentId, $itemId, $studentId, $price);
         if (!mysqli_stmt_execute($stmt)) return null;
-        return mysqli_insert_id($con);
+        $grantedId = mysqli_insert_id($con);
+
+        // Paying for a book and asking a teacher to approve it are two doors into the same room.
+        // A student who filed a request and then just paid used to leave that request sitting
+        // `pending` in the teacher's queue forever, with an Approve button for access the student
+        // already has. Close it here, and say why.
+        $closeStmt = mysqli_prepare($con, "UPDATE student_book_purchase_requests SET status = 'approved', review_notes = 'تمت الموافقة تلقائيًا بعد إتمام الدفع' WHERE student_id = ? AND book_id = ? AND status = 'pending'");
+        if ($closeStmt) {
+            mysqli_stmt_bind_param($closeStmt, "ii", $studentId, $itemId);
+            mysqli_stmt_execute($closeStmt);
+        }
+
+        return $grantedId;
     }
 }
 

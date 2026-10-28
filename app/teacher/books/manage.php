@@ -4,6 +4,33 @@ require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/upload.php';
 require_once __DIR__ . '/../../../helpers/entities.php';
 
+if (!function_exists('teacher_book_ownership_clause')) {
+    /**
+     * The one definition of "this teacher's book", as a SQL condition over the alias `cb`
+     * (course_books).
+     *
+     * It exists because the listing and the review check used to disagree: the list matched eight
+     * ownership routes, the review only three, so a teacher saw purchase requests with a working
+     * Approve button that always came back "You are not authorized to review this book request".
+     * Both now call this, so what is shown is exactly what can be acted on.
+     *
+     * Note the `created_by_type = 'teacher'` guard on the creator test. Without it the condition
+     * is `created_by_id = <teacher id>` alone, which also matches books created by the *admin*
+     * whose id happens to equal this teacher's — ids are only unique within their own table.
+     */
+    function teacher_book_ownership_clause(int $teacherId): string {
+        return "(
+            (cb.created_by_type = 'teacher' AND cb.created_by_id = {$teacherId})
+            OR cb.id IN (SELECT book_id FROM book_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
+            OR cb.course_id IN (SELECT id FROM courses WHERE teacher_id = {$teacherId} OR (created_by_type = 'teacher' AND created_by_id = {$teacherId}))
+            OR cb.course_id IN (SELECT course_id FROM course_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
+            OR cb.unit_id IN (SELECT id FROM units WHERE (created_by_type = 'teacher' AND created_by_id = {$teacherId}))
+            OR cb.unit_id IN (SELECT unit_id FROM unit_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
+            OR cb.subject_id IN (SELECT subject_id FROM teacher_subjects WHERE teacher_id = {$teacherId})
+        )";
+    }
+}
+
 if (!function_exists('teacherGrantBookAccessToStudent')) {
     function teacherGrantBookAccessToStudent($con, $teacherData = null) {
         $teacherId = (int)($teacherData['id'] ?? 0);
@@ -81,16 +108,7 @@ if (!function_exists('teacherListBookPurchaseRequests')) {
         $langInfo = get_language_info($con);
         $langId = (int)($langInfo['id'] ?? 1);
 
-        $whereClause = "WHERE (
-            cb.created_by_id = {$teacherId}
-            OR (cb.created_by_type = 'teacher' AND cb.created_by_id = {$teacherId})
-            OR cb.id IN (SELECT book_id FROM book_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
-            OR cb.course_id IN (SELECT id FROM courses WHERE teacher_id = {$teacherId} OR (created_by_type = 'teacher' AND created_by_id = {$teacherId}))
-            OR cb.course_id IN (SELECT course_id FROM course_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
-            OR cb.unit_id IN (SELECT id FROM units WHERE (created_by_type = 'teacher' AND created_by_id = {$teacherId}))
-            OR cb.unit_id IN (SELECT unit_id FROM unit_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
-            OR cb.subject_id IN (SELECT subject_id FROM teacher_subjects WHERE teacher_id = {$teacherId})
-        )";
+        $whereClause = "WHERE " . teacher_book_ownership_clause($teacherId);
 
         if ($studentId > 0) {
             $whereClause .= " AND sbpr.student_id = {$studentId}";
@@ -119,7 +137,7 @@ if (!function_exists('teacherListBookPurchaseRequests')) {
         $totalRecords = $countRes ? (int)(mysqli_fetch_assoc($countRes)['total'] ?? 0) : 0;
 
         $sql = "
-            SELECT sbpr.id, sbpr.student_id, sbpr.book_id, sbpr.status, sbpr.reviewed_by_type, sbpr.reviewed_by_id, sbpr.notes, sbpr.created_at, sbpr.updated_at,
+            SELECT sbpr.id, sbpr.student_id, sbpr.book_id, sbpr.status, sbpr.reviewed_by_type, sbpr.reviewed_by_id, sbpr.notes, sbpr.review_notes, sbpr.created_at, sbpr.updated_at,
                    st.name AS student_name, st.email AS student_email, st.phone AS student_phone, st.image AS student_image,
                    COALESCE(cbt.title, cb.file_path) AS book_title,
                    cbt.description AS book_description,
@@ -193,12 +211,8 @@ if (!function_exists('teacherReviewBookRequest')) {
         $bookId = (int)$rRow['book_id'];
         $ownerCheck = mysqli_query($con, "
             SELECT cb.id FROM course_books cb
-            LEFT JOIN courses c ON cb.course_id = c.id
-            WHERE cb.id = {$bookId} AND (
-                (cb.created_by_type = 'teacher' AND cb.created_by_id = {$teacherId})
-                OR c.teacher_id = {$teacherId}
-                OR cb.id IN (SELECT book_id FROM book_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
-            ) LIMIT 1
+            WHERE cb.id = {$bookId} AND " . teacher_book_ownership_clause($teacherId) . "
+            LIMIT 1
         ");
         if (!$ownerCheck || mysqli_num_rows($ownerCheck) === 0) {
             return ['status' => 'error', 'message' => 'You are not authorized to review this book request'];
@@ -207,7 +221,9 @@ if (!function_exists('teacherReviewBookRequest')) {
         $stId = (int)$rRow['student_id'];
         $notesEsc = mysqli_real_escape_string($con, $notes);
 
-        mysqli_query($con, "UPDATE student_book_purchase_requests SET status = '{$newStatus}', reviewed_by_type = 'teacher', reviewed_by_id = {$teacherId}, notes = '{$notesEsc}' WHERE id = {$requestId}");
+        // review_notes, not notes: `notes` holds what the STUDENT wrote when filing the request.
+        // Writing the reviewer's note over it destroyed the student's own words on every review.
+        mysqli_query($con, "UPDATE student_book_purchase_requests SET status = '{$newStatus}', reviewed_by_type = 'teacher', reviewed_by_id = {$teacherId}, review_notes = '{$notesEsc}' WHERE id = {$requestId}");
 
         if ($newStatus === 'approved') {
             $bRes = mysqli_query($con, "SELECT price FROM course_books WHERE id = {$bookId} LIMIT 1");
