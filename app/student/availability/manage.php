@@ -39,7 +39,7 @@ if (!function_exists('studentListAvailableSlots')) {
             ? null
             : availability_student_course_ids($con, $studentId);
 
-        return availability_list_slots($con, [
+        $response = availability_list_slots($con, [
             'teacher_id' => $teacherId ?: null,
             'course_id' => $courseId ?: null,
             'course_ids' => $courseIds,
@@ -50,6 +50,10 @@ if (!function_exists('studentListAvailableSlots')) {
             'page' => $_GET['page'] ?? 1,
             'limit' => $_GET['limit'] ?? 200,
         ]);
+
+        // These are slots open to book, by definition not yet started - the meeting link has no
+        // business being in this response at all.
+        return availability_redact_link_for_student($response);
     }
 }
 
@@ -60,7 +64,7 @@ if (!function_exists('studentMyScheduleSlots')) {
             return ['status' => 'error', 'message' => 'Student authentication required'];
         }
 
-        return availability_list_slots($con, [
+        $response = availability_list_slots($con, [
             'student_id' => $studentId,
             'teacher_id' => $_GET['teacher_id'] ?? null,
             'course_id' => $_GET['course_id'] ?? null,
@@ -69,6 +73,8 @@ if (!function_exists('studentMyScheduleSlots')) {
             'page' => $_GET['page'] ?? 1,
             'limit' => $_GET['limit'] ?? 200,
         ]);
+
+        return availability_redact_link_for_student($response);
     }
 }
 

@@ -5496,6 +5496,50 @@ $routes = [
                 return teacherEndAvailabilitySlot($con, $teacherData);
             },
         ],
+        // Live classes over Zoom for package session slots, embedded in Brainixa. Separate from
+        // /availability/start and /availability/end above, which also flip the stored state and
+        // notify students regardless of Zoom - teacherStartZoomSlot/teacherEndZoomSlot call
+        // those same functions internally, then layer the Zoom room on top.
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/teacher/availability/zoom/start",
+            "handler" => function ($con) {
+                include_once "./middlewares/teacherauthmiddleware.php";
+                include_once "./app/availability/zoom.php";
+                $teacherData = teacherAuthMiddleware();
+                return teacherStartZoomSlot($con, $teacherData);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/teacher/availability/zoom/end",
+            "handler" => function ($con) {
+                include_once "./middlewares/teacherauthmiddleware.php";
+                include_once "./app/availability/zoom.php";
+                $teacherData = teacherAuthMiddleware();
+                return teacherEndZoomSlot($con, $teacherData);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/student/availability/zoom/join",
+            "handler" => function ($con) {
+                include_once "./middlewares/studentauthmiddleware.php";
+                include_once "./app/availability/zoom.php";
+                $studentData = studentAuthMiddleware();
+                return studentJoinZoomSlot($con, $studentData);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/student/availability/zoom/status",
+            "handler" => function ($con) {
+                include_once "./middlewares/studentauthmiddleware.php";
+                include_once "./app/availability/zoom.php";
+                $studentData = studentAuthMiddleware();
+                return studentZoomSlotStatus($con, $studentData);
+            },
+        ],
         [
             "method" => "POST",
             "path" => "/brain-ixa/teacher/availability/book",

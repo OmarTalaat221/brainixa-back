@@ -185,6 +185,36 @@ if (!function_exists('get_availability_slot_details')) {
     }
 }
 
+if (!function_exists('availability_redact_link_for_student')) {
+    /**
+     * Strips `meeting_link` from a student-facing slot listing's response unless the slot is
+     * actually live.
+     *
+     * `availability_format_slot_row()` is shared by the admin, teacher and student routes and
+     * always includes the raw `meeting_link` - admin and teacher need it at every state to set
+     * it up, but the whole point of migration 109's started_at/ended_at gating was "the link
+     * cannot sit on the student's screen from the moment they book". That gate was only ever
+     * enforced by the student frontend choosing not to render the field - the API itself handed
+     * it over regardless of `is_live`, to a student merely BROWSING bookable slots, booked or
+     * not. Call this on the student-facing responses only; admin and teacher listings are left
+     * exactly as they are.
+     */
+    function availability_redact_link_for_student(array $response): array {
+        if (($response['status'] ?? '') !== 'success' || !is_array($response['data'] ?? null)) {
+            return $response;
+        }
+
+        foreach ($response['data'] as &$row) {
+            if (is_array($row) && empty($row['is_live'])) {
+                $row['meeting_link'] = null;
+            }
+        }
+        unset($row);
+
+        return $response;
+    }
+}
+
 if (!function_exists('availability_format_slot_row')) {
     function availability_format_slot_row($con, array $row, bool $withBookings = true): array {
         $row['id'] = (int)$row['id'];
