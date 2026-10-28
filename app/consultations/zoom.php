@@ -44,17 +44,35 @@ if (!function_exists('consultation_zoom_start_core')) {
             return ['status' => 'error', 'message' => 'slot_id is required'];
         }
 
-        // Ownership check, the started_at/status update, and the student notification are all
-        // already correct here - reused rather than re-implemented, so the plain-link and Zoom
-        // paths can never drift on who is allowed to press Start.
-        $stateResult = consultation_set_live_state_core($con, $slotId, true, $teacherScope);
-        if (($stateResult['status'] ?? '') !== 'success') {
-            return $stateResult;
-        }
-
         $slot = consultation_zoom_slot_row($con, $slotId);
         if (!$slot) {
             return ['status' => 'error', 'message' => 'Slot not found'];
+        }
+
+        // Rejoining a room that is already open is not starting anything: whoever is hosting
+        // closed the tab, refreshed, or stepped out with "leave without ending". Going through
+        // Start again would re-stamp started_at and notify the student a second time that the
+        // consultation has begun, so that path is skipped - but the ownership check it carries
+        // has to be done here instead, or a rejoin would be a way to mint a host signature for
+        // another teacher's live room. A null scope is the admin, who may host any of them.
+        $stateResult = null;
+        if (consultation_zoom_is_live($slot)) {
+            if ($teacherScope !== null && (int)$slot['teacher_id'] !== $teacherScope) {
+                return ['status' => 'error', 'message' => 'هذه الاستشارة تخص معلمًا آخر'];
+            }
+        } else {
+            // Ownership check, the started_at/status update, and the student notification are all
+            // already correct here - reused rather than re-implemented, so the plain-link and
+            // Zoom paths can never drift on who is allowed to press Start.
+            $stateResult = consultation_set_live_state_core($con, $slotId, true, $teacherScope);
+            if (($stateResult['status'] ?? '') !== 'success') {
+                return $stateResult;
+            }
+
+            $slot = consultation_zoom_slot_row($con, $slotId);
+            if (!$slot) {
+                return ['status' => 'error', 'message' => 'Slot not found'];
+            }
         }
 
         if (!empty($slot['zoom_meeting_id'])) {
