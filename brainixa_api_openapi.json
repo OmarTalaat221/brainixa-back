@@ -12782,6 +12782,11 @@
                     "type": "integer",
                     "nullable": true
                   },
+                  "student_id": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "update-5 (NEW, optional): book this student into the slot as soon as it is created. Omit it to publish an open slot (the behaviour before update-5). If the booking itself fails the slot is still created and the response message says why."
+                  },
                   "is_online": {
                     "type": "integer",
                     "enum": [
@@ -13579,6 +13584,11 @@
                   "subject_id": {
                     "type": "integer",
                     "nullable": true
+                  },
+                  "student_id": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "update-5 (NEW, optional): book this student into the slot as soon as it is created. Omit it to publish an open slot (the behaviour before update-5). If the booking itself fails the slot is still created and the response message says why."
                   },
                   "is_online": {
                     "type": "integer",

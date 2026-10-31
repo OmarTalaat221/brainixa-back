@@ -370,10 +370,39 @@ if (!function_exists('availability_create_slot')) {
             return ['status' => 'error', 'message' => 'Failed to create slot: ' . mysqli_error($con)];
         }
 
+        $slotId = mysqli_insert_id($con);
+
+        // Optional: the caller already knows which student this slot is for (the admin or the
+        // teacher had that student selected when they opened the form), so the booking is made
+        // here instead of leaving an empty slot behind and asking them to assign it again.
+        // Additive - callers that send no student_id behave exactly as before.
+        $studentId = isset($body['student_id']) && (int)$body['student_id'] > 0 ? (int)$body['student_id'] : null;
+        $bookResult = null;
+        if ($studentId) {
+            $bookResult = availability_book_slot($con, $slotId, $studentId, $byType, $byId, false);
+        }
+
+        $slot = get_availability_slot_details($con, $slotId);
+        if (is_array($slot)) {
+            $slot['booked_student_id'] = $bookResult && ($bookResult['status'] ?? '') === 'success' ? $studentId : null;
+            $slot['booking_error'] = $bookResult && ($bookResult['status'] ?? '') !== 'success'
+                ? ($bookResult['message'] ?? 'failed')
+                : null;
+        }
+
+        // The slot itself was created either way: a booking that could not be made is reported
+        // as a warning on a successful response, not as a failure that hides the new slot.
+        $message = 'تم إنشاء الموعد بنجاح';
+        if ($studentId && $bookResult && ($bookResult['status'] ?? '') === 'success') {
+            $message = 'تم إنشاء الموعد وحجزه للطالب بنجاح';
+        } elseif ($studentId && $bookResult) {
+            $message = 'تم إنشاء الموعد، لكن تعذر حجزه للطالب: ' . ($bookResult['message'] ?? '');
+        }
+
         return [
             'status' => 'success',
-            'message' => 'تم إنشاء الموعد بنجاح',
-            'data' => get_availability_slot_details($con, mysqli_insert_id($con)),
+            'message' => $message,
+            'data' => $slot,
         ];
     }
 }
