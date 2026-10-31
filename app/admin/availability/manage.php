@@ -10,12 +10,17 @@ if (!function_exists('adminListAvailabilitySlots')) {
     function adminListAvailabilitySlots($con) {
         return availability_list_slots($con, [
             'teacher_id' => $_GET['teacher_id'] ?? null,
+            // A package taught by several teachers: all of their calendars in one view.
+            'teacher_ids' => $_GET['teacher_ids'] ?? null,
             'course_id' => $_GET['course_id'] ?? null,
             'subject_id' => $_GET['subject_id'] ?? null,
             'date_from' => $_GET['date_from'] ?? $_GET['from'] ?? null,
             'date_to' => $_GET['date_to'] ?? $_GET['to'] ?? null,
             'status' => $_GET['status'] ?? null,
             'student_id' => $_GET['student_id'] ?? null,
+            // Keeps the slots nobody has booked yet in the list while filtering by a student,
+            // so published-but-empty availability is still visible.
+            'include_open' => $_GET['include_open'] ?? null,
             'page' => $_GET['page'] ?? 1,
             'limit' => $_GET['limit'] ?? 200,
         ]);

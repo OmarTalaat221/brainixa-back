@@ -779,6 +779,20 @@ if (!function_exists('availability_list_slots')) {
             $params[] = (int)$filters['teacher_id'];
             $types .= 'i';
         }
+        // A package can be taught by more than one teacher, and the admin calendar wants all of
+        // their dates at once rather than one teacher at a time. Accepts a CSV or an array;
+        // ignored entirely when absent, so every existing caller is unaffected.
+        if (!empty($filters['teacher_ids'])) {
+            $rawTeacherIds = is_array($filters['teacher_ids'])
+                ? $filters['teacher_ids']
+                : explode(',', (string)$filters['teacher_ids']);
+            $teacherIds = array_values(array_unique(array_filter(array_map('intval', $rawTeacherIds))));
+            if (!empty($teacherIds)) {
+                $where[] = 's.teacher_id IN (' . implode(',', $teacherIds) . ')';
+            } else {
+                $where[] = '1 = 0';
+            }
+        }
         // The packages one student is allowed to see sessions of.
         //
         // A slot with no course belongs to no package, so it is NOT shown. Letting those
@@ -824,7 +838,16 @@ if (!function_exists('availability_list_slots')) {
             $where[] = "s.status = 'available' AND s.booked_count < s.capacity AND s.slot_date >= CURDATE()";
         }
         if (!empty($filters['student_id'])) {
-            $where[] = "s.id IN (SELECT slot_id FROM availability_slot_bookings WHERE student_id = ? AND status <> 'cancelled')";
+            // include_open: "this student's dates, AND the dates still open on this calendar".
+            // Filtering by a student alone hides every slot nobody has booked yet, so a teacher
+            // who has published availability looks as though they have none - which is exactly
+            // what the admin needs to see before deciding where to put the student. Off by
+            // default, so the student-facing and existing callers keep the strict behaviour.
+            if (!empty($filters['include_open'])) {
+                $where[] = "(s.id IN (SELECT slot_id FROM availability_slot_bookings WHERE student_id = ? AND status <> 'cancelled') OR s.booked_count = 0)";
+            } else {
+                $where[] = "s.id IN (SELECT slot_id FROM availability_slot_bookings WHERE student_id = ? AND status <> 'cancelled')";
+            }
             $params[] = (int)$filters['student_id'];
             $types .= 'i';
         }
@@ -855,9 +878,21 @@ if (!function_exists('availability_list_slots')) {
         mysqli_stmt_execute($stmt);
         $res = mysqli_stmt_get_result($stmt);
 
+        $filterStudentId = !empty($filters['student_id']) ? (int)$filters['student_id'] : null;
+
         $rows = [];
         while ($row = mysqli_fetch_assoc($res)) {
-            $rows[] = availability_format_slot_row($con, $row, true);
+            $formatted = availability_format_slot_row($con, $row, true);
+            // With include_open on, the list mixes "booked for this student" with "open, nobody
+            // in it". The caller cannot tell them apart from the row alone, so it is said here.
+            if ($filterStudentId) {
+                $formatted['is_student_booked'] = in_array(
+                    $filterStudentId,
+                    array_map('intval', array_column($formatted['students'] ?? [], 'id')),
+                    true
+                );
+            }
+            $rows[] = $formatted;
         }
 
         return build_paginated_response($rows, $page, $limit, $total);

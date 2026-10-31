@@ -12626,6 +12626,24 @@
         ],
         "parameters": [
           {
+            "name": "teacher_ids",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "4,9"
+            },
+            "description": "update-5 (NEW, optional): comma-separated teacher ids - every one of a package's teachers on one calendar. Ignored when absent."
+          },
+          {
+            "name": "include_open",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "enum": [0, 1]
+            },
+            "description": "update-5 (NEW, optional): only meaningful alongside student_id. 1 also returns slots nobody has booked yet, so published-but-empty availability stays visible; each row then carries is_student_booked. Defaults to off, the previous strict behaviour."
+          },
+          {
             "name": "teacher_id",
             "in": "query",
             "schema": {
@@ -13440,6 +13458,15 @@
           }
         ],
         "parameters": [
+          {
+            "name": "include_open",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "enum": [0, 1]
+            },
+            "description": "update-5 (NEW, optional): only meaningful alongside student_id. 1 also returns slots nobody has booked yet, so published-but-empty availability stays visible; each row then carries is_student_booked. Defaults to off, the previous strict behaviour."
+          },
           {
             "name": "date_from",
             "in": "query",

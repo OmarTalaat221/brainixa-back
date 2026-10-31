@@ -34,6 +34,9 @@ if (!function_exists('teacherListAvailabilitySlots')) {
             'date_to' => $_GET['date_to'] ?? $_GET['to'] ?? null,
             'status' => $_GET['status'] ?? null,
             'student_id' => $_GET['student_id'] ?? null,
+            // Keeps the slots nobody has booked yet in the list while filtering by a student,
+            // so published-but-empty availability is still visible.
+            'include_open' => $_GET['include_open'] ?? null,
             'page' => $_GET['page'] ?? 1,
             'limit' => $_GET['limit'] ?? 200,
         ]);
