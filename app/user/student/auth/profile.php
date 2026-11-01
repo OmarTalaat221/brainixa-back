@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../../../helpers/upload.php';
 require_once __DIR__ . '/../subscriptions/manage.php';
 require_once __DIR__ . '/../../../../helpers/notifications.php';
 require_once __DIR__ . '/../../../../helpers/phone.php';
+require_once __DIR__ . '/../../../../helpers/email_verification.php';
 
 if (!function_exists('studentProfile')) {
     function studentProfile($con, $studentData = null) {
@@ -89,6 +90,11 @@ if (!function_exists('studentUpdateProfile')) {
         $params = [];
         $types = "";
 
+        // Set when the student is moving to a DIFFERENT address, so the verification code is sent
+        // after the row has actually been written - not before, where a failed UPDATE would leave
+        // a code waiting for an address nobody owns.
+        $emailToVerify = null;
+
         if (isset($body['name']) && trim($body['name']) !== '') {
             $updateFields[] = "name = ?";
             $params[] = trim($body['name']);
@@ -108,6 +114,27 @@ if (!function_exists('studentUpdateProfile')) {
                     return ['status' => 'error', 'message' => trans('email_in_use')];
                 }
             }
+            // Re-typing the address they already have is not a change, and putting them through
+            // verification for it would be a trap: the flag would drop to 0 over nothing.
+            $currentEmail = null;
+            $curStmt = mysqli_prepare($con, "SELECT email FROM students WHERE id = ? LIMIT 1");
+            if ($curStmt) {
+                mysqli_stmt_bind_param($curStmt, "i", $studentId);
+                mysqli_stmt_execute($curStmt);
+                $curRow = mysqli_fetch_assoc(mysqli_stmt_get_result($curStmt));
+                $currentEmail = $curRow['email'] ?? null;
+            }
+
+            if (strtolower((string)$currentEmail) !== $newEmail) {
+                // A new address has not been proven to belong to them, so the account stops
+                // claiming it has. The code below re-opens the verification the platform already
+                // has endpoints for (`/auth/verify-email`, `/auth/resend-otp`).
+                $updateFields[] = "is_email_verified = ?";
+                $params[] = 0;
+                $types .= "i";
+                $emailToVerify = $newEmail;
+            }
+
             $updateFields[] = "email = ?";
             $params[] = $newEmail;
             $types .= "s";
@@ -212,9 +239,19 @@ if (!function_exists('studentUpdateProfile')) {
             return ['status' => 'error', 'message' => 'Failed to update profile: ' . mysqli_error($con)];
         }
 
+        // After the write, and never allowed to fail it: the address is already theirs on the
+        // record, and a mail server having a bad minute is not a reason to reject an edit the
+        // student has made.
+        if ($emailToVerify !== null) {
+            @generateAndSendOtp($con, 'student', $studentId, $emailToVerify);
+        }
+
         $profileRes = studentProfile($con, $studentData);
         if (is_array($profileRes) && ($profileRes['status'] ?? '') === 'success') {
             $profileRes['message'] = trans('profile_updated_success');
+            // Additive, and always present so a client cannot read a missing key as "no".
+            // `data.is_email_verified` carries the same answer; this is the unambiguous one.
+            $profileRes['email_verification_required'] = $emailToVerify !== null;
         }
         return $profileRes;
     }

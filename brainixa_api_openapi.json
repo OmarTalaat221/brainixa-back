@@ -25199,6 +25199,106 @@
           }
         }
       }
+    },
+    "/user/student/auth/profile": {
+      "put": {
+        "tags": [
+          "update-7 / Student - Auth"
+        ],
+        "summary": "update-7 (CHANGED): update the student's own profile - changing the email now re-opens verification",
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string",
+                    "description": "update-7 (BEHAVIOUR): changing this to a DIFFERENT address sets `is_email_verified` back to 0 and sends a fresh 6-digit code to the new address, which `POST /user/student/auth/verify-email` consumes and `POST /user/student/auth/resend-otp` re-sends. Re-sending the address they already hold is not a change and costs them nothing. Refused when another student already holds it."
+                  },
+                  "phone": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "phone_country_code": {
+                    "type": "string",
+                    "description": "Aliases: `country_code`, `dial_code`."
+                  },
+                  "image": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "base64 data URL, an already-uploaded path, or a multipart file. Aliases: `avatar`, `photo`, `profile_image`, `picture`, `file`."
+                  },
+                  "age": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "city_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "school_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "academic_year_id": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Optional. Sending null clears it."
+                  },
+                  "study_language": {
+                    "type": "string",
+                    "enum": [
+                      "arabic",
+                      "english",
+                      "french"
+                    ]
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 6
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Documented here for the update-7 change; the endpoint itself predates this changelog. Every field is optional and only the ones sent are written - an empty body is refused with `no_fields_to_update`.\n\n=== update-7 ===\n\nChanging the email to a DIFFERENT address now sets `is_email_verified` to 0 and sends a verification code to the new address. Before this the flag stayed at 1, so the account went on claiming an address nobody had ever proven belonged to it.\n\nThe response gains `email_verification_required` (always present, so a missing key cannot be read as \"no\"). `data.is_email_verified` carries the same answer.\n\nSending the code is never allowed to fail the update: the address is already theirs on the record by then, and a mail server having a bad minute is not a reason to reject an edit the student made. `POST /user/student/auth/resend-otp` is the way back if nothing arrives.\n\nNOTE for anyone comparing the two: registration does NOT do this. `POST /user/student/auth/register` stores `is_email_verified = 1` and sends no code at all (update-4 took verification out of sign-up deliberately), so a brand-new account reads as verified while one whose address was edited does not.",
+        "responses": {
+          "200": {
+            "description": "The updated profile.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "email_verification_required": {
+                          "type": "boolean",
+                          "description": "update-7 (NEW): true when the email was changed in this request and a code has just been sent."
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "tags": [
