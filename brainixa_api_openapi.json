@@ -1,9 +1,9 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Brainixa Backend - Session Changelog API (update-6)",
-    "version": "6.0.0",
-    "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109."
+    "title": "Brainixa Backend - Session Changelog API (update-7)",
+    "version": "7.0.0",
+    "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109.\n\n`update-7` is the live-class batch and the loose ends around it: Zoom played inside the platform for all three kinds of live meeting (the weekly class sessions, the dated package appointments and the 1:1 consultations), a manual-sales sheet for admin and teacher, a chat contact directory read from the real tables instead of Firebase's stale copy, and hero slides as a table of their own."
   },
   "servers": [
     {
@@ -999,7 +999,7 @@
       },
       "AvailabilitySlot": {
         "type": "object",
-        "description": "update-4 (NEW): one teaching appointment on a REAL calendar date. This is a separate layer from `class_sessions`, which is a weekly recurring pattern (`day_of_week` + `start_time`) with no date on it and is unchanged. A slot with `capacity` 1 is a private appointment; a higher capacity makes it a group one - both use the same `bookings` array, there is no second mechanism.",
+        "description": "update-4 (NEW): one teaching appointment on a REAL calendar date. This is a separate layer from `class_sessions`, which is a weekly recurring pattern (`day_of_week` + `start_time`) with no date on it and is unchanged. A slot with `capacity` 1 is a private appointment; a higher capacity makes it a group one - both use the same `bookings` array, there is no second mechanism.\n\nupdate-7: the raw `zoom_meeting_id` and `zoom_password` are NEVER serialised onto a slot, for any role. A meeting number plus its password is enough to walk into the room from outside the platform, so the only way in is a signature minted by the Zoom join endpoints, against the caller's own entitlement.",
         "properties": {
           "id": {
             "type": "integer"
@@ -1148,6 +1148,18 @@
           "is_live": {
             "type": "boolean",
             "description": "update-6. TRUE when the session is open to its students, and the ONLY thing a client should gate the meeting link on - not the clock it could read itself, and not the booking.\n\nTwo gates, either one opens it, and ended_at closes it over both:\n  ended_at set           -> false, always\n  started_at set         -> true (a person started it, possibly early)\n  now within the window  -> true (the hour itself)\n\nThe clock is there because a teacher who forgets to press Start would otherwise lock out a room of students who arrived on time; the person is there because a forgotten End would leave the link open all night."
+          },
+          "has_zoom": {
+            "type": "boolean",
+            "description": "update-7 (NEW): a Zoom room has existed for this slot at some point. STICKY - the meeting id is never cleared on End, so this stays true once a room has been opened. Do not gate a Join button on it; use `zoom_is_live`."
+          },
+          "zoom_is_live": {
+            "type": "boolean",
+            "description": "update-7 (NEW): a Zoom room is open RIGHT NOW (`has_zoom` and the slot has not been ended). This is the field a Join or End button should read.\n\nDeliberately separate from `is_live`, which is a clock-window flag: `is_live` is true during the slot's own hour even if nobody has pressed Start, so a forgotten Start does not lock the students out of a plain meeting link. The two answer different questions."
+          },
+          "is_student_booked": {
+            "type": "boolean",
+            "description": "update-7 (NEW): only present when the list was asked for with `student_id` and `include_open=1`. Says whether THIS student is booked into the row, so open slots and that student's own slots can be told apart on one calendar."
           }
         }
       },
@@ -1786,7 +1798,7 @@
       },
       "ConsultationSlot": {
         "type": "object",
-        "description": "One consultation. Every slot belongs to a real teacher.",
+        "description": "One consultation. Every slot belongs to a real teacher.\n\nupdate-7: `zoom_meeting_id` and `zoom_password` are stripped before the row is sent, for every role.",
         "properties": {
           "id": {
             "type": "integer"
@@ -1885,6 +1897,14 @@
           "notes": {
             "type": "string",
             "nullable": true
+          },
+          "has_zoom": {
+            "type": "boolean",
+            "description": "update-7 (NEW): a Zoom room has existed for this consultation. Sticky, exactly as on `AvailabilitySlot`."
+          },
+          "zoom_is_live": {
+            "type": "boolean",
+            "description": "update-7 (NEW): a Zoom room is open right now. This is what a Join or End button reads."
           }
         }
       }
@@ -3318,9 +3338,9 @@
       },
       "post": {
         "tags": [
-          "old / Admin / Admins & RBAC"
+          "update-7 / Admin / Admins & RBAC"
         ],
-        "summary": "Create admin",
+        "summary": "MOVED FROM `old / Admin / Admins & RBAC`. Create admin. update-7: a phone number, and email no longer required",
         "security": [
           {
             "AdminAuth": []
@@ -3357,8 +3377,16 @@
                       "type": "integer"
                     },
                     "description": "NEW: sets initial direct permission grants"
+                  },
+                  "phone": {
+                    "type": "string",
+                    "description": "update-7 (NEW COLUMN, migration 112): admins had an email address and nothing else - no second way to identify one. Either this or `email` must be present."
                   }
-                }
+                },
+                "required": [
+                  "name",
+                  "password"
+                ]
               },
               "example": {
                 "name": "string",
@@ -3384,13 +3412,14 @@
               }
             }
           }
-        }
+        },
+        "description": "update-7 (VALIDATION RELAXED): `name` and `password` are the only hard requirements. Email and the phone number are both optional now, with one guard: NOT BOTH EMPTY on the same account - `\"Provide at least an email or a phone number\"`. An account saved with neither would be unreachable, including to its own owner, because this role signs in by email.\n\nBefore update-7 email was NOT NULL in the schema AND hard-required by the handler, so a phone-only account could not be opened at all. An email can be added later from the edit screen."
       },
       "put": {
         "tags": [
-          "old / Admin / Admins & RBAC"
+          "update-7 / Admin / Admins & RBAC"
         ],
-        "summary": "Update admin",
+        "summary": "MOVED FROM `old / Admin / Admins & RBAC`. Update admin. update-7: a phone number, which can also be cleared",
         "security": [
           {
             "AdminAuth": []
@@ -3427,6 +3456,10 @@
                       "type": "integer"
                     },
                     "description": "NEW: REPLACES the admin's full permission set"
+                  },
+                  "phone": {
+                    "type": "string",
+                    "description": "update-7 (NEW COLUMN, migration 112). Send an empty string to clear it."
                   }
                 }
               },
@@ -3454,7 +3487,8 @@
               }
             }
           }
-        }
+        },
+        "description": "update-7 (BEHAVIOUR): the update handler used to test the field for emptiness before writing it, which quietly made a number impossible to REMOVE - a wrong one could be corrected but never cleared. It now checks whether the field was sent at all, so sending an empty string means empty."
       },
       "delete": {
         "tags": [
@@ -5249,9 +5283,9 @@
       },
       "post": {
         "tags": [
-          "old / Admin / Teachers"
+          "update-7 / Admin / Teachers"
         ],
-        "summary": "Create teacher (NEW: per-grade subjects[] shape)",
+        "summary": "MOVED FROM `old / Admin / Teachers`. Create teacher (NEW: per-grade subjects[] shape). update-7: email and subject are no longer required",
         "security": [
           {
             "AdminAuth": []
@@ -5294,8 +5328,16 @@
                       "type": "integer"
                     },
                     "description": "legacy, still accepted"
+                  },
+                  "whatsapp": {
+                    "type": "string",
+                    "description": "update-7: the teacher's phone number. Either this or `email` must be present."
                   }
-                }
+                },
+                "required": [
+                  "name",
+                  "password"
+                ]
               },
               "example": {
                 "name": "string",
@@ -5325,13 +5367,14 @@
               }
             }
           }
-        }
+        },
+        "description": "update-7 (VALIDATION RELAXED): `name` and `password` are the only hard requirements. Email and the phone number are both optional now, with one guard: NOT BOTH EMPTY on the same account - `\"Provide at least an email or a WhatsApp number\"`. An account saved with neither would be unreachable, including to its own owner, because this role signs in by email.\n\nBefore update-7 email was NOT NULL in the schema AND hard-required by the handler, so a phone-only account could not be opened at all. An email can be added later from the edit screen.\n\nupdate-7 (VALIDATION RELAXED): a teacher can also be created with NO subject at all. `subjects` / `subject_ids` used to be rejected when empty, which blocked the ordinary case - an admin opens the account first and settles what the teacher will teach afterwards. `teachers.subject_id` has always been nullable with ON DELETE SET NULL, so a teacher with no subject is a state the schema was already designed for; the primary subject is simply null."
       },
       "put": {
         "tags": [
-          "old / Admin / Teachers"
+          "update-7 / Admin / Teachers"
         ],
-        "summary": "Update teacher",
+        "summary": "MOVED FROM `old / Admin / Teachers`. Update teacher. update-7: a WhatsApp number can now be cleared",
         "security": [
           {
             "AdminAuth": []
@@ -5367,6 +5410,10 @@
                     "items": {
                       "type": "integer"
                     }
+                  },
+                  "whatsapp": {
+                    "type": "string",
+                    "description": "Send an empty string to clear it."
                   }
                 }
               },
@@ -5396,7 +5443,8 @@
               }
             }
           }
-        }
+        },
+        "description": "update-7 (BEHAVIOUR): the update handler used to test the field for emptiness before writing it, which quietly made a number impossible to REMOVE - a wrong one could be corrected but never cleared. It now checks whether the field was sent at all, so sending an empty string means empty."
       },
       "delete": {
         "tags": [
@@ -6855,9 +6903,9 @@
     "/student/home": {
       "get": {
         "tags": [
-          "update-6 / Student / Home"
+          "update-7 / Student / Home"
         ],
-        "summary": "MOVED FROM `old / Student / Home`. Student home/dashboard (now grade-filtered sessions)",
+        "summary": "MOVED FROM `update-6 / Student / Home`. MOVED FROM `old / Student / Home`. Student home/dashboard (now grade-filtered sessions). update-7: the next-session box covers packages too",
         "security": [
           {
             "StudentAuth": []
@@ -6875,7 +6923,7 @@
             }
           }
         },
-        "description": "\n\nupdate-6 (CHANGED): every row of `subscribed_courses` now carries `kind` (`normal` | `package`). The list already included packages - a package IS a course, with kind = 'package' - but without the field the app could not tell one from the other."
+        "description": "\n\nupdate-6 (CHANGED): every row of `subscribed_courses` now carries `kind` (`normal` | `package`). The list already included packages - a package IS a course, with kind = 'package' - but without the field the app could not tell one from the other.\n\nupdate-7 (CHANGED): `today_sessions` is no longer only weekly class sessions. Booked package appointments (`teacher_availability_slots` via `availability_slot_bookings`, status `booked`, from today onwards) are now folded into the same list, alongside the consultations that were already there.\n\nEvery row therefore carries `scope`: `\"session\"`, `\"consultation\"` or `\"package\"`. The shapes are normalised to match, so one card can render any of them, but the id in a row is an id of ITS OWN kind - a `package` row's id is a slot id for `/student/availability/zoom/join`, a `consultation` row's id is a consultation slot id. Branch on `scope` before using it.\n\nConsultation and package rows also carry `has_zoom` and `zoom_is_live`, so the card knows whether to offer a Join right now."
       }
     },
     "/student/exams/submit": {
@@ -9826,10 +9874,10 @@
       },
       "post": {
         "tags": [
-          "update-2 / Teacher / Courses (NEW - update-2)"
+          "update-7 / Teacher / Courses"
         ],
-        "summary": "update-2 (NEW doc): Create a course or package as a teacher (own subject only)",
-        "description": "update-2 (Teacher): same new `kind` field as POST /admin/courses; unlike admin, subject_id is required and must already be assigned to this teacher. The created course is auto-linked to this teacher.",
+        "summary": "MOVED FROM `update-2 / Teacher / Courses (NEW - update-2)`. update-2 (NEW doc): Create a course or package as a teacher (own subject only). update-7: only the Arabic name is required now",
+        "description": "update-2 (Teacher): same new `kind` field as POST /admin/courses; unlike admin, subject_id is required and must already be assigned to this teacher. The created course is auto-linked to this teacher.\n\nupdate-7 (VALIDATION RELAXED): `subject_id`, `category_id`, `name_en` and both descriptions are optional. Only `name_ar` is still required.\n\nA package in particular may not belong to any one subject, and demanding one made it impossible to create. Subject ownership is still checked - but only when a subject is actually given.",
         "security": [
           {
             "TeacherAuth": []
@@ -9841,7 +9889,6 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "subject_id",
                   "name_ar"
                 ],
                 "properties": {
@@ -12385,10 +12432,10 @@
     "/teacher/content/home": {
       "get": {
         "tags": [
-          "old / Teacher / Home"
+          "update-7 / Teacher / Home"
         ],
-        "summary": "update-4 (NEW to this spec): Alias of GET /teacher/home (identical handler `teacherHome`, identical response)",
-        "description": "Kept as a separate path only because both existed already in index.php (same `teacherHome` handler, same middleware) - not a different implementation. See GET /teacher/home for the full description.",
+        "summary": "MOVED FROM `old / Teacher / Home`. update-4 (NEW to this spec): Alias of GET /teacher/home (identical handler `teacherHome`, identical response). update-7: a packages count in the KPIs",
+        "description": "Kept as a separate path only because both existed already in index.php (same `teacherHome` handler, same middleware) - not a different implementation. See GET /teacher/home for the full description.\n\nupdate-7 (NEW FIELD): `data.kpis.total_packages` - how many packages this teacher owns, counted separately from `total_courses`. A package is a course with `kind = 'package'`, so without its own number the two were indistinguishable on the dashboard.",
         "security": [
           {
             "TeacherAuth": []
@@ -12639,7 +12686,10 @@
             "in": "query",
             "schema": {
               "type": "integer",
-              "enum": [0, 1]
+              "enum": [
+                0,
+                1
+              ]
             },
             "description": "update-5 (NEW, optional): only meaningful alongside student_id. 1 also returns slots nobody has booked yet, so published-but-empty availability stays visible; each row then carries is_student_booked. Defaults to off, the previous strict behaviour."
           },
@@ -13463,7 +13513,10 @@
             "in": "query",
             "schema": {
               "type": "integer",
-              "enum": [0, 1]
+              "enum": [
+                0,
+                1
+              ]
             },
             "description": "update-5 (NEW, optional): only meaningful alongside student_id. 1 also returns slots nobody has booked yet, so published-but-empty availability stays visible; each row then carries is_student_booked. Defaults to off, the previous strict behaviour."
           },
@@ -18318,6 +18371,64 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "update-7 / Admin / Cities"
+        ],
+        "summary": "update-7 (CHANGED): create a city - the code is derived, not typed",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name_ar"
+                ],
+                "properties": {
+                  "name_ar": {
+                    "type": "string"
+                  },
+                  "name_en": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "code": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "update-7: optional. Derived from the name when absent."
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Documented here for the update-7 validation change; the endpoint itself predates this changelog.\n\nupdate-7 (VALIDATION RELAXED): `code` no longer has to be typed by hand. `cities.code` is NOT NULL and UNIQUE, so the field could not simply be dropped - it is derived from the name instead, with a numeric suffix added until it is free, because two governorates can easily reduce to the same stem and the column would reject the second. An Arabic-only name leaves no Latin characters to work with and falls back to a plain `city` stem rather than producing an empty code.\n\nOnly `name_ar` is required.",
+        "responses": {
+          "200": {
+            "description": "The created city.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/student/affiliate/info": {
@@ -21047,6 +21158,3976 @@
           }
         }
       }
+    },
+    "/teacher/sessions/zoom/start": {
+      "post": {
+        "tags": [
+          "update-7 / Teacher / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): open the Zoom room for one of today's weekly class sessions, as host",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "session_id"
+                ],
+                "properties": {
+                  "session_id": {
+                    "type": "integer"
+                  },
+                  "id": {
+                    "type": "integer",
+                    "description": "Alias for `session_id`."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Nobody is ever handed a zoom.us link. The response carries a Meeting SDK signature that the frontend feeds to `@zoom/meetingsdk`, so the meeting plays inside the platform's own page. `role` is 1 for the host and 0 for an attendee, and the two signatures are not interchangeable.\n\nBusiness-logic failures still come back with HTTP 200 and `status: \"error\"` - most often `\"الحصة لم تبدأ بعد\"` while the host has not opened the room yet, which is a state to wait in rather than an error to report.\n\nScoped to one calendar day: the room is keyed on (session_id, session_date), so a weekly session that recurs every Tuesday gets its own room each week. Starting again after an End reuses the same meeting rather than creating a new one, so a class that is stopped and restarted does not leave abandoned Zoom rooms behind. Two requests racing to start the same class both end up pointing at one room.",
+        "responses": {
+          "200": {
+            "description": "The room is open and this caller is its host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "integer"
+                            },
+                            "meeting_number": {
+                              "type": "string",
+                              "description": "Zoom's own numeric meeting id, as a string."
+                            },
+                            "password": {
+                              "type": "string"
+                            },
+                            "role": {
+                              "type": "integer",
+                              "enum": [
+                                1
+                              ],
+                              "description": "1 = host."
+                            },
+                            "signature": {
+                              "type": "string",
+                              "description": "Meeting SDK JWT, valid for this meeting_number and this role only."
+                            },
+                            "zak": {
+                              "type": "string",
+                              "description": "The host's Zoom access key. Without it the SDK joins as a plain participant and nobody's video starts, so it is required for the host leg and absent from the attendee leg."
+                            },
+                            "sdk_key": {
+                              "type": "string"
+                            },
+                            "user_name": {
+                              "type": "string"
+                            },
+                            "user_email": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/sessions/zoom/end": {
+      "post": {
+        "tags": [
+          "update-7 / Teacher / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): close today's Zoom room for a weekly class session",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "session_id"
+                ],
+                "properties": {
+                  "session_id": {
+                    "type": "integer"
+                  },
+                  "id": {
+                    "type": "integer",
+                    "description": "Alias for `session_id`."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Ends the meeting for everyone and marks it closed, so the students' Join button stops offering a room that is no longer there. Zoom itself refuses to end a meeting nobody ever joined; that refusal is not surfaced, because the session is closed as far as the platform is concerned either way.",
+        "responses": {
+          "200": {
+            "description": "The room is closed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/student/sessions/zoom/join": {
+      "get": {
+        "tags": [
+          "update-7 / Student / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): join a live weekly class session as an attendee",
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": true,
+            "description": "Required. May also be sent in a JSON body."
+          }
+        ],
+        "description": "Nobody is ever handed a zoom.us link. The response carries a Meeting SDK signature that the frontend feeds to `@zoom/meetingsdk`, so the meeting plays inside the platform's own page. `role` is 1 for the host and 0 for an attendee, and the two signatures are not interchangeable.\n\nBusiness-logic failures still come back with HTTP 200 and `status: \"error\"` - most often `\"الحصة لم تبدأ بعد\"` while the host has not opened the room yet, which is a state to wait in rather than an error to report.\n\nEntitlement is checked against the student's own subscriptions - the session's course or its subject has to be one they hold. Refused with `status: \"error\"` when the teacher has not started the room yet.",
+        "responses": {
+          "200": {
+            "description": "Ready to join.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "integer"
+                            },
+                            "meeting_number": {
+                              "type": "string"
+                            },
+                            "password": {
+                              "type": "string"
+                            },
+                            "role": {
+                              "type": "integer",
+                              "enum": [
+                                0
+                              ],
+                              "description": "0 = attendee."
+                            },
+                            "signature": {
+                              "type": "string"
+                            },
+                            "sdk_key": {
+                              "type": "string"
+                            },
+                            "user_name": {
+                              "type": "string"
+                            },
+                            "user_email": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/student/sessions/zoom/status": {
+      "get": {
+        "tags": [
+          "update-7 / Student / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): is this weekly class live right now?",
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": true,
+            "description": "Required."
+          }
+        ],
+        "description": "Cheap enough for a dashboard to poll. Carries no signature of its own - the Join endpoint is what mints one.",
+        "responses": {
+          "200": {
+            "description": "The room's current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "session_id": {
+                              "type": "integer"
+                            },
+                            "is_live": {
+                              "type": "boolean",
+                              "description": "Whether a room is open right now. Deliberately carries no signature, so it is cheap enough to poll; the join endpoint is what mints one."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/availability/zoom/start": {
+      "post": {
+        "tags": [
+          "update-7 / Teacher / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): open the Zoom room for a dated package appointment, as host",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  },
+                  "id": {
+                    "type": "integer",
+                    "description": "Alias for `slot_id`."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Nobody is ever handed a zoom.us link. The response carries a Meeting SDK signature that the frontend feeds to `@zoom/meetingsdk`, so the meeting plays inside the platform's own page. `role` is 1 for the host and 0 for an attendee, and the two signatures are not interchangeable.\n\nBusiness-logic failures still come back with HTTP 200 and `status: \"error\"` - most often `\"الحصة لم تبدأ بعد\"` while the host has not opened the room yet, which is a state to wait in rather than an error to report.\n\nAlso puts the slot into its started state and notifies the students booked into it, exactly as `POST /teacher/availability/start` does - the two paths share one implementation, so who is allowed to start a slot can never drift between them. Starting again after an End reuses the same meeting rather than creating a new one, so a class that is stopped and restarted does not leave abandoned Zoom rooms behind.\n\nupdate-7 (BEHAVIOUR): calling Start on a room that is already open is treated as a REJOIN - whoever was hosting refreshed, closed the tab, or left without ending. The room comes back unchanged and `started_at` is not re-stamped, so the students are not notified a second time that it has begun. The ownership check still applies to that path: a rejoin cannot be used to mint a host signature for another teacher's live room.",
+        "responses": {
+          "200": {
+            "description": "The room is open and this teacher is its host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "slot_id": {
+                              "type": "integer"
+                            },
+                            "meeting_number": {
+                              "type": "string",
+                              "description": "Zoom's own numeric meeting id, as a string."
+                            },
+                            "password": {
+                              "type": "string"
+                            },
+                            "role": {
+                              "type": "integer",
+                              "enum": [
+                                1
+                              ],
+                              "description": "1 = host."
+                            },
+                            "signature": {
+                              "type": "string",
+                              "description": "Meeting SDK JWT, valid for this meeting_number and this role only."
+                            },
+                            "zak": {
+                              "type": "string",
+                              "description": "The host's Zoom access key. Without it the SDK joins as a plain participant and nobody's video starts, so it is required for the host leg and absent from the attendee leg."
+                            },
+                            "sdk_key": {
+                              "type": "string"
+                            },
+                            "user_name": {
+                              "type": "string"
+                            },
+                            "user_email": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/availability/zoom/end": {
+      "post": {
+        "tags": [
+          "update-7 / Teacher / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): close the Zoom room for a dated package appointment",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  },
+                  "id": {
+                    "type": "integer",
+                    "description": "Alias for `slot_id`."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Closes the slot and ends the meeting. Runs whether or not a room was ever opened, so End still works when Start failed midway.\n\nNote that `zoom_meeting_id` is deliberately NOT cleared, which is why `has_zoom` on the slot stays true forever once a room has existed. `zoom_is_live` is the field that says a room is open right now - see `AvailabilitySlot`.",
+        "responses": {
+          "200": {
+            "description": "The slot is closed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/student/availability/zoom/join": {
+      "get": {
+        "tags": [
+          "update-7 / Student / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): join a live package appointment as an attendee",
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slot_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": true,
+            "description": "Required. May also be sent in a JSON body."
+          }
+        ],
+        "description": "Nobody is ever handed a zoom.us link. The response carries a Meeting SDK signature that the frontend feeds to `@zoom/meetingsdk`, so the meeting plays inside the platform's own page. `role` is 1 for the host and 0 for an attendee, and the two signatures are not interchangeable.\n\nBusiness-logic failures still come back with HTTP 200 and `status: \"error\"` - most often `\"الحصة لم تبدأ بعد\"` while the host has not opened the room yet, which is a state to wait in rather than an error to report.\n\nEntitlement is a live booking of this slot in `availability_slot_bookings`, not a subscription lookup: a package appointment belongs to the students actually booked into it.",
+        "responses": {
+          "200": {
+            "description": "Ready to join.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "slot_id": {
+                              "type": "integer"
+                            },
+                            "meeting_number": {
+                              "type": "string"
+                            },
+                            "password": {
+                              "type": "string"
+                            },
+                            "role": {
+                              "type": "integer",
+                              "enum": [
+                                0
+                              ],
+                              "description": "0 = attendee."
+                            },
+                            "signature": {
+                              "type": "string"
+                            },
+                            "sdk_key": {
+                              "type": "string"
+                            },
+                            "user_name": {
+                              "type": "string"
+                            },
+                            "user_email": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/student/availability/zoom/status": {
+      "get": {
+        "tags": [
+          "update-7 / Student / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): is this package appointment live right now?",
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slot_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": true,
+            "description": "Required."
+          }
+        ],
+        "description": "Same cheap poll as the class-session variant, and the same answer as the slot's own `zoom_is_live`.",
+        "responses": {
+          "200": {
+            "description": "The room's current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "slot_id": {
+                              "type": "integer"
+                            },
+                            "is_live": {
+                              "type": "boolean",
+                              "description": "Whether a room is open right now. Deliberately carries no signature, so it is cheap enough to poll; the join endpoint is what mints one."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/consultations/zoom/start": {
+      "post": {
+        "tags": [
+          "update-7 / Teacher / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): open the Zoom room for a consultation slot, as host",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  },
+                  "id": {
+                    "type": "integer",
+                    "description": "Alias for `slot_id`."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Nobody is ever handed a zoom.us link. The response carries a Meeting SDK signature that the frontend feeds to `@zoom/meetingsdk`, so the meeting plays inside the platform's own page. `role` is 1 for the host and 0 for an attendee, and the two signatures are not interchangeable.\n\nBusiness-logic failures still come back with HTTP 200 and `status: \"error\"` - most often `\"الحصة لم تبدأ بعد\"` while the host has not opened the room yet, which is a state to wait in rather than an error to report.\n\nA consultation slot is 1:1 - `consultation_slots` carries a single `student_id` column - so the entitlement check is simply \"is this your own booked slot\", with no bookings table to join against.\n\nAlso marks the consultation started and notifies the student, sharing one implementation with the plain-link `POST /teacher/consultations/live-state`. Starting again after an End reuses the same meeting rather than creating a new one, so a class that is stopped and restarted does not leave abandoned Zoom rooms behind.\n\nupdate-7 (BEHAVIOUR): calling Start on a room that is already open is treated as a REJOIN - whoever was hosting refreshed, closed the tab, or left without ending. The room comes back unchanged and `started_at` is not re-stamped, so the students are not notified a second time that it has begun. The ownership check still applies to that path: a rejoin cannot be used to mint a host signature for another teacher's live room.",
+        "responses": {
+          "200": {
+            "description": "The room is open and this teacher is its host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "slot_id": {
+                              "type": "integer"
+                            },
+                            "meeting_number": {
+                              "type": "string",
+                              "description": "Zoom's own numeric meeting id, as a string."
+                            },
+                            "password": {
+                              "type": "string"
+                            },
+                            "role": {
+                              "type": "integer",
+                              "enum": [
+                                1
+                              ],
+                              "description": "1 = host."
+                            },
+                            "signature": {
+                              "type": "string",
+                              "description": "Meeting SDK JWT, valid for this meeting_number and this role only."
+                            },
+                            "zak": {
+                              "type": "string",
+                              "description": "The host's Zoom access key. Without it the SDK joins as a plain participant and nobody's video starts, so it is required for the host leg and absent from the attendee leg."
+                            },
+                            "sdk_key": {
+                              "type": "string"
+                            },
+                            "user_name": {
+                              "type": "string"
+                            },
+                            "user_email": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/consultations/zoom/end": {
+      "post": {
+        "tags": [
+          "update-7 / Teacher / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): close the Zoom room for a consultation slot",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  },
+                  "id": {
+                    "type": "integer",
+                    "description": "Alias for `slot_id`."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Closes the consultation and ends the meeting. Runs whether or not a room was ever opened.",
+        "responses": {
+          "200": {
+            "description": "The consultation is closed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/consultations/zoom/start": {
+      "post": {
+        "tags": [
+          "update-7 / Admin / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): open the Zoom room for ANY consultation slot, as host",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  },
+                  "id": {
+                    "type": "integer",
+                    "description": "Alias for `slot_id`."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires the `manage_consultations` permission.\n\nIdentical to the teacher's Start, minus the ownership check: an admin may host any teacher's consultation, which is how a consultation gets run when the teacher does not turn up. Nobody is ever handed a zoom.us link. The response carries a Meeting SDK signature that the frontend feeds to `@zoom/meetingsdk`, so the meeting plays inside the platform's own page. `role` is 1 for the host and 0 for an attendee, and the two signatures are not interchangeable.\n\nBusiness-logic failures still come back with HTTP 200 and `status: \"error\"` - most often `\"الحصة لم تبدأ بعد\"` while the host has not opened the room yet, which is a state to wait in rather than an error to report.",
+        "responses": {
+          "200": {
+            "description": "The room is open and this admin is its host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "slot_id": {
+                              "type": "integer"
+                            },
+                            "meeting_number": {
+                              "type": "string",
+                              "description": "Zoom's own numeric meeting id, as a string."
+                            },
+                            "password": {
+                              "type": "string"
+                            },
+                            "role": {
+                              "type": "integer",
+                              "enum": [
+                                1
+                              ],
+                              "description": "1 = host."
+                            },
+                            "signature": {
+                              "type": "string",
+                              "description": "Meeting SDK JWT, valid for this meeting_number and this role only."
+                            },
+                            "zak": {
+                              "type": "string",
+                              "description": "The host's Zoom access key. Without it the SDK joins as a plain participant and nobody's video starts, so it is required for the host leg and absent from the attendee leg."
+                            },
+                            "sdk_key": {
+                              "type": "string"
+                            },
+                            "user_name": {
+                              "type": "string"
+                            },
+                            "user_email": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/consultations/zoom/end": {
+      "post": {
+        "tags": [
+          "update-7 / Admin / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): close the Zoom room for ANY consultation slot",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "slot_id"
+                ],
+                "properties": {
+                  "slot_id": {
+                    "type": "integer"
+                  },
+                  "id": {
+                    "type": "integer",
+                    "description": "Alias for `slot_id`."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires the `manage_consultations` permission. Same as the teacher's End, for any slot.",
+        "responses": {
+          "200": {
+            "description": "The consultation is closed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/student/consultations/zoom/join": {
+      "get": {
+        "tags": [
+          "update-7 / Student / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): join a live consultation as an attendee",
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slot_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": true,
+            "description": "Required. May also be sent in a JSON body."
+          }
+        ],
+        "description": "Nobody is ever handed a zoom.us link. The response carries a Meeting SDK signature that the frontend feeds to `@zoom/meetingsdk`, so the meeting plays inside the platform's own page. `role` is 1 for the host and 0 for an attendee, and the two signatures are not interchangeable.\n\nBusiness-logic failures still come back with HTTP 200 and `status: \"error\"` - most often `\"الحصة لم تبدأ بعد\"` while the host has not opened the room yet, which is a state to wait in rather than an error to report.\n\nA consultation slot is 1:1 - `consultation_slots` carries a single `student_id` column - so the entitlement check is simply \"is this your own booked slot\", with no bookings table to join against.",
+        "responses": {
+          "200": {
+            "description": "Ready to join.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "slot_id": {
+                              "type": "integer"
+                            },
+                            "meeting_number": {
+                              "type": "string"
+                            },
+                            "password": {
+                              "type": "string"
+                            },
+                            "role": {
+                              "type": "integer",
+                              "enum": [
+                                0
+                              ],
+                              "description": "0 = attendee."
+                            },
+                            "signature": {
+                              "type": "string"
+                            },
+                            "sdk_key": {
+                              "type": "string"
+                            },
+                            "user_name": {
+                              "type": "string"
+                            },
+                            "user_email": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/student/consultations/zoom/status": {
+      "get": {
+        "tags": [
+          "update-7 / Student / Live Zoom (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): is this consultation live right now?",
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slot_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": true,
+            "description": "Required."
+          }
+        ],
+        "description": "Cheap poll, no signature.",
+        "responses": {
+          "200": {
+            "description": "The room's current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "slot_id": {
+                              "type": "integer"
+                            },
+                            "is_live": {
+                              "type": "boolean",
+                              "description": "Whether a room is open right now. Deliberately carries no signature, so it is cheap enough to poll; the join endpoint is what mints one."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/manual-sales": {
+      "get": {
+        "tags": [
+          "update-7 / Admin / Manual Sales (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): list off-platform sales",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Alias: `q`. Matches student name, phone, item name or note."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "approved",
+                "rejected"
+              ]
+            },
+            "description": "An unknown value is ignored rather than returning nothing."
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "facebook",
+                "instagram",
+                "whatsapp",
+                "other"
+              ]
+            }
+          },
+          {
+            "name": "item_type",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "course",
+                "package",
+                "book"
+              ]
+            }
+          },
+          {
+            "name": "phone_country_code",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "With or without the leading +."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Against `paid_at`, falling back to `created_at`. Inclusive."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Against `paid_at`, falling back to `created_at`. Inclusive."
+          }
+        ],
+        "description": "A sheet for sales closed off the platform - over WhatsApp, in person, through a social account - so they are written down somewhere instead of living in a chat log. These rows are a record, not a transaction: nothing here grants access or moves money on its own.\n\nRequires the `manage_manual_sales` permission. Every column the sheet shows can be filtered on.",
+        "responses": {
+          "200": {
+            "description": "The matching rows, paginated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "integer"
+                              },
+                              "student_name": {
+                                "type": "string"
+                              },
+                              "student_id": {
+                                "type": "integer",
+                                "nullable": true,
+                                "description": "Set when the buyer is already an account here; null for a walk-in who is not."
+                              },
+                              "phone": {
+                                "type": "string"
+                              },
+                              "phone_country_code": {
+                                "type": "string",
+                                "description": "Dial code without the leading +, kept out of `phone` itself."
+                              },
+                              "item_type": {
+                                "type": "string",
+                                "enum": [
+                                  "course",
+                                  "package",
+                                  "book"
+                                ]
+                              },
+                              "item_id": {
+                                "type": "integer",
+                                "nullable": true
+                              },
+                              "item_name": {
+                                "type": "string"
+                              },
+                              "amount": {
+                                "type": "number",
+                                "format": "float"
+                              },
+                              "currency": {
+                                "type": "string",
+                                "example": "EGP"
+                              },
+                              "channel": {
+                                "type": "string",
+                                "enum": [
+                                  "facebook",
+                                  "instagram",
+                                  "whatsapp",
+                                  "other"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "approved",
+                                  "rejected"
+                                ]
+                              },
+                              "note": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "paid_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "nullable": true
+                              },
+                              "created_by_type": {
+                                "type": "string",
+                                "enum": [
+                                  "admin",
+                                  "teacher"
+                                ]
+                              },
+                              "created_by_id": {
+                                "type": "integer"
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "update-7 / Admin / Manual Sales (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): write down an off-platform sale",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "student_name",
+                  "item_name"
+                ],
+                "properties": {
+                  "student_name": {
+                    "type": "string"
+                  },
+                  "item_name": {
+                    "type": "string"
+                  },
+                  "phone": {
+                    "type": "string"
+                  },
+                  "phone_country_code": {
+                    "type": "string",
+                    "description": "Dial code, with or without the leading +. Stored separately so it never ends up duplicated inside `phone`."
+                  },
+                  "item_type": {
+                    "type": "string",
+                    "enum": [
+                      "course",
+                      "package",
+                      "book"
+                    ],
+                    "default": "course",
+                    "description": "An unrecognised value falls back to the default rather than failing the request."
+                  },
+                  "item_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "student_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "amount": {
+                    "type": "number",
+                    "format": "float"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "default": "EGP"
+                  },
+                  "channel": {
+                    "type": "string",
+                    "enum": [
+                      "facebook",
+                      "instagram",
+                      "whatsapp",
+                      "other"
+                    ],
+                    "default": "whatsapp"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "approved",
+                      "rejected"
+                    ],
+                    "default": "pending"
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "paid_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires the `manage_manual_sales` permission. Only the buyer's name and what they bought are required - everything else has a default, because the row is usually written while the conversation is still going.",
+        "responses": {
+          "200": {
+            "description": "The created row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "student_name": {
+                              "type": "string"
+                            },
+                            "student_id": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Set when the buyer is already an account here; null for a walk-in who is not."
+                            },
+                            "phone": {
+                              "type": "string"
+                            },
+                            "phone_country_code": {
+                              "type": "string",
+                              "description": "Dial code without the leading +, kept out of `phone` itself."
+                            },
+                            "item_type": {
+                              "type": "string",
+                              "enum": [
+                                "course",
+                                "package",
+                                "book"
+                              ]
+                            },
+                            "item_id": {
+                              "type": "integer",
+                              "nullable": true
+                            },
+                            "item_name": {
+                              "type": "string"
+                            },
+                            "amount": {
+                              "type": "number",
+                              "format": "float"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "example": "EGP"
+                            },
+                            "channel": {
+                              "type": "string",
+                              "enum": [
+                                "facebook",
+                                "instagram",
+                                "whatsapp",
+                                "other"
+                              ]
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "approved",
+                                "rejected"
+                              ]
+                            },
+                            "note": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "paid_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "created_by_type": {
+                              "type": "string",
+                              "enum": [
+                                "admin",
+                                "teacher"
+                              ]
+                            },
+                            "created_by_id": {
+                              "type": "integer"
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "update-7 / Admin / Manual Sales (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): edit an off-platform sale",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Alias for `id` in the body."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "student_name": {
+                    "type": "string"
+                  },
+                  "item_name": {
+                    "type": "string"
+                  },
+                  "phone": {
+                    "type": "string"
+                  },
+                  "phone_country_code": {
+                    "type": "string",
+                    "description": "Dial code, with or without the leading +. Stored separately so it never ends up duplicated inside `phone`."
+                  },
+                  "item_type": {
+                    "type": "string",
+                    "enum": [
+                      "course",
+                      "package",
+                      "book"
+                    ],
+                    "default": "course",
+                    "description": "An unrecognised value falls back to the default rather than failing the request."
+                  },
+                  "item_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "student_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "amount": {
+                    "type": "number",
+                    "format": "float"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "default": "EGP"
+                  },
+                  "channel": {
+                    "type": "string",
+                    "enum": [
+                      "facebook",
+                      "instagram",
+                      "whatsapp",
+                      "other"
+                    ],
+                    "default": "whatsapp"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "approved",
+                      "rejected"
+                    ],
+                    "default": "pending"
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "paid_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires the `manage_manual_sales` permission. Only the fields sent are written; anything omitted keeps its current value.",
+        "responses": {
+          "200": {
+            "description": "The updated row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "student_name": {
+                              "type": "string"
+                            },
+                            "student_id": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Set when the buyer is already an account here; null for a walk-in who is not."
+                            },
+                            "phone": {
+                              "type": "string"
+                            },
+                            "phone_country_code": {
+                              "type": "string",
+                              "description": "Dial code without the leading +, kept out of `phone` itself."
+                            },
+                            "item_type": {
+                              "type": "string",
+                              "enum": [
+                                "course",
+                                "package",
+                                "book"
+                              ]
+                            },
+                            "item_id": {
+                              "type": "integer",
+                              "nullable": true
+                            },
+                            "item_name": {
+                              "type": "string"
+                            },
+                            "amount": {
+                              "type": "number",
+                              "format": "float"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "example": "EGP"
+                            },
+                            "channel": {
+                              "type": "string",
+                              "enum": [
+                                "facebook",
+                                "instagram",
+                                "whatsapp",
+                                "other"
+                              ]
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "approved",
+                                "rejected"
+                              ]
+                            },
+                            "note": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "paid_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "created_by_type": {
+                              "type": "string",
+                              "enum": [
+                                "admin",
+                                "teacher"
+                              ]
+                            },
+                            "created_by_id": {
+                              "type": "integer"
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "update-7 / Admin / Manual Sales (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): delete an off-platform sale",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Alias for `id` in the body."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires the `manage_manual_sales` permission.",
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/manual-sales/show": {
+      "get": {
+        "tags": [
+          "update-7 / Admin / Manual Sales (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): one off-platform sale",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": true,
+            "description": "Required."
+          }
+        ],
+        "description": "Requires the `manage_manual_sales` permission.",
+        "responses": {
+          "200": {
+            "description": "The row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "student_name": {
+                              "type": "string"
+                            },
+                            "student_id": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Set when the buyer is already an account here; null for a walk-in who is not."
+                            },
+                            "phone": {
+                              "type": "string"
+                            },
+                            "phone_country_code": {
+                              "type": "string",
+                              "description": "Dial code without the leading +, kept out of `phone` itself."
+                            },
+                            "item_type": {
+                              "type": "string",
+                              "enum": [
+                                "course",
+                                "package",
+                                "book"
+                              ]
+                            },
+                            "item_id": {
+                              "type": "integer",
+                              "nullable": true
+                            },
+                            "item_name": {
+                              "type": "string"
+                            },
+                            "amount": {
+                              "type": "number",
+                              "format": "float"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "example": "EGP"
+                            },
+                            "channel": {
+                              "type": "string",
+                              "enum": [
+                                "facebook",
+                                "instagram",
+                                "whatsapp",
+                                "other"
+                              ]
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "approved",
+                                "rejected"
+                              ]
+                            },
+                            "note": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "paid_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "created_by_type": {
+                              "type": "string",
+                              "enum": [
+                                "admin",
+                                "teacher"
+                              ]
+                            },
+                            "created_by_id": {
+                              "type": "integer"
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/manual-sales": {
+      "get": {
+        "tags": [
+          "update-7 / Teacher / Manual Sales (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): list my own off-platform sales",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Alias: `q`. Matches student name, phone, item name or note."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "approved",
+                "rejected"
+              ]
+            },
+            "description": "An unknown value is ignored rather than returning nothing."
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "facebook",
+                "instagram",
+                "whatsapp",
+                "other"
+              ]
+            }
+          },
+          {
+            "name": "item_type",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "course",
+                "package",
+                "book"
+              ]
+            }
+          },
+          {
+            "name": "phone_country_code",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "With or without the leading +."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Against `paid_at`, falling back to `created_at`. Inclusive."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Against `paid_at`, falling back to `created_at`. Inclusive."
+          }
+        ],
+        "description": "A sheet for sales closed off the platform - over WhatsApp, in person, through a social account - so they are written down somewhere instead of living in a chat log. These rows are a record, not a transaction: nothing here grants access or moves money on its own.\n\nThe same sheet as the admin's, scoped to the rows this teacher wrote: `created_by_type = 'teacher'` and `created_by_id` = the signed-in teacher. That scope is enforced on read, update and delete alike, so a teacher cannot reach another teacher's row by guessing its id. No permission flag is involved - being the author is the permission.",
+        "responses": {
+          "200": {
+            "description": "The matching rows, paginated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "integer"
+                              },
+                              "student_name": {
+                                "type": "string"
+                              },
+                              "student_id": {
+                                "type": "integer",
+                                "nullable": true,
+                                "description": "Set when the buyer is already an account here; null for a walk-in who is not."
+                              },
+                              "phone": {
+                                "type": "string"
+                              },
+                              "phone_country_code": {
+                                "type": "string",
+                                "description": "Dial code without the leading +, kept out of `phone` itself."
+                              },
+                              "item_type": {
+                                "type": "string",
+                                "enum": [
+                                  "course",
+                                  "package",
+                                  "book"
+                                ]
+                              },
+                              "item_id": {
+                                "type": "integer",
+                                "nullable": true
+                              },
+                              "item_name": {
+                                "type": "string"
+                              },
+                              "amount": {
+                                "type": "number",
+                                "format": "float"
+                              },
+                              "currency": {
+                                "type": "string",
+                                "example": "EGP"
+                              },
+                              "channel": {
+                                "type": "string",
+                                "enum": [
+                                  "facebook",
+                                  "instagram",
+                                  "whatsapp",
+                                  "other"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "approved",
+                                  "rejected"
+                                ]
+                              },
+                              "note": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "paid_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "nullable": true
+                              },
+                              "created_by_type": {
+                                "type": "string",
+                                "enum": [
+                                  "admin",
+                                  "teacher"
+                                ]
+                              },
+                              "created_by_id": {
+                                "type": "integer"
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "update-7 / Teacher / Manual Sales (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): write down one of my own off-platform sales",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "student_name",
+                  "item_name"
+                ],
+                "properties": {
+                  "student_name": {
+                    "type": "string"
+                  },
+                  "item_name": {
+                    "type": "string"
+                  },
+                  "phone": {
+                    "type": "string"
+                  },
+                  "phone_country_code": {
+                    "type": "string",
+                    "description": "Dial code, with or without the leading +. Stored separately so it never ends up duplicated inside `phone`."
+                  },
+                  "item_type": {
+                    "type": "string",
+                    "enum": [
+                      "course",
+                      "package",
+                      "book"
+                    ],
+                    "default": "course",
+                    "description": "An unrecognised value falls back to the default rather than failing the request."
+                  },
+                  "item_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "student_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "amount": {
+                    "type": "number",
+                    "format": "float"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "default": "EGP"
+                  },
+                  "channel": {
+                    "type": "string",
+                    "enum": [
+                      "facebook",
+                      "instagram",
+                      "whatsapp",
+                      "other"
+                    ],
+                    "default": "whatsapp"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "approved",
+                      "rejected"
+                    ],
+                    "default": "pending"
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "paid_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "The row is stamped with this teacher as its author; `created_by_*` cannot be sent.",
+        "responses": {
+          "200": {
+            "description": "The created row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "student_name": {
+                              "type": "string"
+                            },
+                            "student_id": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Set when the buyer is already an account here; null for a walk-in who is not."
+                            },
+                            "phone": {
+                              "type": "string"
+                            },
+                            "phone_country_code": {
+                              "type": "string",
+                              "description": "Dial code without the leading +, kept out of `phone` itself."
+                            },
+                            "item_type": {
+                              "type": "string",
+                              "enum": [
+                                "course",
+                                "package",
+                                "book"
+                              ]
+                            },
+                            "item_id": {
+                              "type": "integer",
+                              "nullable": true
+                            },
+                            "item_name": {
+                              "type": "string"
+                            },
+                            "amount": {
+                              "type": "number",
+                              "format": "float"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "example": "EGP"
+                            },
+                            "channel": {
+                              "type": "string",
+                              "enum": [
+                                "facebook",
+                                "instagram",
+                                "whatsapp",
+                                "other"
+                              ]
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "approved",
+                                "rejected"
+                              ]
+                            },
+                            "note": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "paid_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "created_by_type": {
+                              "type": "string",
+                              "enum": [
+                                "admin",
+                                "teacher"
+                              ]
+                            },
+                            "created_by_id": {
+                              "type": "integer"
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "update-7 / Teacher / Manual Sales (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): edit one of my own off-platform sales",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Alias for `id` in the body."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "student_name": {
+                    "type": "string"
+                  },
+                  "item_name": {
+                    "type": "string"
+                  },
+                  "phone": {
+                    "type": "string"
+                  },
+                  "phone_country_code": {
+                    "type": "string",
+                    "description": "Dial code, with or without the leading +. Stored separately so it never ends up duplicated inside `phone`."
+                  },
+                  "item_type": {
+                    "type": "string",
+                    "enum": [
+                      "course",
+                      "package",
+                      "book"
+                    ],
+                    "default": "course",
+                    "description": "An unrecognised value falls back to the default rather than failing the request."
+                  },
+                  "item_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "student_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "amount": {
+                    "type": "number",
+                    "format": "float"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "default": "EGP"
+                  },
+                  "channel": {
+                    "type": "string",
+                    "enum": [
+                      "facebook",
+                      "instagram",
+                      "whatsapp",
+                      "other"
+                    ],
+                    "default": "whatsapp"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "approved",
+                      "rejected"
+                    ],
+                    "default": "pending"
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "paid_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "The same sheet as the admin's, scoped to the rows this teacher wrote: `created_by_type = 'teacher'` and `created_by_id` = the signed-in teacher. That scope is enforced on read, update and delete alike, so a teacher cannot reach another teacher's row by guessing its id. No permission flag is involved - being the author is the permission.",
+        "responses": {
+          "200": {
+            "description": "The updated row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "student_name": {
+                              "type": "string"
+                            },
+                            "student_id": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Set when the buyer is already an account here; null for a walk-in who is not."
+                            },
+                            "phone": {
+                              "type": "string"
+                            },
+                            "phone_country_code": {
+                              "type": "string",
+                              "description": "Dial code without the leading +, kept out of `phone` itself."
+                            },
+                            "item_type": {
+                              "type": "string",
+                              "enum": [
+                                "course",
+                                "package",
+                                "book"
+                              ]
+                            },
+                            "item_id": {
+                              "type": "integer",
+                              "nullable": true
+                            },
+                            "item_name": {
+                              "type": "string"
+                            },
+                            "amount": {
+                              "type": "number",
+                              "format": "float"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "example": "EGP"
+                            },
+                            "channel": {
+                              "type": "string",
+                              "enum": [
+                                "facebook",
+                                "instagram",
+                                "whatsapp",
+                                "other"
+                              ]
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "approved",
+                                "rejected"
+                              ]
+                            },
+                            "note": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "paid_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "created_by_type": {
+                              "type": "string",
+                              "enum": [
+                                "admin",
+                                "teacher"
+                              ]
+                            },
+                            "created_by_id": {
+                              "type": "integer"
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "update-7 / Teacher / Manual Sales (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): delete one of my own off-platform sales",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Alias for `id` in the body."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "The same sheet as the admin's, scoped to the rows this teacher wrote: `created_by_type = 'teacher'` and `created_by_id` = the signed-in teacher. That scope is enforced on read, update and delete alike, so a teacher cannot reach another teacher's row by guessing its id. No permission flag is involved - being the author is the permission.",
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/manual-sales/show": {
+      "get": {
+        "tags": [
+          "update-7 / Teacher / Manual Sales (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): one of my own off-platform sales",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": true,
+            "description": "Required."
+          }
+        ],
+        "description": "The same sheet as the admin's, scoped to the rows this teacher wrote: `created_by_type = 'teacher'` and `created_by_id` = the signed-in teacher. That scope is enforced on read, update and delete alike, so a teacher cannot reach another teacher's row by guessing its id. No permission flag is involved - being the author is the permission.",
+        "responses": {
+          "200": {
+            "description": "The row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "student_name": {
+                              "type": "string"
+                            },
+                            "student_id": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Set when the buyer is already an account here; null for a walk-in who is not."
+                            },
+                            "phone": {
+                              "type": "string"
+                            },
+                            "phone_country_code": {
+                              "type": "string",
+                              "description": "Dial code without the leading +, kept out of `phone` itself."
+                            },
+                            "item_type": {
+                              "type": "string",
+                              "enum": [
+                                "course",
+                                "package",
+                                "book"
+                              ]
+                            },
+                            "item_id": {
+                              "type": "integer",
+                              "nullable": true
+                            },
+                            "item_name": {
+                              "type": "string"
+                            },
+                            "amount": {
+                              "type": "number",
+                              "format": "float"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "example": "EGP"
+                            },
+                            "channel": {
+                              "type": "string",
+                              "enum": [
+                                "facebook",
+                                "instagram",
+                                "whatsapp",
+                                "other"
+                              ]
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "approved",
+                                "rejected"
+                              ]
+                            },
+                            "note": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "paid_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "created_by_type": {
+                              "type": "string",
+                              "enum": [
+                                "admin",
+                                "teacher"
+                              ]
+                            },
+                            "created_by_id": {
+                              "type": "integer"
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/chat/directory": {
+      "get": {
+        "tags": [
+          "update-7 / Admin / Chat Directory (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): the chat contact list, read from the real tables instead of Firebase",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "description": "update-7 (NEW): who shows up in \"start a new conversation\".\n\nChat itself still runs on Firebase, but the contact list no longer does. Firebase's own `users/{uid}` node is only ever written the first time a given account opens its own chat page, so it drifted from the real database two ways at once: an account that had never opened chat was invisible, and an account renamed or re-emailed since kept its old details forever. This endpoint is a plain read of the real students/teachers/parents tables, so it can never show an account twice or under a name that no longer exists.\n\nOnly active accounts are returned, and the caller is left out of their own list. Admins are deliberately absent: the other roles reach a single shared \"support\" contact that every admin's inbox shows, which is a frontend-only entry with nothing to look up here.\n\n`uid` is `\"<role>_<id>\"` and is the key to use against Firebase, not `id` on its own - the three tables number their rows independently, so student 7 and teacher 7 both exist.",
+        "responses": {
+          "200": {
+            "description": "Every active student, teacher and parent except the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "uid": {
+                                "type": "string",
+                                "example": "student_7"
+                              },
+                              "id": {
+                                "type": "integer"
+                              },
+                              "role": {
+                                "type": "string",
+                                "enum": [
+                                  "student",
+                                  "teacher",
+                                  "parent"
+                                ]
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "email": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Absolute URL."
+                              },
+                              "is_active": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/chat/directory": {
+      "get": {
+        "tags": [
+          "update-7 / Teacher / Chat Directory (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): the chat contact list, read from the real tables instead of Firebase",
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "description": "update-7 (NEW): who shows up in \"start a new conversation\".\n\nChat itself still runs on Firebase, but the contact list no longer does. Firebase's own `users/{uid}` node is only ever written the first time a given account opens its own chat page, so it drifted from the real database two ways at once: an account that had never opened chat was invisible, and an account renamed or re-emailed since kept its old details forever. This endpoint is a plain read of the real students/teachers/parents tables, so it can never show an account twice or under a name that no longer exists.\n\nOnly active accounts are returned, and the caller is left out of their own list. Admins are deliberately absent: the other roles reach a single shared \"support\" contact that every admin's inbox shows, which is a frontend-only entry with nothing to look up here.\n\n`uid` is `\"<role>_<id>\"` and is the key to use against Firebase, not `id` on its own - the three tables number their rows independently, so student 7 and teacher 7 both exist.",
+        "responses": {
+          "200": {
+            "description": "Every active student, teacher and parent except the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "uid": {
+                                "type": "string",
+                                "example": "student_7"
+                              },
+                              "id": {
+                                "type": "integer"
+                              },
+                              "role": {
+                                "type": "string",
+                                "enum": [
+                                  "student",
+                                  "teacher",
+                                  "parent"
+                                ]
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "email": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Absolute URL."
+                              },
+                              "is_active": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/student/chat/directory": {
+      "get": {
+        "tags": [
+          "update-7 / Student / Chat Directory (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): the chat contact list, read from the real tables instead of Firebase",
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "description": "update-7 (NEW): who shows up in \"start a new conversation\".\n\nChat itself still runs on Firebase, but the contact list no longer does. Firebase's own `users/{uid}` node is only ever written the first time a given account opens its own chat page, so it drifted from the real database two ways at once: an account that had never opened chat was invisible, and an account renamed or re-emailed since kept its old details forever. This endpoint is a plain read of the real students/teachers/parents tables, so it can never show an account twice or under a name that no longer exists.\n\nOnly active accounts are returned, and the caller is left out of their own list. Admins are deliberately absent: the other roles reach a single shared \"support\" contact that every admin's inbox shows, which is a frontend-only entry with nothing to look up here.\n\n`uid` is `\"<role>_<id>\"` and is the key to use against Firebase, not `id` on its own - the three tables number their rows independently, so student 7 and teacher 7 both exist.",
+        "responses": {
+          "200": {
+            "description": "Every active student, teacher and parent except the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "uid": {
+                                "type": "string",
+                                "example": "student_7"
+                              },
+                              "id": {
+                                "type": "integer"
+                              },
+                              "role": {
+                                "type": "string",
+                                "enum": [
+                                  "student",
+                                  "teacher",
+                                  "parent"
+                                ]
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "email": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Absolute URL."
+                              },
+                              "is_active": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/parent/chat/directory": {
+      "get": {
+        "tags": [
+          "update-7 / Parent / Chat Directory (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): the chat contact list, read from the real tables instead of Firebase",
+        "security": [
+          {
+            "ParentAuth": []
+          }
+        ],
+        "description": "update-7 (NEW): who shows up in \"start a new conversation\".\n\nChat itself still runs on Firebase, but the contact list no longer does. Firebase's own `users/{uid}` node is only ever written the first time a given account opens its own chat page, so it drifted from the real database two ways at once: an account that had never opened chat was invisible, and an account renamed or re-emailed since kept its old details forever. This endpoint is a plain read of the real students/teachers/parents tables, so it can never show an account twice or under a name that no longer exists.\n\nOnly active accounts are returned, and the caller is left out of their own list. Admins are deliberately absent: the other roles reach a single shared \"support\" contact that every admin's inbox shows, which is a frontend-only entry with nothing to look up here.\n\n`uid` is `\"<role>_<id>\"` and is the key to use against Firebase, not `id` on its own - the three tables number their rows independently, so student 7 and teacher 7 both exist.",
+        "responses": {
+          "200": {
+            "description": "Every active student, teacher and parent except the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "uid": {
+                                "type": "string",
+                                "example": "student_7"
+                              },
+                              "id": {
+                                "type": "integer"
+                              },
+                              "role": {
+                                "type": "string",
+                                "enum": [
+                                  "student",
+                                  "teacher",
+                                  "parent"
+                                ]
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "email": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Absolute URL."
+                              },
+                              "is_active": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/hero-slides": {
+      "get": {
+        "tags": [
+          "update-7 / Public / Hero Slides (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): the website hero slides, resolved for one language",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ar",
+                "en"
+              ],
+              "default": "ar"
+            },
+            "description": "Falls back to the `Accept-Language` header, then to Arabic."
+          }
+        ],
+        "description": "update-7 (NEW): hero slides are their own table now, rather than sharing the banners table with everything else.\n\nActive slides only, in `order_num` order. On top of the raw `*_ar` / `*_en` columns each row carries `title`, `subtitle`, `btn_text` and `media` already resolved for the requested language, so the website does not repeat the language rules. Each resolved field falls back to the other language before giving up: a slide written in Arabic only still reads in Arabic for an English visitor rather than vanishing.\n\nThe same list is folded into `GET /site-settings`, so the public site does not need a second request. No authentication.",
+        "responses": {
+          "200": {
+            "description": "The active slides.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "allOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "integer"
+                                  },
+                                  "title_ar": {
+                                    "type": "string"
+                                  },
+                                  "title_en": {
+                                    "type": "string"
+                                  },
+                                  "subtitle_ar": {
+                                    "type": "string"
+                                  },
+                                  "subtitle_en": {
+                                    "type": "string"
+                                  },
+                                  "btn_text_ar": {
+                                    "type": "string"
+                                  },
+                                  "btn_text_en": {
+                                    "type": "string"
+                                  },
+                                  "media_ar": {
+                                    "type": "string",
+                                    "description": "Absolute URL."
+                                  },
+                                  "media_en": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "Absolute URL, or null when one file serves both languages."
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "image",
+                                      "video"
+                                    ]
+                                  },
+                                  "link": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "order_num": {
+                                    "type": "integer"
+                                  },
+                                  "is_active": {
+                                    "type": "integer",
+                                    "enum": [
+                                      0,
+                                      1
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "title": {
+                                    "type": "string",
+                                    "description": "Resolved for `lang`."
+                                  },
+                                  "subtitle": {
+                                    "type": "string",
+                                    "description": "Resolved for `lang`."
+                                  },
+                                  "btn_text": {
+                                    "type": "string",
+                                    "description": "Resolved for `lang`."
+                                  },
+                                  "media": {
+                                    "type": "string",
+                                    "description": "Resolved for `lang`."
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/hero-slides": {
+      "get": {
+        "tags": [
+          "update-7 / Admin / Hero Slides (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): list hero slides",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "is_active",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                0,
+                1
+              ]
+            },
+            "description": "Omit it to get both."
+          }
+        ],
+        "description": "Requires the `manage_hero_slides` permission. Unresolved rows - both languages as stored, which is what an editing screen needs.",
+        "responses": {
+          "200": {
+            "description": "The slides, in order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "integer"
+                              },
+                              "title_ar": {
+                                "type": "string"
+                              },
+                              "title_en": {
+                                "type": "string"
+                              },
+                              "subtitle_ar": {
+                                "type": "string"
+                              },
+                              "subtitle_en": {
+                                "type": "string"
+                              },
+                              "btn_text_ar": {
+                                "type": "string"
+                              },
+                              "btn_text_en": {
+                                "type": "string"
+                              },
+                              "media_ar": {
+                                "type": "string",
+                                "description": "Absolute URL."
+                              },
+                              "media_en": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Absolute URL, or null when one file serves both languages."
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "image",
+                                  "video"
+                                ]
+                              },
+                              "link": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "order_num": {
+                                "type": "integer"
+                              },
+                              "is_active": {
+                                "type": "integer",
+                                "enum": [
+                                  0,
+                                  1
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "update-7 / Admin / Hero Slides (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): create a hero slide",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title_ar": {
+                    "type": "string"
+                  },
+                  "title_en": {
+                    "type": "string"
+                  },
+                  "subtitle_ar": {
+                    "type": "string"
+                  },
+                  "subtitle_en": {
+                    "type": "string"
+                  },
+                  "btn_text_ar": {
+                    "type": "string"
+                  },
+                  "btn_text_en": {
+                    "type": "string"
+                  },
+                  "media_ar": {
+                    "type": "string",
+                    "description": "Alias on create: `media`. Base64 or an uploaded path, same as every other image field in this API."
+                  },
+                  "media_en": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Optional. Omit it when the artwork carries no words and one file serves both languages."
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "image",
+                      "video"
+                    ],
+                    "default": "image"
+                  },
+                  "link": {
+                    "type": "string"
+                  },
+                  "order_num": {
+                    "type": "integer",
+                    "default": 1
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ],
+                    "default": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires the `manage_hero_slides` permission. Artwork is required; the copy is not, because most heroes carry their words in the image itself.",
+        "responses": {
+          "200": {
+            "description": "The created slide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "title_ar": {
+                              "type": "string"
+                            },
+                            "title_en": {
+                              "type": "string"
+                            },
+                            "subtitle_ar": {
+                              "type": "string"
+                            },
+                            "subtitle_en": {
+                              "type": "string"
+                            },
+                            "btn_text_ar": {
+                              "type": "string"
+                            },
+                            "btn_text_en": {
+                              "type": "string"
+                            },
+                            "media_ar": {
+                              "type": "string",
+                              "description": "Absolute URL."
+                            },
+                            "media_en": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "Absolute URL, or null when one file serves both languages."
+                            },
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "image",
+                                "video"
+                              ]
+                            },
+                            "link": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "order_num": {
+                              "type": "integer"
+                            },
+                            "is_active": {
+                              "type": "integer",
+                              "enum": [
+                                0,
+                                1
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "update-7 / Admin / Hero Slides (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): edit a hero slide",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Alias for `id` in the body."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "title_ar": {
+                    "type": "string"
+                  },
+                  "title_en": {
+                    "type": "string"
+                  },
+                  "subtitle_ar": {
+                    "type": "string"
+                  },
+                  "subtitle_en": {
+                    "type": "string"
+                  },
+                  "btn_text_ar": {
+                    "type": "string"
+                  },
+                  "btn_text_en": {
+                    "type": "string"
+                  },
+                  "media_ar": {
+                    "type": "string",
+                    "description": "Alias on create: `media`. Base64 or an uploaded path, same as every other image field in this API."
+                  },
+                  "media_en": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Optional. Omit it when the artwork carries no words and one file serves both languages."
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "image",
+                      "video"
+                    ],
+                    "default": "image"
+                  },
+                  "link": {
+                    "type": "string"
+                  },
+                  "order_num": {
+                    "type": "integer",
+                    "default": 1
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ],
+                    "default": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires the `manage_hero_slides` permission. Only the fields sent are written, so a slide's artwork survives an edit that only changes its words.",
+        "responses": {
+          "200": {
+            "description": "The updated slide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "title_ar": {
+                              "type": "string"
+                            },
+                            "title_en": {
+                              "type": "string"
+                            },
+                            "subtitle_ar": {
+                              "type": "string"
+                            },
+                            "subtitle_en": {
+                              "type": "string"
+                            },
+                            "btn_text_ar": {
+                              "type": "string"
+                            },
+                            "btn_text_en": {
+                              "type": "string"
+                            },
+                            "media_ar": {
+                              "type": "string",
+                              "description": "Absolute URL."
+                            },
+                            "media_en": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "Absolute URL, or null when one file serves both languages."
+                            },
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "image",
+                                "video"
+                              ]
+                            },
+                            "link": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "order_num": {
+                              "type": "integer"
+                            },
+                            "is_active": {
+                              "type": "integer",
+                              "enum": [
+                                0,
+                                1
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "update-7 / Admin / Hero Slides (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): delete a hero slide",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Alias for `id` in the body."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires the `manage_hero_slides` permission.",
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/hero-slides/show": {
+      "get": {
+        "tags": [
+          "update-7 / Admin / Hero Slides (NEW - update-7)"
+        ],
+        "summary": "update-7 (NEW): one hero slide",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": true,
+            "description": "Required."
+          }
+        ],
+        "description": "Requires the `manage_hero_slides` permission.",
+        "responses": {
+          "200": {
+            "description": "The slide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "title_ar": {
+                              "type": "string"
+                            },
+                            "title_en": {
+                              "type": "string"
+                            },
+                            "subtitle_ar": {
+                              "type": "string"
+                            },
+                            "subtitle_en": {
+                              "type": "string"
+                            },
+                            "btn_text_ar": {
+                              "type": "string"
+                            },
+                            "btn_text_en": {
+                              "type": "string"
+                            },
+                            "media_ar": {
+                              "type": "string",
+                              "description": "Absolute URL."
+                            },
+                            "media_en": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "Absolute URL, or null when one file serves both languages."
+                            },
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "image",
+                                "video"
+                              ]
+                            },
+                            "link": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "order_num": {
+                              "type": "integer"
+                            },
+                            "is_active": {
+                              "type": "integer",
+                              "enum": [
+                                0,
+                                1
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/students": {
+      "post": {
+        "tags": [
+          "update-7 / Admin / Students"
+        ],
+        "summary": "update-7 (CHANGED): create a student - email, phone and age are no longer forced",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "password"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "phone": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "age": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "update-7: optional. Used to be forced."
+                  },
+                  "academic_year_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "city_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "school_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "study_language": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "image": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  },
+                  "is_email_verified": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Documented here for the update-7 validation change; the endpoint itself predates this changelog.\n\nupdate-7 (VALIDATION RELAXED): `name` and `password` are the only hard requirements. Email and the phone number are both optional now, with one guard: NOT BOTH EMPTY on the same account - `\"Provide at least an email or a phone number\"`. An account saved with neither would be unreachable, including to its own owner, because this role signs in by email.\n\nBefore update-7 email was NOT NULL in the schema AND hard-required by the handler, so a phone-only account could not be opened at all. An email can be added later from the edit screen.\n\n`age` is optional too. Students sign in by phone as well as by email (`phone_key`), so a phone-only student account is fully usable.",
+        "responses": {
+          "200": {
+            "description": "The created student.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "update-7 / Admin / Students"
+        ],
+        "summary": "update-7 (CHANGED): update a student - a phone number can now be cleared",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "phone": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "age": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "update-7: optional. Used to be forced."
+                  },
+                  "academic_year_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "city_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "school_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "study_language": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "image": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  },
+                  "is_email_verified": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "update-7 (BEHAVIOUR): the update handler used to test the field for emptiness before writing it, which quietly made a number impossible to REMOVE - a wrong one could be corrected but never cleared. It now checks whether the field was sent at all, so sending an empty string means empty.",
+        "responses": {
+          "200": {
+            "description": "The updated student.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/parents": {
+      "post": {
+        "tags": [
+          "update-7 / Admin / Parents"
+        ],
+        "summary": "update-7 (CHANGED): create a parent - a phone number, and email no longer required",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "password"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "phone": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "update-7 (NEW COLUMN, migration 112): parents had an email address and nothing else - no way to reach one about their child."
+                  },
+                  "city_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "image": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "student_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  },
+                  "is_email_verified": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Documented here for the update-7 validation change; the endpoint itself predates this changelog.\n\nupdate-7 (VALIDATION RELAXED): `name` and `password` are the only hard requirements. Email and the phone number are both optional now, with one guard: NOT BOTH EMPTY on the same account - `\"Provide at least an email or a phone number\"`. An account saved with neither would be unreachable, including to its own owner, because this role signs in by email.\n\nBefore update-7 email was NOT NULL in the schema AND hard-required by the handler, so a phone-only account could not be opened at all. An email can be added later from the edit screen.",
+        "responses": {
+          "200": {
+            "description": "The created parent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "update-7 / Admin / Parents"
+        ],
+        "summary": "update-7 (CHANGED): update a parent - a phone number can now be cleared",
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "phone": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "update-7 (NEW COLUMN, migration 112): parents had an email address and nothing else - no way to reach one about their child."
+                  },
+                  "city_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "image": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "student_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  },
+                  "is_email_verified": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "update-7 (BEHAVIOUR): the update handler used to test the field for emptiness before writing it, which quietly made a number impossible to REMOVE - a wrong one could be corrected but never cleared. It now checks whether the field was sent at all, so sending an empty string means empty.",
+        "responses": {
+          "200": {
+            "description": "The updated parent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "tags": [
@@ -21373,6 +25454,63 @@
     },
     {
       "name": "update-6 / Student / Home"
+    },
+    {
+      "name": "update-7 / Teacher / Live Zoom (NEW - update-7)"
+    },
+    {
+      "name": "update-7 / Student / Live Zoom (NEW - update-7)"
+    },
+    {
+      "name": "update-7 / Admin / Live Zoom (NEW - update-7)"
+    },
+    {
+      "name": "update-7 / Admin / Manual Sales (NEW - update-7)"
+    },
+    {
+      "name": "update-7 / Teacher / Manual Sales (NEW - update-7)"
+    },
+    {
+      "name": "update-7 / Admin / Chat Directory (NEW - update-7)"
+    },
+    {
+      "name": "update-7 / Teacher / Chat Directory (NEW - update-7)"
+    },
+    {
+      "name": "update-7 / Student / Chat Directory (NEW - update-7)"
+    },
+    {
+      "name": "update-7 / Parent / Chat Directory (NEW - update-7)"
+    },
+    {
+      "name": "update-7 / Admin / Hero Slides (NEW - update-7)"
+    },
+    {
+      "name": "update-7 / Public / Hero Slides (NEW - update-7)"
+    },
+    {
+      "name": "update-7 / Student / Home"
+    },
+    {
+      "name": "update-7 / Teacher / Home"
+    },
+    {
+      "name": "update-7 / Admin / Teachers"
+    },
+    {
+      "name": "update-7 / Admin / Admins & RBAC"
+    },
+    {
+      "name": "update-7 / Teacher / Courses"
+    },
+    {
+      "name": "update-7 / Admin / Students"
+    },
+    {
+      "name": "update-7 / Admin / Parents"
+    },
+    {
+      "name": "update-7 / Admin / Cities"
     }
   ]
 }
