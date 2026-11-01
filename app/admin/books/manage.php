@@ -111,8 +111,11 @@ if (!function_exists('adminListBooks')) {
         $cbWhere = ["1=1"];
         if ($unitId > 0) $cbWhere[] = "cb.unit_id = {$unitId}";
         if ($category !== '') $cbWhere[] = "cb.category = '{$category}'";
-        if ($scope === 'general') $cbWhere[] = "cb.unit_id IS NULL";
-        if ($scope === 'unit') $cbWhere[] = "cb.unit_id IS NOT NULL";
+        // "general" is what the store sells, and that means tied to NOTHING - neither a unit nor
+        // a course. Testing unit_id alone let a course-level book through as a store product,
+        // which the purchase endpoint then refuses as "bundled with its course".
+        if ($scope === 'general') $cbWhere[] = "cb.unit_id IS NULL AND cb.course_id IS NULL";
+        if ($scope === 'unit') $cbWhere[] = "(cb.unit_id IS NOT NULL OR cb.course_id IS NOT NULL)";
         if ($courseId > 0) $cbWhere[] = "(cb.course_id = {$courseId} OR cb.unit_id IN (SELECT id FROM units WHERE course_id = {$courseId}))";
         if ($subjectId > 0) $cbWhere[] = "cb.subject_id = {$subjectId}";
         if ($teacherId > 0) {
