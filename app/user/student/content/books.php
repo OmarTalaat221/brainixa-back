@@ -193,7 +193,7 @@ if (!function_exists('studentGetAllBooksWithOwn')) {
         $totalRecords = $countRes ? (int)(mysqli_fetch_assoc($countRes)['total'] ?? 0) : 0;
 
         $finalSql = "
-            SELECT b.id, b.unit_id, b.subject_id, b.course_id, b.file_type, b.category, b.extension, b.link, b.file_path, b.price, b.allow_download,
+            SELECT b.id, b.unit_id, b.subject_id, b.course_id, b.file_type, b.category, b.extension, b.link, b.file_path, b.cover_image, b.price, b.allow_download,
                    b.created_by_type, b.created_by_id, b.is_active, b.created_at,
                    COALESCE(bt.title, b.file_path) AS title, bt.description, 'course_books' AS src_table
             FROM course_books b
@@ -373,6 +373,15 @@ if (!function_exists('studentGetMySubscribedBooks')) {
         }
         if ($category !== '') {
             $whereSearch .= " AND b.category = '{$category}'";
+        }
+
+        // The store sells standalone products only. A row tied to a course or a unit is that
+        // course's own content, reached from inside it - and the purchase endpoint refuses it
+        // anyway ("bundled with its course"), so listing it in the store offered a sale that
+        // could not happen. Opt-in, so every existing caller keeps the full list.
+        $standaloneOnly = in_array(strtolower(trim($_GET['standalone'] ?? '')), ['1', 'true', 'yes'], true);
+        if ($standaloneOnly) {
+            $whereSearch .= " AND b.course_id IS NULL AND b.unit_id IS NULL";
         }
 
         $langInfo = get_language_info($con);
