@@ -3,7 +3,7 @@
   "info": {
     "title": "Brainixa Backend - Session Changelog API (update-7)",
     "version": "7.0.0",
-    "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109.\n\n`update-7` is the live-class batch and the loose ends around it: Zoom played inside the platform for all three kinds of live meeting (the weekly class sessions, the dated package appointments and the 1:1 consultations), a manual-sales sheet for admin and teacher, a chat contact directory read from the real tables instead of Firebase's stale copy, and hero slides as a table of their own."
+    "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109.\n\n`update-7` is the live-class batch and the loose ends around it: Zoom played inside the platform for all three kinds of live meeting (the weekly class sessions, the dated package appointments and the 1:1 consultations), a manual-sales sheet for admin and teacher, a chat contact directory read from the real tables instead of Firebase's stale copy, and hero slides as a table of their own.\n\nupdate-7 also turns the books library into a STORE. No products table was added: `course_books.file_type` carries `physical` for an item with no file, so every existing book endpoint sells one unchanged. Clients branch on that field rather than assuming a file exists."
   },
   "servers": [
     {
@@ -3702,10 +3702,10 @@
     "/admin/books": {
       "post": {
         "tags": [
-          "old / Admin / Books"
+          "update-7 / Admin / Books"
         ],
-        "summary": "update-4 (CHANGED): Create book - the uploaded PDF is finally stored, and order_num is settable",
-        "description": "CASE (course_id/unit_id set vs both null):\n- course_id and/or unit_id SET -> this is a course/unit-bundled book: price is FORCED to 0.00 server-side no matter what you send, and students can ONLY access it via their course/unit subscription (POST /student/books/subscribe will actively REJECT a standalone purchase attempt on it).\n- course_id and unit_id BOTH null -> standalone book: submitted price is honored as-is, and students buy it individually via /student/books/subscribe.\nCASE (allow_download): 1 (default) = student gets a direct downloadable link; 0 = file_path/link are hidden from the student response entirely and they must use GET /student/books/stream instead.\n\nupdate-4 (FIXED): THE UPLOADED FILE NEVER PERSISTED. Send the PDF as multipart under the field name `file`. The request pipeline uploads every `$_FILES` entry itself and rewrites the body key into a hosted URL string before the handler runs - so by the time this handler executes there is no temp file left to move, only `body['file']` holding a URL. The handler only ever read `file_path`, which the form never sends, so the upload silently vanished on both create and update. It now reads `file_path` OR `file`.\n\nupdate-4 (FIXED): `course_id` and `subject_id` are backfilled from the unit when a book is created or moved under a unit. They used to be stored as NULL, which left unit-scoped books invisible to every course- and subject-filtered query.\n\nupdate-4 (NEW): `order_num` - the manual position inside the unit+category list. Defaults to the end; POST /admin/books/reorder rewrites the whole sequence.",
+        "summary": "MOVED FROM `old / Admin / Books`. update-4 (CHANGED): Create book - the uploaded PDF is finally stored, and order_num is settable. update-7: `file_type: \"physical\"` makes it a physical product",
+        "description": "CASE (course_id/unit_id set vs both null):\n- course_id and/or unit_id SET -> this is a course/unit-bundled book: price is FORCED to 0.00 server-side no matter what you send, and students can ONLY access it via their course/unit subscription (POST /student/books/subscribe will actively REJECT a standalone purchase attempt on it).\n- course_id and unit_id BOTH null -> standalone book: submitted price is honored as-is, and students buy it individually via /student/books/subscribe.\nCASE (allow_download): 1 (default) = student gets a direct downloadable link; 0 = file_path/link are hidden from the student response entirely and they must use GET /student/books/stream instead.\n\nupdate-4 (FIXED): THE UPLOADED FILE NEVER PERSISTED. Send the PDF as multipart under the field name `file`. The request pipeline uploads every `$_FILES` entry itself and rewrites the body key into a hosted URL string before the handler runs - so by the time this handler executes there is no temp file left to move, only `body['file']` holding a URL. The handler only ever read `file_path`, which the form never sends, so the upload silently vanished on both create and update. It now reads `file_path` OR `file`.\n\nupdate-4 (FIXED): `course_id` and `subject_id` are backfilled from the unit when a book is created or moved under a unit. They used to be stored as NULL, which left unit-scoped books invisible to every course- and subject-filtered query.\n\nupdate-4 (NEW): `order_num` - the manual position inside the unit+category list. Defaults to the end; POST /admin/books/reorder rewrites the whole sequence.\n\n=== update-7: THE STORE ===\n\nWhat used to be \"books\" is now the store, and it sells two kinds of thing. The split is carried by `course_books.file_type`, which already existed:\n\n- `pdf` (or any other extension) - a DIGITAL product. A file, read inside the platform, exactly as a book always was.\n- `physical` - a PHYSICAL item: a bag, headphones, a stationery set. It has NO file at all. The student buys it and it is handed over off the platform.\n\nThere is no products table and no new endpoint. A physical item is a product row whose file type is not a file, so every existing book call - list, show, buy, grant, review - works on it unchanged.\n\nA client MUST branch on `file_type === 'physical'` before offering to open a file: there is nothing to open, and an \"Open\" button on one reads as a broken purchase. The same row's `extension` is NOT a safe substitute - it defaults to 'pdf' on every row, whether or not a file was ever uploaded.",
         "security": [
           {
             "AdminAuth": []
@@ -3732,7 +3732,9 @@
                     "description": "CASE: set -> forces price to 0, see operation description"
                   },
                   "file_type": {
-                    "type": "string"
+                    "type": "string",
+                    "default": "pdf",
+                    "description": "update-7: this is what makes a row a DIGITAL product or a PHYSICAL one. Send `physical` for an item with no file - a bag, headphones - and the usual extension (`pdf`) for a file the student reads inside the platform.\n\nNothing else changes between the two: a physical item carries a title, a description, a `cover_image` (the photo of the product) and a `price`, and simply sends no `file` / `link`. The server has never required one."
                   },
                   "category": {
                     "type": "string",
@@ -3753,7 +3755,9 @@
                     "type": "string"
                   },
                   "cover_image": {
-                    "type": "string"
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Alias: `image`. base64, an uploaded path, or a URL. update-7: on a physical item this is the photo of the product itself, which is the only thing on the card a buyer can judge - not decoration."
                   },
                   "price": {
                     "type": "number",
@@ -3805,9 +3809,9 @@
       },
       "put": {
         "tags": [
-          "old / Admin / Books"
+          "update-7 / Admin / Books"
         ],
-        "summary": "update-4 (CHANGED): Update book - the uploaded PDF is finally stored, and order_num is settable",
+        "summary": "MOVED FROM `old / Admin / Books`. update-4 (CHANGED): Update book - the uploaded PDF is finally stored, and order_num is settable. update-7: `file_type: \"physical\"` makes it a physical product",
         "security": [
           {
             "AdminAuth": []
@@ -3850,6 +3854,16 @@
                     "type": "string",
                     "format": "binary",
                     "description": "update-4: the PDF, sent as multipart/form-data. Also accepted as `file_path` when the file is already hosted and you only have its URL."
+                  },
+                  "file_type": {
+                    "type": "string",
+                    "default": "pdf",
+                    "description": "update-7: this is what makes a row a DIGITAL product or a PHYSICAL one. Send `physical` for an item with no file - a bag, headphones - and the usual extension (`pdf`) for a file the student reads inside the platform.\n\nNothing else changes between the two: a physical item carries a title, a description, a `cover_image` (the photo of the product) and a `price`, and simply sends no `file` / `link`. The server has never required one."
+                  },
+                  "cover_image": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Alias: `image`. base64, an uploaded path, or a URL. update-7: on a physical item this is the photo of the product itself, which is the only thing on the card a buyer can judge - not decoration."
                   }
                 }
               },
@@ -3873,14 +3887,14 @@
             }
           }
         },
-        "description": "update-4 (FIXED): THE UPLOADED FILE NEVER PERSISTED. Send the PDF as multipart under the field name `file`. The request pipeline uploads every `$_FILES` entry itself and rewrites the body key into a hosted URL string before the handler runs - so by the time this handler executes there is no temp file left to move, only `body['file']` holding a URL. The handler only ever read `file_path`, which the form never sends, so the upload silently vanished on both create and update. It now reads `file_path` OR `file`.\n\nupdate-4 (FIXED): `course_id` and `subject_id` are backfilled from the unit when a book is created or moved under a unit. They used to be stored as NULL, which left unit-scoped books invisible to every course- and subject-filtered query.\n\nupdate-4 (NEW): `order_num` - the manual position inside the unit+category list. Defaults to the end; POST /admin/books/reorder rewrites the whole sequence."
+        "description": "update-4 (FIXED): THE UPLOADED FILE NEVER PERSISTED. Send the PDF as multipart under the field name `file`. The request pipeline uploads every `$_FILES` entry itself and rewrites the body key into a hosted URL string before the handler runs - so by the time this handler executes there is no temp file left to move, only `body['file']` holding a URL. The handler only ever read `file_path`, which the form never sends, so the upload silently vanished on both create and update. It now reads `file_path` OR `file`.\n\nupdate-4 (FIXED): `course_id` and `subject_id` are backfilled from the unit when a book is created or moved under a unit. They used to be stored as NULL, which left unit-scoped books invisible to every course- and subject-filtered query.\n\nupdate-4 (NEW): `order_num` - the manual position inside the unit+category list. Defaults to the end; POST /admin/books/reorder rewrites the whole sequence.\n\n=== update-7: THE STORE ===\n\nWhat used to be \"books\" is now the store, and it sells two kinds of thing. The split is carried by `course_books.file_type`, which already existed:\n\n- `pdf` (or any other extension) - a DIGITAL product. A file, read inside the platform, exactly as a book always was.\n- `physical` - a PHYSICAL item: a bag, headphones, a stationery set. It has NO file at all. The student buys it and it is handed over off the platform.\n\nThere is no products table and no new endpoint. A physical item is a product row whose file type is not a file, so every existing book call - list, show, buy, grant, review - works on it unchanged.\n\nA client MUST branch on `file_type === 'physical'` before offering to open a file: there is nothing to open, and an \"Open\" button on one reads as a broken purchase. The same row's `extension` is NOT a safe substitute - it defaults to 'pdf' on every row, whether or not a file was ever uploaded."
       },
       "get": {
         "tags": [
-          "old / Admin / Books"
+          "update-7 / Admin / Books"
         ],
-        "summary": "update-4 (CHANGED): List books - every filter now runs server-side, with aggregate stats",
-        "description": "The admin library page used to fetch EVERY book in the table, a hundred rows at a time in a loop, and then filter and count in the browser. On a real library that is dozens of requests before the first keystroke produces a result. All of it is now parameters on this one call.\n\n`scope` is the one that did not exist before: 'general' means a standalone library book (no unit), 'unit' means one tied to a lesson - the two tabs on the library page.\n\n`statistics` on the response carries `total_count`, `active_count`, `inactive_count`, `general_count` and `unit_count`, computed in a single aggregate query over the WHOLE table rather than over the current page, so the stat cards no longer disagree with the filter.\n\nRows are ordered by `order_num ASC, id ASC` - the order the content team dragged them into (see POST /admin/books/reorder).",
+        "summary": "MOVED FROM `old / Admin / Books`. update-4 (CHANGED): List books - every filter now runs server-side, with aggregate stats. update-7: `scope=general` means tied to nothing at all",
+        "description": "The admin library page used to fetch EVERY book in the table, a hundred rows at a time in a loop, and then filter and count in the browser. On a real library that is dozens of requests before the first keystroke produces a result. All of it is now parameters on this one call.\n\n`scope` is the one that did not exist before: 'general' means a standalone library book (no unit), 'unit' means one tied to a lesson - the two tabs on the library page.\n\n`statistics` on the response carries `total_count`, `active_count`, `inactive_count`, `general_count` and `unit_count`, computed in a single aggregate query over the WHOLE table rather than over the current page, so the stat cards no longer disagree with the filter.\n\nRows are ordered by `order_num ASC, id ASC` - the order the content team dragged them into (see POST /admin/books/reorder).\n\n=== update-7: THE STORE ===\n\nWhat used to be \"books\" is now the store, and it sells two kinds of thing. The split is carried by `course_books.file_type`, which already existed:\n\n- `pdf` (or any other extension) - a DIGITAL product. A file, read inside the platform, exactly as a book always was.\n- `physical` - a PHYSICAL item: a bag, headphones, a stationery set. It has NO file at all. The student buys it and it is handed over off the platform.\n\nThere is no products table and no new endpoint. A physical item is a product row whose file type is not a file, so every existing book call - list, show, buy, grant, review - works on it unchanged.\n\nA client MUST branch on `file_type === 'physical'` before offering to open a file: there is nothing to open, and an \"Open\" button on one reads as a broken purchase. The same row's `extension` is NOT a safe substitute - it defaults to 'pdf' on every row, whether or not a file was ever uploaded.",
         "security": [
           {
             "AdminAuth": []
@@ -3922,7 +3936,7 @@
                 "unit"
               ]
             },
-            "description": "update-4 (NEW). 'general' = no unit_id (standalone library book), 'unit' = tied to a lesson."
+            "description": "update-4 (NEW). update-7 (MEANING CHANGED): `general` is what the STORE sells, and that means a row tied to NOTHING - `course_id IS NULL AND unit_id IS NULL`. It used to test `unit_id` alone, so a book attached to a course but to no particular unit counted as a store product, and the purchase endpoint then refused it as bundled with its course. `unit` is now the complement: anything tied to a unit OR a course."
           },
           {
             "name": "category",
@@ -7140,9 +7154,9 @@
     "/student/books/subscribe": {
       "post": {
         "tags": [
-          "old / Student / Books"
+          "update-7 / Student / Store"
         ],
-        "summary": "Subscribe/purchase a standalone book (BREAKING: now rejects course/unit-linked books)",
+        "summary": "MOVED FROM `old / Student / Books`. Subscribe/purchase a standalone book (BREAKING: now rejects course/unit-linked books). update-7: physical items go through this same cycle",
         "security": [
           {
             "StudentAuth": []
@@ -7186,7 +7200,8 @@
               }
             }
           }
-        }
+        },
+        "description": "update-7: a PHYSICAL product (`file_type: \"physical\"`) is bought exactly like a digital one - this opens a purchase request an admin or the owning teacher reviews, and approval grants it. What differs is only what happens afterwards: there is no file to open, so the client shows a \"we will contact you to arrange delivery\" state instead of a Read button.\n\nA FREE product (price 0) still skips review and is granted immediately - there is no payment to confirm.\n\nA row tied to a course or a unit is refused here (\"bundled with its course\"), which is why the storefront should ask for `standalone=1`."
       }
     },
     "/student/books/buy": {
@@ -25359,6 +25374,204 @@
           }
         }
       }
+    },
+    "/books": {
+      "get": {
+        "tags": [
+          "update-7 / Public / Store"
+        ],
+        "summary": "update-7 (CHANGED): the storefront - every product, with what the caller already owns marked",
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Alias: `q`. Title and description."
+          },
+          {
+            "name": "standalone",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1",
+                "true",
+                "yes"
+              ]
+            },
+            "description": "update-7 (NEW, optional): return STORE PRODUCTS ONLY - rows tied to neither a course nor a unit.\n\nA row tied to one belongs to that course: it is opened from inside it, and `POST /student/books/buy` refuses it outright (\"bundled with its course\"). Listing those in a storefront offered a sale that could never go through. Opt-in, so every existing caller still gets the full list."
+          },
+          {
+            "name": "course_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Everything belonging to one course, including its units' files. Not combined with `standalone`."
+          },
+          {
+            "name": "unit_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "subject_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "summary",
+                "exam"
+              ]
+            }
+          }
+        ],
+        "description": "Authentication is OPTIONAL: signed out it is the public catalogue, signed in every row also says whether this student owns it (`own` / `is_subscribed`) and where their purchase request stands (`request_status`).\n\n=== update-7: THE STORE ===\n\nWhat used to be \"books\" is now the store, and it sells two kinds of thing. The split is carried by `course_books.file_type`, which already existed:\n\n- `pdf` (or any other extension) - a DIGITAL product. A file, read inside the platform, exactly as a book always was.\n- `physical` - a PHYSICAL item: a bag, headphones, a stationery set. It has NO file at all. The student buys it and it is handed over off the platform.\n\nThere is no products table and no new endpoint. A physical item is a product row whose file type is not a file, so every existing book call - list, show, buy, grant, review - works on it unchanged.\n\nA client MUST branch on `file_type === 'physical'` before offering to open a file: there is nothing to open, and an \"Open\" button on one reads as a broken purchase. The same row's `extension` is NOT a safe substitute - it defaults to 'pdf' on every row, whether or not a file was ever uploaded.\n\nupdate-7 (FIXED): `cover_image` was missing from the query this endpoint answers with - the file holds two listings and only the other one selected it - so every card fell back to a placeholder, including the physical items where the photo IS the product.",
+        "responses": {
+          "200": {
+            "description": "The matching products, paginated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiSuccess"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "integer"
+                              },
+                              "title": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "file_type": {
+                                "type": "string",
+                                "description": "update-7: `physical` for an item with no file; otherwise the file's type. Branch on this before offering to open anything."
+                              },
+                              "cover_image": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "update-7 (FIXED): now selected. Absolute URL."
+                              },
+                              "price": {
+                                "type": "number"
+                              },
+                              "price_formatted": {
+                                "type": "string",
+                                "description": "Priced in this student's own country's currency."
+                              },
+                              "course_id": {
+                                "type": "integer",
+                                "nullable": true,
+                                "description": "Set = not a store product; it belongs to that course."
+                              },
+                              "unit_id": {
+                                "type": "integer",
+                                "nullable": true
+                              },
+                              "own": {
+                                "type": "boolean"
+                              },
+                              "is_subscribed": {
+                                "type": "boolean"
+                              },
+                              "request_status": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "pending",
+                                  "approved",
+                                  "rejected",
+                                  null
+                                ]
+                              },
+                              "file_path": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Null for a physical item, and null for a digital one the student does not own."
+                              },
+                              "view_url": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The authenticated view-only stream for an owned digital product."
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/site-settings": {
+      "get": {
+        "tags": [
+          "update-7 / Public"
+        ],
+        "summary": "update-7 (CHANGED): the public landing configuration - its `books` rows carry `file_type`",
+        "description": "Documented here for the update-7 change; the endpoint itself predates this changelog.\n\nupdate-7 (NEW FIELD): each row of `data.books` now carries `file_type`. The marketing site reads its products from HERE, not from `GET /books`, and without the field every card was labelled \"PDF\" - including a pair of headphones.\n\n`data.hero_slides` is the same list `GET /hero-slides` returns, folded in so the site does not need a second request.",
+        "responses": {
+          "200": {
+            "description": "Everything the public site renders.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "tags": [
@@ -25745,6 +25958,18 @@
     },
     {
       "name": "update-7 / Student - Auth"
+    },
+    {
+      "name": "update-7 / Admin / Books"
+    },
+    {
+      "name": "update-7 / Public / Store"
+    },
+    {
+      "name": "update-7 / Student / Store"
+    },
+    {
+      "name": "update-7 / Public"
     }
   ]
 }
