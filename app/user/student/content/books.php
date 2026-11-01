@@ -182,6 +182,20 @@ if (!function_exists('studentGetAllBooksWithOwn')) {
             $sp = '%' . mysqli_real_escape_string($con, $search) . '%';
             $cbWhere[] = "(bt.title LIKE '{$sp}' OR bt.description LIKE '{$sp}')";
         }
+
+        // The store sells standalone products only. A row tied to a course or a unit is that
+        // course's own content, opened from inside it - and the purchase endpoint refuses it
+        // outright ("bundled with its course"), so listing it in the store offered a sale that
+        // could never go through. Opt-in, so every existing caller keeps the full list.
+        $standaloneOnly = in_array(
+            strtolower(trim($_GET['standalone'] ?? $qsParams['standalone'] ?? $body['standalone'] ?? '')),
+            ['1', 'true', 'yes'],
+            true
+        );
+        if ($standaloneOnly) {
+            $cbWhere[] = "b.course_id IS NULL AND b.unit_id IS NULL";
+        }
+
         $cbWhereSql = "WHERE " . implode(" AND ", $cbWhere);
 
         $countRes = mysqli_query($con, "
