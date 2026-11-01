@@ -4079,6 +4079,15 @@
             "application/json": {
               "schema": {
                 "$ref": "#/paths/~1admin~1books~1reorder/post/requestBody/content/application~1json/schema"
+              },
+              "example": {
+                "unit_id": 1,
+                "category": "exam",
+                "ordered_ids": [
+                  5,
+                  3,
+                  7
+                ]
               }
             }
           }
@@ -7056,7 +7065,53 @@
               }
             }
           }
-        }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "question_id": {
+                    "type": "integer"
+                  },
+                  "mcq_option_id": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "For a multiple-choice question: the chosen option."
+                  },
+                  "true_false_answer": {
+                    "type": "boolean",
+                    "nullable": true,
+                    "description": "For a true/false question."
+                  },
+                  "written_answer_text": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "For a written question. Alias: `answer_text`."
+                  },
+                  "answer_text": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Alias for `written_answer_text`."
+                  }
+                },
+                "required": [
+                  "question_id"
+                ]
+              },
+              "example": {
+                "question_id": 1,
+                "mcq_option_id": 1,
+                "true_false_answer": true,
+                "written_answer_text": "string",
+                "answer_text": "string"
+              }
+            }
+          }
+        },
+        "description": "Send only the field that matches the question's type; the other two are ignored. `question_id` may also travel in the query string."
       }
     },
     "/student/questions/submit-answer": {
@@ -8783,7 +8838,29 @@
               }
             }
           }
-        }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              },
+              "example": {
+                "id": 1
+              }
+            }
+          }
+        },
+        "description": "`id` may also be sent in the query string."
       }
     },
     "/admin/subscription-codes/show": {
@@ -9988,6 +10065,10 @@
                     ]
                   }
                 }
+              },
+              "example": {
+                "id": 1,
+                "kind": "normal"
               }
             }
           }
@@ -11104,7 +11185,7 @@
           "update-3 / Admin / HR Policy & Pay Rates (NEW - update-3)"
         ],
         "summary": "update-3 (NEW): Remove a teacher's pay-rate override (revert to the global default)",
-        "description": "update-3 (NEW, Section 10). Deletes the teacher's row from `teacher_pay_rates`, so from the next check-out onwards they are paid using the global `default_pay_model` / `default_pay_rate` again.\n\nIdempotent: deleting a non-existent override still returns success. Note the returned `data` is the EFFECTIVE rate after the delete - i.e. the global default - not an empty object, so the admin UI can render the new state directly.\n\n`teacher_id` may be passed as a query parameter or in a JSON body; the query parameter is the documented form.",
+        "description": "update-3 (NEW, Section 10). Deletes the teacher's row from `teacher_pay_rates`, so from the next check-out onwards they are paid using the global `default_pay_model` / `default_pay_rate` again.\n\nIdempotent: deleting a non-existent override still returns success. Note the returned `data` is the EFFECTIVE rate after the delete - i.e. the global default - not an empty object, so the admin UI can render the new state directly.\n\n`teacher_id` may be passed as a query parameter or in a JSON body; the query parameter is the documented form.\n\nClears this teacher's pay rate, falling the wallet back to the platform default. `teacher_id` may also travel in the query string.",
         "security": [
           {
             "AdminAuth": []
@@ -11152,6 +11233,27 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "teacher_id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "teacher_id"
+                ]
+              },
+              "example": {
+                "teacher_id": 1
               }
             }
           }
@@ -12031,7 +12133,7 @@
           "update-3 / Parent / Attendance"
         ],
         "summary": "update-3 (CHANGED): Child's attendance report now separates EXCUSED absences from unexcused ones",
-        "description": "update-3: `session_attendance.status` only ever holds 'present' / 'absent' / 'late'; an authorised absence is stored as status='absent' PLUS the separate `is_excused` flag (added by migration 060). This endpoint previously ignored that flag, so an absence the admin had explicitly approved was reported to the parent as a plain absence.\n\nNow the flag is folded into the reported status: an excused row is emitted with `status = 'excused'` (its own bucket in the counters and its own label), and every row additionally carries the raw boolean `is_excused`.\n\nCLIENT ACTION: the parent app must handle a FOURTH status value, `excused`, in addition to present/absent/late. Counters shift accordingly - previously-inflated 'absent' totals will drop.",
+        "description": "update-3: `session_attendance.status` only ever holds 'present' / 'absent' / 'late'; an authorised absence is stored as status='absent' PLUS the separate `is_excused` flag (added by migration 060). This endpoint previously ignored that flag, so an absence the admin had explicitly approved was reported to the parent as a plain absence.\n\nNow the flag is folded into the reported status: an excused row is emitted with `status = 'excused'` (its own bucket in the counters and its own label), and every row additionally carries the raw boolean `is_excused`.\n\nCLIENT ACTION: the parent app must handle a FOURTH status value, `excused`, in addition to present/absent/late. Counters shift accordingly - previously-inflated 'absent' totals will drop.\n\nDespite the path, this is a STUDENT token route: the id sent has to be the signed-in student's own, and any other is refused as unauthorized.",
         "security": [
           {
             "ParentAuth": []
@@ -12055,6 +12157,27 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "student_id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "student_id"
+                ]
+              },
+              "example": {
+                "student_id": 1
               }
             }
           }
@@ -12888,6 +13011,20 @@
                     "type": "string"
                   }
                 }
+              },
+              "example": {
+                "teacher_id": 1,
+                "slot_date": "2026-01-01",
+                "start_time": "18:00",
+                "end_time": "19:30",
+                "capacity": 1,
+                "course_id": 1,
+                "subject_id": 1,
+                "student_id": 1,
+                "is_online": 1,
+                "meeting_link": "string",
+                "room": "string",
+                "notes": "string"
               }
             }
           }
@@ -12987,6 +13124,20 @@
                     "type": "string"
                   }
                 }
+              },
+              "example": {
+                "id": 1,
+                "slot_date": "2026-01-01",
+                "start_time": "string",
+                "end_time": "string",
+                "capacity": 1,
+                "status": "available",
+                "course_id": 1,
+                "subject_id": 1,
+                "is_online": 0,
+                "meeting_link": "string",
+                "room": "string",
+                "notes": "string"
               }
             }
           }
@@ -13040,6 +13191,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -13160,6 +13314,27 @@
                     "type": "string"
                   }
                 }
+              },
+              "example": {
+                "teacher_id": 1,
+                "pattern": "weekly",
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-01",
+                "start_time": "18:00",
+                "end_time": "19:30",
+                "days": [
+                  "Saturday"
+                ],
+                "days_of_month": [
+                  1
+                ],
+                "capacity": 1,
+                "course_id": 1,
+                "subject_id": 1,
+                "is_online": 0,
+                "meeting_link": "string",
+                "room": "string",
+                "notes": "string"
               }
             }
           }
@@ -13244,6 +13419,10 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1,
+                "student_id": 1
               }
             }
           }
@@ -13301,6 +13480,10 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1,
+                "student_id": 1
               }
             }
           }
@@ -13443,6 +13626,28 @@
                     "type": "string"
                   }
                 }
+              },
+              "example": {
+                "teacher_id": 1,
+                "student_id": 1,
+                "pattern": "weekly",
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-01",
+                "start_time": "18:00",
+                "end_time": "19:30",
+                "days": [
+                  "Saturday"
+                ],
+                "days_of_month": [
+                  1
+                ],
+                "capacity": 1,
+                "course_id": 1,
+                "subject_id": 1,
+                "is_online": 0,
+                "meeting_link": "string",
+                "room": "string",
+                "notes": "string"
               }
             }
           }
@@ -13703,6 +13908,19 @@
                     "type": "string"
                   }
                 }
+              },
+              "example": {
+                "slot_date": "2026-01-01",
+                "start_time": "18:00",
+                "end_time": "19:30",
+                "capacity": 1,
+                "course_id": 1,
+                "subject_id": 1,
+                "student_id": 1,
+                "is_online": 1,
+                "meeting_link": "string",
+                "room": "string",
+                "notes": "string"
               }
             }
           }
@@ -13803,6 +14021,20 @@
                     "type": "string"
                   }
                 }
+              },
+              "example": {
+                "id": 1,
+                "slot_date": "2026-01-01",
+                "start_time": "string",
+                "end_time": "string",
+                "capacity": 1,
+                "status": "available",
+                "course_id": 1,
+                "subject_id": 1,
+                "is_online": 0,
+                "meeting_link": "string",
+                "room": "string",
+                "notes": "string"
               }
             }
           }
@@ -13855,6 +14087,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -13884,6 +14119,26 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AvailabilityPatternBody"
+              },
+              "example": {
+                "pattern": "weekly",
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-01",
+                "start_time": "18:00",
+                "end_time": "19:30",
+                "days": [
+                  "Saturday"
+                ],
+                "days_of_month": [
+                  1
+                ],
+                "capacity": 1,
+                "course_id": 1,
+                "subject_id": 1,
+                "is_online": 0,
+                "meeting_link": "string",
+                "room": "string",
+                "notes": "string"
               }
             }
           }
@@ -13925,6 +14180,10 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1,
+                "student_id": 1
               }
             }
           }
@@ -13981,6 +14240,10 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1,
+                "student_id": 1
               }
             }
           }
@@ -14269,6 +14532,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1
               }
             }
           }
@@ -14322,6 +14588,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1
               }
             }
           }
@@ -14549,6 +14818,9 @@
                     "description": "The `student_certificates.id` of the issued certificate."
                   }
                 }
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -14750,6 +15022,9 @@
                     "description": "The `student_certificates.id` of the issued certificate."
                   }
                 }
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -14922,6 +15197,29 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/DiscountCode"
+              },
+              "example": {
+                "id": 1,
+                "code": "string",
+                "title": "string",
+                "description": "string",
+                "discount_type": "percentage",
+                "discount_value": 0,
+                "max_discount_amount": 0,
+                "applies_to": "all",
+                "course_ids": [
+                  1
+                ],
+                "courses": [
+                  {}
+                ],
+                "max_uses": 1,
+                "used_count": 1,
+                "remaining_uses": 1,
+                "once_per_student": 0,
+                "valid_from": "2026-01-01 10:00:00",
+                "valid_to": "2026-01-01 10:00:00",
+                "is_active": 0
               }
             }
           }
@@ -14967,6 +15265,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -15075,6 +15376,14 @@
                     "description": "Admin route only - on the student route it comes from the token. Needed for the once-per-student rule."
                   }
                 }
+              },
+              "example": {
+                "code": "string",
+                "course_id": 1,
+                "course_ids": [
+                  1
+                ],
+                "student_id": 1
               }
             }
           }
@@ -15383,6 +15692,10 @@
                     "type": "string"
                   }
                 }
+              },
+              "example": {
+                "student_id": 1,
+                "device_id": "string"
               }
             }
           }
@@ -15766,6 +16079,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -15841,6 +16157,13 @@
                     }
                   }
                 }
+              },
+              "example": {
+                "code": "string",
+                "student_id": 1,
+                "course_ids": [
+                  1
+                ]
               }
             }
           }
@@ -15943,7 +16266,7 @@
           "update-4 / Admin - Settings"
         ],
         "summary": "update-4 (NEW): Release every locked-out account",
-        "description": "update-4 (NEW). Deletes every active lockout created by the login limit.\n\nA lockout already expires on its own, so this is a shortcut rather than a rescue - but when the limit was set to something too low, waiting it out is not much comfort. It exists so that correcting the setting never means opening phpMyAdmin.\n\nRequires the `manage_settings` permission.",
+        "description": "update-4 (NEW). Deletes every active lockout created by the login limit.\n\nA lockout already expires on its own, so this is a shortcut rather than a rescue - but when the limit was set to something too low, waiting it out is not much comfort. It exists so that correcting the setting never means opening phpMyAdmin.\n\nRequires the `manage_settings` permission.\n\nNo body. Releases every temporary sign-in lockout at once and answers with `data.cleared`, the number released. Requires the `manage_settings` permission.",
         "security": [
           {
             "AdminAuth": []
@@ -15980,6 +16303,18 @@
               }
             }
           }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              },
+              "example": {}
+            }
+          }
         }
       }
     },
@@ -16011,6 +16346,10 @@
                     "format": "password"
                   }
                 }
+              },
+              "example": {
+                "email": "user@example.com",
+                "password": "string"
               }
             }
           }
@@ -16067,6 +16406,10 @@
                     "format": "password"
                   }
                 }
+              },
+              "example": {
+                "email": "user@example.com",
+                "password": "string"
               }
             }
           }
@@ -16123,6 +16466,10 @@
                     "format": "password"
                   }
                 }
+              },
+              "example": {
+                "email": "user@example.com",
+                "password": "string"
               }
             }
           }
@@ -16179,6 +16526,10 @@
                     "format": "password"
                   }
                 }
+              },
+              "example": {
+                "email": "user@example.com",
+                "password": "string"
               }
             }
           }
@@ -16294,6 +16645,20 @@
                     "nullable": true
                   }
                 }
+              },
+              "example": {
+                "name": "string",
+                "password": "string",
+                "email": "string",
+                "phone": "string",
+                "phone_country_code": "string",
+                "image": "string",
+                "age": 1,
+                "school_id": 1,
+                "city_id": 1,
+                "academic_year_id": 1,
+                "study_language": "arabic",
+                "referral_code": "string"
               }
             }
           }
@@ -16316,6 +16681,48 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiSuccess"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 6
+                  },
+                  "city_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "image": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "base64 or an uploaded path."
+                  }
+                },
+                "required": [
+                  "name",
+                  "password"
+                ]
+              },
+              "example": {
+                "name": "string",
+                "email": "string",
+                "password": "string",
+                "city_id": 1,
+                "image": "string"
               }
             }
           }
@@ -16398,6 +16805,16 @@
                   "announcement_bar_enabled": "1",
                   "announcement_bar_items": "[{\"text_ar\":\"خصم 20% على كل الباقات حتى نهاية الشهر\",\"text_en\":\"20% off every package until the end of the month\"},{\"text_ar\":\"التسجيل مفتوح لدورة البروفيه\",\"text_en\":\"Registration is open for the Brevet course\"}]"
                 }
+              },
+              "example": {
+                "whatsapp_number": "201012345678",
+                "support_email": "support@brain-ixa.com",
+                "registration_enabled": "1",
+                "login_lockout_enabled": "0",
+                "max_login_attempts": "5",
+                "login_lockout_minutes": "15",
+                "announcement_bar_enabled": "1",
+                "announcement_bar_items": "[{\"text_ar\":\"خصم 20% على كل الباقات حتى نهاية الشهر\",\"text_en\":\"20% off every package until the end of the month\"},{\"text_ar\":\"التسجيل مفتوح لدورة البروفيه\",\"text_en\":\"Registration is open for the Brevet course\"}]"
               }
             }
           }
@@ -16476,7 +16893,7 @@
           "update-5 / Student - Payments"
         ],
         "summary": "MOVED FROM `update-4 / Student - Payments`. Changed again in update-5: Quotes from the same discount and points calculation the gateway now uses. update-4 (NEW): What this costs, before paying",
-        "description": "update-4 (NEW). Prices a course or book for this student, optionally with a discount code, and returns the payment accounts alongside it.\n\nRead-only. Checking a code here does NOT spend it - a code is consumed only when a request is approved, so a student can preview as often as they like and a request that is never approved costs them nothing.\n\nBody: `item_type` ('course' or 'book'), `item_id`, optional `discount_code`. Returns `original_amount`, `discount_amount`, `amount_due` and `accounts`. Discount codes apply to courses only. Refused when the student already has access.\n\n=== update-5 ===\n\nThe quote and the charge are computed by one shared helper, so the figure shown before paying and the figure actually taken cannot drift apart.",
+        "description": "update-4 (NEW). Prices a course or book for this student, optionally with a discount code, and returns the payment accounts alongside it.\n\nRead-only. Checking a code here does NOT spend it - a code is consumed only when a request is approved, so a student can preview as often as they like and a request that is never approved costs them nothing.\n\nBody: `item_type` ('course' or 'book'), `item_id`, optional `discount_code`. Returns `original_amount`, `discount_amount`, `amount_due` and `accounts`. Discount codes apply to courses only. Refused when the student already has access.\n\n=== update-5 ===\n\nThe quote and the charge are computed by one shared helper, so the figure shown before paying and the figure actually taken cannot drift apart.\n\nWhat this purchase would cost after a code and points, WITHOUT filing anything. Every field is also accepted in the query string.",
         "security": [
           {
             "StudentAuth": []
@@ -16515,7 +16932,49 @@
             },
             "description": "update-4: an ISO 3166-1 alpha-2 code that prices this request for that country - the currency switcher. Accepted on EVERY endpoint that returns a price, and it outranks every other way the country is worked out. The same value may be sent as the `X-Country` header instead."
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "item_type": {
+                    "type": "string",
+                    "enum": [
+                      "course",
+                      "package",
+                      "book"
+                    ],
+                    "default": "course"
+                  },
+                  "item_id": {
+                    "type": "integer"
+                  },
+                  "discount_code": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "use_points": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Spend the student's points balance against this purchase."
+                  }
+                },
+                "required": [
+                  "item_id"
+                ]
+              },
+              "example": {
+                "item_type": "course",
+                "item_id": 1,
+                "discount_code": "string",
+                "use_points": false
+              }
+            }
+          }
+        }
       }
     },
     "/student/offline-payments": {
@@ -16524,7 +16983,7 @@
           "update-5 / Student - Payments"
         ],
         "summary": "MOVED FROM `update-4 / Student - Payments`. Changed again in update-5: A discount code is now held to its usage limit, and the amount is no longer taken from the client. update-4 (NEW): File a payment request",
-        "description": "update-4 (NEW). The student has already transferred the money; this files the receipt for review.\n\nFILING GRANTS NOTHING. The request enters a queue as `pending` and access is opened only when a reviewer approves it. The `amount` the student types is never treated as proof - it is stored next to the price and the discount so a person can compare all three.\n\nBody: `item_type`, `item_id`, `receipt_image` (REQUIRED - base64 data URI or an uploaded path; there is nothing to review without it), `amount`, and optionally `payment_account_id`, `sender_name`, `sender_reference`, `transferred_at`, `student_note`, `discount_code`.\n\nRefused when the student already has access, or already has an open request for the same item - otherwise a student who cannot see their first request files four more and someone approves the same payment twice.\n\n=== update-5 ===\n\nThe code's use is claimed BEFORE the request is created, with a conditional update (`used_count < max_uses`), and released if the request fails. A code good for ten uses still gives ten - the defect was the eleventh, which slipped through when two requests arrived together.\n\nSECURITY: the payable amount is recomputed on the server. It used to be read from the request body, so a client could name its own price.",
+        "description": "update-4 (NEW). The student has already transferred the money; this files the receipt for review.\n\nFILING GRANTS NOTHING. The request enters a queue as `pending` and access is opened only when a reviewer approves it. The `amount` the student types is never treated as proof - it is stored next to the price and the discount so a person can compare all three.\n\nBody: `item_type`, `item_id`, `receipt_image` (REQUIRED - base64 data URI or an uploaded path; there is nothing to review without it), `amount`, and optionally `payment_account_id`, `sender_name`, `sender_reference`, `transferred_at`, `student_note`, `discount_code`.\n\nRefused when the student already has access, or already has an open request for the same item - otherwise a student who cannot see their first request files four more and someone approves the same payment twice.\n\n=== update-5 ===\n\nThe code's use is claimed BEFORE the request is created, with a conditional update (`used_count < max_uses`), and released if the request fails. A code good for ten uses still gives ten - the defect was the eleventh, which slipped through when two requests arrived together.\n\nSECURITY: the payable amount is recomputed on the server. It used to be read from the request body, so a client could name its own price.\n\nFiles a transfer for review. Nothing is granted until an admin or the owning teacher approves it.",
         "security": [
           {
             "StudentAuth": []
@@ -16548,6 +17007,78 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "item_type": {
+                    "type": "string",
+                    "enum": [
+                      "course",
+                      "package",
+                      "book"
+                    ],
+                    "default": "course"
+                  },
+                  "item_id": {
+                    "type": "integer"
+                  },
+                  "payment_account_id": {
+                    "type": "integer",
+                    "description": "Which of the platform's accounts the money was sent to - see GET /payment-accounts."
+                  },
+                  "amount": {
+                    "type": "number"
+                  },
+                  "receipt_image": {
+                    "type": "string",
+                    "description": "Proof of transfer: base64 or an uploaded path."
+                  },
+                  "sender_name": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "sender_reference": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The bank's or wallet's own reference for the transfer."
+                  },
+                  "student_note": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "discount_code": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "use_points": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                },
+                "required": [
+                  "item_id",
+                  "payment_account_id"
+                ]
+              },
+              "example": {
+                "item_type": "course",
+                "item_id": 1,
+                "payment_account_id": 1,
+                "amount": 0,
+                "receipt_image": "string",
+                "sender_name": "string",
+                "sender_reference": "string",
+                "student_note": "string",
+                "discount_code": "string",
+                "use_points": false
               }
             }
           }
@@ -16592,7 +17123,7 @@
           "update-4 / Student - Payments"
         ],
         "summary": "update-4 (NEW): Withdraw a request",
-        "description": "update-4 (NEW). Withdraws a request filed by mistake. Body: `id`.\n\nOnly the student's own, and only while it is still `pending` - a reviewed request is a record, not a draft. The row is marked `cancelled` rather than deleted.",
+        "description": "update-4 (NEW). Withdraws a request filed by mistake. Body: `id`.\n\nOnly the student's own, and only while it is still `pending` - a reviewed request is a record, not a draft. The row is marked `cancelled` rather than deleted.\n\nCancels the student's own pending request. `id` may also travel in the query string.",
         "security": [
           {
             "StudentAuth": []
@@ -16616,6 +17147,27 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -16674,7 +17226,7 @@
           "update-4 / Admin - Payments"
         ],
         "summary": "update-4 (NEW): Approve or reject a payment",
-        "description": "update-4 (NEW). Body: `id`, `action` ('approve' or 'reject'), `note`.\n\nApproving opens the access, records the subscription it created in `granted_ref_id`, and spends the discount code if the request carried one - the code is consumed HERE and not when the request was filed.\n\nRejecting REQUIRES a note, because the student is shown it. A rejected request keeps its row and its reason: 'this is the third receipt this month that did not match' is exactly what someone needs later.\n\nThe status is re-checked inside the UPDATE, so of two reviewers with the same queue open exactly one wins and the student never ends up with two subscriptions to one course.\n\nRequires `manage_payments`.",
+        "description": "update-4 (NEW). Body: `id`, `action` ('approve' or 'reject'), `note`.\n\nApproving opens the access, records the subscription it created in `granted_ref_id`, and spends the discount code if the request carried one - the code is consumed HERE and not when the request was filed.\n\nRejecting REQUIRES a note, because the student is shown it. A rejected request keeps its row and its reason: 'this is the third receipt this month that did not match' is exactly what someone needs later.\n\nThe status is re-checked inside the UPDATE, so of two reviewers with the same queue open exactly one wins and the student never ends up with two subscriptions to one course.\n\nRequires `manage_payments`.\n\nApproving grants the item; rejecting leaves the row with its reason.",
         "security": [
           {
             "AdminAuth": []
@@ -16708,6 +17260,42 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "approve",
+                      "reject"
+                    ]
+                  },
+                  "review_note": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Alias: `note`. On a rejection this is the only explanation the student ever sees."
+                  }
+                },
+                "required": [
+                  "id",
+                  "action"
+                ]
+              },
+              "example": {
+                "id": 1,
+                "action": "approve",
+                "review_note": "string"
               }
             }
           }
@@ -16801,6 +17389,83 @@
               }
             }
           }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "description": "bank / wallet / instapay - how the money arrives."
+                  },
+                  "label_ar": {
+                    "type": "string"
+                  },
+                  "label_en": {
+                    "type": "string"
+                  },
+                  "bank_name": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "account_name": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "account_number": {
+                    "type": "string"
+                  },
+                  "swift_code": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "currency_code": {
+                    "type": "string",
+                    "example": "EGP"
+                  },
+                  "instructions_ar": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "instructions_en": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  },
+                  "sort_order": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "method",
+                  "account_number"
+                ]
+              },
+              "example": {
+                "method": "string",
+                "label_ar": "string",
+                "label_en": "string",
+                "bank_name": "string",
+                "account_name": "string",
+                "account_number": "string",
+                "swift_code": "string",
+                "currency_code": "EGP",
+                "instructions_ar": "string",
+                "instructions_en": "string",
+                "is_active": 0,
+                "sort_order": 1
+              }
+            }
+          }
         }
       },
       "put": {
@@ -16808,7 +17473,7 @@
           "update-4 / Admin - Payments"
         ],
         "summary": "update-4 (NEW): Edit an account",
-        "description": "update-4 (NEW). Partial: only the fields actually sent are touched, so editing a label does not blank the instructions. Requires `manage_payments`.",
+        "description": "update-4 (NEW). Partial: only the fields actually sent are touched, so editing a label does not blank the instructions. Requires `manage_payments`.\n\nOnly the fields SENT are written, so editing a label does not blank the instructions. The nullable ones store NULL when cleared, so \"no SWIFT code\" and \"a SWIFT code of nothing\" stay different things.",
         "security": [
           {
             "AdminAuth": []
@@ -16842,6 +17507,84 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "label_ar": {
+                    "type": "string"
+                  },
+                  "label_en": {
+                    "type": "string"
+                  },
+                  "bank_name": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "account_name": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "account_number": {
+                    "type": "string"
+                  },
+                  "swift_code": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "currency_code": {
+                    "type": "string"
+                  },
+                  "instructions_ar": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "instructions_en": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  },
+                  "sort_order": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              },
+              "example": {
+                "id": 1,
+                "method": "string",
+                "label_ar": "string",
+                "label_en": "string",
+                "bank_name": "string",
+                "account_name": "string",
+                "account_number": "string",
+                "swift_code": "string",
+                "currency_code": "string",
+                "instructions_ar": "string",
+                "instructions_en": "string",
+                "is_active": 0,
+                "sort_order": 1
               }
             }
           }
@@ -16886,6 +17629,27 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -16934,7 +17698,7 @@
           "update-4 / Teacher - Payments"
         ],
         "summary": "update-4 (NEW): Approve or reject a payment for my course",
-        "description": "update-4 (NEW). Same body and same rules as the admin review, scoped to the teacher's own courses.\n\nA request for someone else's course reports 'not found' rather than 'forbidden', so the endpoint cannot be used to discover that other teachers' payments exist.",
+        "description": "update-4 (NEW). Same body and same rules as the admin review, scoped to the teacher's own courses.\n\nA request for someone else's course reports 'not found' rather than 'forbidden', so the endpoint cannot be used to discover that other teachers' payments exist.\n\nSame as the admin's review, limited to transfers for this teacher's own items.",
         "security": [
           {
             "TeacherAuth": []
@@ -16958,6 +17722,42 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "approve",
+                      "reject"
+                    ]
+                  },
+                  "review_note": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Alias: `note`."
+                  }
+                },
+                "required": [
+                  "id",
+                  "action"
+                ]
+              },
+              "example": {
+                "id": 1,
+                "action": "approve",
+                "review_note": "string"
               }
             }
           }
@@ -17036,7 +17836,7 @@
           "update-4 / Pricing"
         ],
         "summary": "update-4 (NEW): The student chooses their country",
-        "description": "update-4 (NEW). Body: `country_id` OR `country_code` (ISO alpha-2). Stored on the student's record, so it survives the session and outranks their IP address on every later request - a Saudi student on holiday in Cairo stays a Saudi student.\n\nSending an EMPTY body clears it and hands them back to automatic detection.\n\nThe platform also fills this in by itself the first time a signed-in student's country is resolved from their address, but only ever into a blank - it never overwrites a country the student chose.",
+        "description": "update-4 (NEW). Body: `country_id` OR `country_code` (ISO alpha-2). Stored on the student's record, so it survives the session and outranks their IP address on every later request - a Saudi student on holiday in Cairo stays a Saudi student.\n\nSending an EMPTY body clears it and hands them back to automatic detection.\n\nThe platform also fills this in by itself the first time a signed-in student's country is resolved from their address, but only ever into a blank - it never overwrites a country the student chose.\n\nSets the country this student is priced in. Send either the id or the code.",
         "security": [
           {
             "StudentAuth": []
@@ -17060,6 +17860,31 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "country_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "country_code": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Alias: `iso2`. Two letters, e.g. EG."
+                  }
+                }
+              },
+              "example": {
+                "country_id": 1,
+                "country_code": "string"
               }
             }
           }
@@ -17116,7 +17941,7 @@
           "update-4 / Admin - Pricing"
         ],
         "summary": "update-4 (NEW): Offer a country, or change its currency",
-        "description": "update-4 (NEW). Body: `id`, plus any of `is_active`, `sort_order`, `currency_code`.\n\nThe NAMES are not editable. They come from ICU and are the spellings the rest of the user's software uses; letting an admin retype 211 country names could only make the list worse.\n\nChanging `currency_code` decides what the NEXT price entered for that country is denominated in. Prices already entered keep the currency they were entered in - the column on `item_country_prices` is a copy for exactly this reason, so a price of 1500 Egyptian pounds cannot silently start being read as 1500 of whatever replaced them.",
+        "description": "update-4 (NEW). Body: `id`, plus any of `is_active`, `sort_order`, `currency_code`.\n\nThe NAMES are not editable. They come from ICU and are the spellings the rest of the user's software uses; letting an admin retype 211 country names could only make the list worse.\n\nChanging `currency_code` decides what the NEXT price entered for that country is denominated in. Prices already entered keep the currency they were entered in - the column on `item_country_prices` is a copy for exactly this reason, so a price of 1500 Egyptian pounds cannot silently start being read as 1500 of whatever replaced them.\n\n`id` may also travel in the query string.",
         "security": [
           {
             "AdminAuth": []
@@ -17150,6 +17975,49 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "code": {
+                    "type": "string",
+                    "example": "EG"
+                  },
+                  "currency_code": {
+                    "type": "string",
+                    "example": "EGP"
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  },
+                  "sort_order": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              },
+              "example": {
+                "id": 1,
+                "code": "EG",
+                "currency_code": "EGP",
+                "is_active": 0,
+                "sort_order": 1
               }
             }
           }
@@ -17206,7 +18074,7 @@
           "update-4 / Admin - Pricing"
         ],
         "summary": "update-4 (NEW): Edit a currency",
-        "description": "update-4 (NEW). Body: `id` or `code`, plus any of `is_active`, `sort_order`, `decimal_digits` (0-4), `symbol_ar`, `symbol_en`.\n\nTHE BASE CURRENCY CANNOT BE DEACTIVATED - it would leave every fallback price on the platform labelled with a currency the system itself says is not in use. Change the base currency in the application settings first.\n\nDeactivating any other currency makes every price entered in it fall back to the base price rather than quoting a dead currency.",
+        "description": "update-4 (NEW). Body: `id` or `code`, plus any of `is_active`, `sort_order`, `decimal_digits` (0-4), `symbol_ar`, `symbol_en`.\n\nTHE BASE CURRENCY CANNOT BE DEACTIVATED - it would leave every fallback price on the platform labelled with a currency the system itself says is not in use. Change the base currency in the application settings first.\n\nDeactivating any other currency makes every price entered in it fall back to the base price rather than quoting a dead currency.\n\n`id` may also travel in the query string.",
         "security": [
           {
             "AdminAuth": []
@@ -17240,6 +18108,40 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "code": {
+                    "type": "string",
+                    "example": "EGP"
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              },
+              "example": {
+                "id": 1,
+                "code": "EGP",
+                "is_active": 0
               }
             }
           }
@@ -17296,7 +18198,7 @@
           "update-4 / Admin - Pricing"
         ],
         "summary": "update-4 (NEW): Set country prices",
-        "description": "update-4 (NEW). Body: `item_type`, `item_id`, and either `prices: [{country_id, price}, ...]` for a whole list or a single `country_id` + `price`.\n\nTHE CURRENCY IS NOT SENT. It is taken from the country, so a form cannot say \"Egypt\" beside a figure the client labelled as dollars.\n\nALL OR NOTHING: every row is validated before any row is written. A bad figure in the fifth entry leaves the first four unsaved too, because half a price list is worse than none - the half that saved looks correct.\n\nZERO IS A PRICE. It means free in that country, which is a real thing to want and is different from having no entry at all (which means \"fall back to the base price\").",
+        "description": "update-4 (NEW). Body: `item_type`, `item_id`, and either `prices: [{country_id, price}, ...]` for a whole list or a single `country_id` + `price`.\n\nTHE CURRENCY IS NOT SENT. It is taken from the country, so a form cannot say \"Egypt\" beside a figure the client labelled as dollars.\n\nALL OR NOTHING: every row is validated before any row is written. A bad figure in the fifth entry leaves the first four unsaved too, because half a price list is worse than none - the half that saved looks correct.\n\nZERO IS A PRICE. It means free in that country, which is a real thing to want and is different from having no entry at all (which means \"fall back to the base price\").\n\nWhat one course, package or book costs in a given country. Send one country with `country_id` + `price`, or many with `prices`.",
         "security": [
           {
             "AdminAuth": []
@@ -17333,6 +18235,70 @@
               }
             }
           }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "item_type": {
+                    "type": "string",
+                    "enum": [
+                      "course",
+                      "package",
+                      "book"
+                    ],
+                    "default": "course"
+                  },
+                  "item_id": {
+                    "type": "integer"
+                  },
+                  "country_id": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "One country. Leave it out when sending `prices`."
+                  },
+                  "price": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The price in that one country."
+                  },
+                  "prices": {
+                    "type": "array",
+                    "description": "Several countries at once, instead of country_id + price.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "country_id": {
+                          "type": "integer"
+                        },
+                        "price": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "item_id"
+                ]
+              },
+              "example": {
+                "item_type": "course",
+                "item_id": 1,
+                "country_id": 1,
+                "price": 0,
+                "prices": [
+                  {
+                    "country_id": 1,
+                    "price": 0
+                  }
+                ]
+              }
+            }
+          }
         }
       },
       "delete": {
@@ -17340,7 +18306,7 @@
           "update-4 / Admin - Pricing"
         ],
         "summary": "update-4 (NEW): Remove a country price",
-        "description": "update-4 (NEW). Body or query: `item_type`, `item_id`, and `country_id` (or the row `id`).\n\nRemoving a price is NOT the same as setting it to zero: that country goes back to the base price in the base currency.",
+        "description": "update-4 (NEW). Body or query: `item_type`, `item_id`, and `country_id` (or the row `id`).\n\nRemoving a price is NOT the same as setting it to zero: that country goes back to the base price in the base currency.\n\nIdentify the row either by `id`, or by item + country. Falls back to the query string.",
         "security": [
           {
             "AdminAuth": []
@@ -17374,6 +18340,46 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "The price row itself, when you have its id."
+                  },
+                  "item_type": {
+                    "type": "string",
+                    "enum": [
+                      "course",
+                      "package",
+                      "book"
+                    ],
+                    "default": "course"
+                  },
+                  "item_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "country_id": {
+                    "type": "integer",
+                    "nullable": true
+                  }
+                }
+              },
+              "example": {
+                "id": 1,
+                "item_type": "course",
+                "item_id": 1,
+                "country_id": 1
               }
             }
           }
@@ -17466,7 +18472,7 @@
           "update-4 / Teacher - Pricing"
         ],
         "summary": "update-4 (NEW): A teacher sets country prices",
-        "description": "update-4 (NEW). Identical body and rules to POST /admin/item-prices, restricted to the teacher's own courses and books.",
+        "description": "update-4 (NEW). Identical body and rules to POST /admin/item-prices, restricted to the teacher's own courses and books.\n\nSame as the admin's, limited to this teacher's own items. The route also answers to PUT.",
         "security": [
           {
             "TeacherAuth": []
@@ -17493,6 +18499,67 @@
               }
             }
           }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "item_type": {
+                    "type": "string",
+                    "enum": [
+                      "course",
+                      "package",
+                      "book"
+                    ],
+                    "default": "course"
+                  },
+                  "item_id": {
+                    "type": "integer"
+                  },
+                  "country_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "price": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "prices": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "country_id": {
+                          "type": "integer"
+                        },
+                        "price": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "item_id"
+                ]
+              },
+              "example": {
+                "item_type": "course",
+                "item_id": 1,
+                "country_id": 1,
+                "price": 0,
+                "prices": [
+                  {
+                    "country_id": 1,
+                    "price": 0
+                  }
+                ]
+              }
+            }
+          }
         }
       },
       "delete": {
@@ -17500,7 +18567,7 @@
           "update-4 / Teacher - Pricing"
         ],
         "summary": "update-4 (NEW): A teacher removes a country price",
-        "description": "update-4 (NEW). Identical to DELETE /admin/item-prices, restricted to the teacher's own work.",
+        "description": "update-4 (NEW). Identical to DELETE /admin/item-prices, restricted to the teacher's own work.\n\nEither `id` or `country_id` has to identify the row; the item is resolved from `item_type` + `item_id`.",
         "security": [
           {
             "TeacherAuth": []
@@ -17524,6 +18591,45 @@
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "item_type": {
+                    "type": "string",
+                    "enum": [
+                      "course",
+                      "package",
+                      "book"
+                    ],
+                    "default": "course"
+                  },
+                  "item_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "country_id": {
+                    "type": "integer",
+                    "nullable": true
+                  }
+                }
+              },
+              "example": {
+                "id": 1,
+                "item_type": "course",
+                "item_id": 1,
+                "country_id": 1
               }
             }
           }
@@ -18498,6 +19604,12 @@
                     ]
                   }
                 }
+              },
+              "example": {
+                "name_ar": "string",
+                "name_en": "string",
+                "code": "string",
+                "is_active": 0
               }
             }
           }
@@ -19373,6 +20485,12 @@
                     "description": "Optional; points to spend."
                   }
                 }
+              },
+              "example": {
+                "item_type": "course",
+                "item_id": 1,
+                "discount_code": "string",
+                "use_points": 1
               }
             }
           }
@@ -19428,6 +20546,9 @@
                     "description": "The gateway reference, e.g. `BX42-9f3c1ab7`. A string, not a number."
                   }
                 }
+              },
+              "example": {
+                "reference": "string"
               }
             }
           }
@@ -19496,6 +20617,13 @@
             "application/json": {
               "schema": {
                 "type": "object"
+              },
+              "example": {
+                "Status": "PAID",
+                "Amount": "150.00",
+                "CustomerReference": "brx-ref-123",
+                "easykashRef": "EK-000000",
+                "SignatureHash": "<hmac>"
               }
             }
           },
@@ -19624,6 +20752,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "transaction_id": 1
               }
             }
           }
@@ -19672,6 +20803,10 @@
                     "description": "Optional; stored with the revocation."
                   }
                 }
+              },
+              "example": {
+                "transaction_id": 1,
+                "reason": "string"
               }
             }
           }
@@ -19754,6 +20889,10 @@
                     "type": "string"
                   }
                 }
+              },
+              "example": {
+                "name": "string",
+                "description": "string"
               }
             }
           }
@@ -19805,6 +20944,12 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "id": 1,
+                "name": "string",
+                "description": "string",
+                "is_active": 1
               }
             }
           }
@@ -19847,6 +20992,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -19990,6 +21138,12 @@
                     "description": "One id or a list of them; `question_id` is accepted as an alias."
                   }
                 }
+              },
+              "example": {
+                "bank_folder_id": 1,
+                "question_ids": [
+                  1
+                ]
               }
             }
           }
@@ -20042,6 +21196,12 @@
                     "description": "One id or a list of them; `question_id` is accepted as an alias."
                   }
                 }
+              },
+              "example": {
+                "exam_id": 1,
+                "question_ids": [
+                  1
+                ]
               }
             }
           }
@@ -20124,6 +21284,10 @@
                     "type": "string"
                   }
                 }
+              },
+              "example": {
+                "name": "string",
+                "description": "string"
               }
             }
           }
@@ -20175,6 +21339,12 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "id": 1,
+                "name": "string",
+                "description": "string",
+                "is_active": 1
               }
             }
           }
@@ -20217,6 +21387,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -20360,6 +21533,12 @@
                     "description": "One id or a list of them; `question_id` is accepted as an alias."
                   }
                 }
+              },
+              "example": {
+                "bank_folder_id": 1,
+                "question_ids": [
+                  1
+                ]
               }
             }
           }
@@ -20412,6 +21591,12 @@
                     "description": "One id or a list of them; `question_id` is accepted as an alias."
                   }
                 }
+              },
+              "example": {
+                "exam_id": 1,
+                "question_ids": [
+                  1
+                ]
               }
             }
           }
@@ -20502,6 +21687,12 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "name_ar": "string",
+                "name_en": "string",
+                "code": "string",
+                "is_active": 1
               }
             }
           }
@@ -20556,6 +21747,13 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "id": 1,
+                "name_ar": "string",
+                "name_en": "string",
+                "code": "string",
+                "is_active": 1
               }
             }
           }
@@ -20601,6 +21799,10 @@
                     "type": "boolean"
                   }
                 }
+              },
+              "example": {
+                "id": 1,
+                "delete_courses": true
               }
             }
           }
@@ -20687,6 +21889,23 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "name": "string",
+                "email": "string",
+                "password": "string",
+                "whatsapp": "string",
+                "subject_ids": [
+                  1
+                ],
+                "specialization": "string",
+                "video": "string",
+                "experience": "string",
+                "qualifications": "string",
+                "biography": "string",
+                "description": "string",
+                "image": "string",
+                "city_id": 1
               }
             }
           }
@@ -20740,6 +21959,10 @@
                     "description": "Also accepts approved / accept / accepted, and rejected / decline / declined / cancel / cancelled."
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1,
+                "action": "approve"
               }
             }
           }
@@ -20799,6 +22022,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1
               }
             }
           }
@@ -20858,6 +22084,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1
               }
             }
           }
@@ -20917,6 +22146,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1
               }
             }
           }
@@ -20976,6 +22208,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1
               }
             }
           }
@@ -21035,6 +22270,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1
               }
             }
           }
@@ -21094,6 +22332,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1
               }
             }
           }
@@ -21153,6 +22394,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1
               }
             }
           }
@@ -21212,6 +22456,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1
               }
             }
           }
@@ -21274,6 +22521,10 @@
                     "description": "Alias for `session_id`."
                   }
                 }
+              },
+              "example": {
+                "session_id": 1,
+                "id": 1
               }
             }
           }
@@ -21370,6 +22621,10 @@
                     "description": "Alias for `session_id`."
                   }
                 }
+              },
+              "example": {
+                "session_id": 1,
+                "id": 1
               }
             }
           }
@@ -21555,6 +22810,10 @@
                     "description": "Alias for `slot_id`."
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1,
+                "id": 1
               }
             }
           }
@@ -21651,6 +22910,10 @@
                     "description": "Alias for `slot_id`."
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1,
+                "id": 1
               }
             }
           }
@@ -21836,6 +23099,10 @@
                     "description": "Alias for `slot_id`."
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1,
+                "id": 1
               }
             }
           }
@@ -21932,6 +23199,10 @@
                     "description": "Alias for `slot_id`."
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1,
+                "id": 1
               }
             }
           }
@@ -21980,6 +23251,10 @@
                     "description": "Alias for `slot_id`."
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1,
+                "id": 1
               }
             }
           }
@@ -22076,6 +23351,10 @@
                     "description": "Alias for `slot_id`."
                   }
                 }
+              },
+              "example": {
+                "slot_id": 1,
+                "id": 1
               }
             }
           }
@@ -22544,6 +23823,22 @@
                     "description": "update-7 (NEW, migration 121): proof of the transfer. A `data:image/...;base64,` or `data:application/pdf;base64,` payload, a multipart file, or a path already uploaded. Aliases: `receipt`, `receipt_image`, `transfer_image`.\n\nOptional - a row is normally written the moment the sale is agreed, before any receipt exists. On an update: omit it to leave the stored file alone, send it EMPTY to take the file off the row. The 12MB ceiling on base64 payloads applies here too."
                   }
                 }
+              },
+              "example": {
+                "student_name": "string",
+                "item_name": "string",
+                "phone": "string",
+                "phone_country_code": "string",
+                "item_type": "course",
+                "item_id": 1,
+                "student_id": 1,
+                "amount": 0,
+                "currency": "EGP",
+                "channel": "whatsapp",
+                "status": "pending",
+                "note": "string",
+                "paid_at": "2026-01-01 10:00:00",
+                "transfer_receipt": "string"
               }
             }
           }
@@ -22767,6 +24062,23 @@
                     "description": "update-7 (NEW, migration 121): proof of the transfer. A `data:image/...;base64,` or `data:application/pdf;base64,` payload, a multipart file, or a path already uploaded. Aliases: `receipt`, `receipt_image`, `transfer_image`.\n\nOptional - a row is normally written the moment the sale is agreed, before any receipt exists. On an update: omit it to leave the stored file alone, send it EMPTY to take the file off the row. The 12MB ceiling on base64 payloads applies here too."
                   }
                 }
+              },
+              "example": {
+                "id": 1,
+                "student_name": "string",
+                "item_name": "string",
+                "phone": "string",
+                "phone_country_code": "string",
+                "item_type": "course",
+                "item_id": 1,
+                "student_id": 1,
+                "amount": 0,
+                "currency": "EGP",
+                "channel": "whatsapp",
+                "status": "pending",
+                "note": "string",
+                "paid_at": "2026-01-01 10:00:00",
+                "transfer_receipt": "string"
               }
             }
           }
@@ -22919,6 +24231,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -23387,6 +24702,22 @@
                     "description": "update-7 (NEW, migration 121): proof of the transfer. A `data:image/...;base64,` or `data:application/pdf;base64,` payload, a multipart file, or a path already uploaded. Aliases: `receipt`, `receipt_image`, `transfer_image`.\n\nOptional - a row is normally written the moment the sale is agreed, before any receipt exists. On an update: omit it to leave the stored file alone, send it EMPTY to take the file off the row. The 12MB ceiling on base64 payloads applies here too."
                   }
                 }
+              },
+              "example": {
+                "student_name": "string",
+                "item_name": "string",
+                "phone": "string",
+                "phone_country_code": "string",
+                "item_type": "course",
+                "item_id": 1,
+                "student_id": 1,
+                "amount": 0,
+                "currency": "EGP",
+                "channel": "whatsapp",
+                "status": "pending",
+                "note": "string",
+                "paid_at": "2026-01-01 10:00:00",
+                "transfer_receipt": "string"
               }
             }
           }
@@ -23610,6 +24941,23 @@
                     "description": "update-7 (NEW, migration 121): proof of the transfer. A `data:image/...;base64,` or `data:application/pdf;base64,` payload, a multipart file, or a path already uploaded. Aliases: `receipt`, `receipt_image`, `transfer_image`.\n\nOptional - a row is normally written the moment the sale is agreed, before any receipt exists. On an update: omit it to leave the stored file alone, send it EMPTY to take the file off the row. The 12MB ceiling on base64 payloads applies here too."
                   }
                 }
+              },
+              "example": {
+                "id": 1,
+                "student_name": "string",
+                "item_name": "string",
+                "phone": "string",
+                "phone_country_code": "string",
+                "item_type": "course",
+                "item_id": 1,
+                "student_id": 1,
+                "amount": 0,
+                "currency": "EGP",
+                "channel": "whatsapp",
+                "status": "pending",
+                "note": "string",
+                "paid_at": "2026-01-01 10:00:00",
+                "transfer_receipt": "string"
               }
             }
           }
@@ -23762,6 +25110,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -24510,6 +25861,20 @@
                     "default": 1
                   }
                 }
+              },
+              "example": {
+                "title_ar": "string",
+                "title_en": "string",
+                "subtitle_ar": "string",
+                "subtitle_en": "string",
+                "btn_text_ar": "string",
+                "btn_text_en": "string",
+                "media_ar": "string",
+                "media_en": "string",
+                "type": "image",
+                "link": "string",
+                "order_num": 1,
+                "is_active": 1
               }
             }
           }
@@ -24677,6 +26042,21 @@
                     "default": 1
                   }
                 }
+              },
+              "example": {
+                "id": 1,
+                "title_ar": "string",
+                "title_en": "string",
+                "subtitle_ar": "string",
+                "subtitle_en": "string",
+                "btn_text_ar": "string",
+                "btn_text_en": "string",
+                "media_ar": "string",
+                "media_en": "string",
+                "type": "image",
+                "link": "string",
+                "order_num": 1,
+                "is_active": 1
               }
             }
           }
@@ -24794,6 +26174,9 @@
                     "type": "integer"
                   }
                 }
+              },
+              "example": {
+                "id": 1
               }
             }
           }
@@ -24991,6 +26374,20 @@
                     ]
                   }
                 }
+              },
+              "example": {
+                "name": "string",
+                "password": "string",
+                "email": "string",
+                "phone": "string",
+                "age": 1,
+                "academic_year_id": 1,
+                "city_id": 1,
+                "school_id": 1,
+                "study_language": "string",
+                "image": "string",
+                "is_active": 0,
+                "is_email_verified": 0
               }
             }
           }
@@ -25086,6 +26483,21 @@
                     ]
                   }
                 }
+              },
+              "example": {
+                "id": 1,
+                "name": "string",
+                "password": "string",
+                "email": "string",
+                "phone": "string",
+                "age": 1,
+                "academic_year_id": 1,
+                "city_id": 1,
+                "school_id": 1,
+                "study_language": "string",
+                "image": "string",
+                "is_active": 0,
+                "is_email_verified": 0
               }
             }
           }
@@ -25171,6 +26583,19 @@
                     ]
                   }
                 }
+              },
+              "example": {
+                "name": "string",
+                "password": "string",
+                "email": "string",
+                "phone": "string",
+                "city_id": 1,
+                "image": "string",
+                "student_ids": [
+                  1
+                ],
+                "is_active": 0,
+                "is_email_verified": 0
               }
             }
           }
@@ -25256,6 +26681,20 @@
                     ]
                   }
                 }
+              },
+              "example": {
+                "id": 1,
+                "name": "string",
+                "password": "string",
+                "email": "string",
+                "phone": "string",
+                "city_id": 1,
+                "image": "string",
+                "student_ids": [
+                  1
+                ],
+                "is_active": 0,
+                "is_email_verified": 0
               }
             }
           }
@@ -25343,6 +26782,19 @@
                     "minLength": 6
                   }
                 }
+              },
+              "example": {
+                "name": "string",
+                "email": "string",
+                "phone": "string",
+                "phone_country_code": "string",
+                "image": "string",
+                "age": 1,
+                "city_id": 1,
+                "school_id": 1,
+                "academic_year_id": 1,
+                "study_language": "arabic",
+                "password": "string"
               }
             }
           }
