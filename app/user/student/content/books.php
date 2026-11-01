@@ -391,7 +391,7 @@ if (!function_exists('studentGetMySubscribedBooks')) {
         $totalRecords = (int)(mysqli_fetch_assoc($countRes)['total'] ?? 0);
 
         $sql = "
-            SELECT DISTINCT b.id, b.unit_id, b.subject_id, b.course_id, b.file_type, b.category, b.extension, b.link, b.file_path, b.allow_download, b.created_by_type, b.created_by_id, b.is_active, b.created_at,
+            SELECT DISTINCT b.id, b.unit_id, b.subject_id, b.course_id, b.file_type, b.category, b.extension, b.link, b.file_path, b.cover_image, b.allow_download, b.created_by_type, b.created_by_id, b.is_active, b.created_at,
                    COALESCE(bt.title, b.file_path) AS title, bt.description
             FROM course_books b
             LEFT JOIN course_books_translations bt ON b.id = bt.book_id AND bt.language_id = {$langId}
