@@ -7,7 +7,16 @@
   },
   "servers": [
     {
-      "url": "https://YOUR_HOST/brain-ixa"
+      "url": "https://camp-coding.online/brain-ixa",
+      "description": "Live"
+    },
+    {
+      "url": "{{base_url}}",
+      "description": "Whatever the Postman environment points at"
+    },
+    {
+      "url": "https://YOUR_HOST/brain-ixa",
+      "description": "Self-hosted"
     }
   ],
   "components": {
