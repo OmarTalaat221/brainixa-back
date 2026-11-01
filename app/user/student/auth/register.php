@@ -29,7 +29,17 @@ if (!function_exists('studentRegister')) {
         $schoolId = (isset($body['school_id']) && is_numeric($body['school_id']) && (int)$body['school_id'] > 0) ? (int)$body['school_id'] : null;
         $cityId = (isset($body['city_id']) && is_numeric($body['city_id']) && (int)$body['city_id'] > 0) ? (int)$body['city_id'] : null;
         $academicYearId = (isset($body['academic_year_id']) && is_numeric($body['academic_year_id']) && (int)$body['academic_year_id'] > 0) ? (int)$body['academic_year_id'] : null;
-        $image = !empty(trim($body['image'] ?? '')) ? trim($body['image']) : null;
+        // Handled exactly as the update-profile screen handles it: base64, a multipart file, or a
+        // path that has already been uploaded, all ending up as a path in the column. Sign-up used
+        // to take the field verbatim, so an app sending the picture the way every other screen
+        // sends one wrote a whole base64 payload into a column that holds a filename - which is
+        // why the picture only ever appeared after opening the profile screen a second time.
+        $imageInput = $body['image'] ?? $body['avatar'] ?? $body['photo'] ?? $body['profile_image'] ?? $body['picture'] ?? $body['file'] ?? null;
+        $imageFile = $_FILES['image'] ?? $_FILES['avatar'] ?? $_FILES['photo'] ?? $_FILES['profile_image'] ?? $_FILES['picture'] ?? $_FILES['file'] ?? null;
+        $image = null;
+        if ((is_string($imageInput) && trim($imageInput) !== '') || ($imageFile && !empty($imageFile['tmp_name']))) {
+            $image = process_image_input($imageInput, 'avatars', $imageFile) ?: null;
+        }
         $allowedLanguages = ['arabic', 'english', 'french'];
         $studyLanguage = strtolower(trim($body['study_language'] ?? 'arabic'));
         if (!in_array($studyLanguage, $allowedLanguages)) $studyLanguage = 'arabic';

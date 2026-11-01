@@ -16195,10 +16195,10 @@
     "/user/student/auth/register": {
       "post": {
         "tags": [
-          "update-4 / Student - Auth"
+          "update-7 / Student - Auth"
         ],
-        "summary": "update-4 (CHANGED): Student registration - email optional, no verification code, straight in",
-        "description": "update-4 (CHANGED): refused with `error_code: registration_disabled` while the `registration_enabled` setting is 0 (migration 074).\n\nChecked before anything is read or written, so a closed platform never half-creates an account and never sends a verification email for one that will not exist. Existing accounts are unaffected - only new sign-ups are closed. The message shown is the admin-editable `registration_disabled_message_ar` / `_en`.\n\nTeacher registration is deliberately NOT covered: a teacher account does not work until an admin approves it, so it is already gated by a person.\n\nupdate-4 (CHANGED): THE EMAIL IS OPTIONAL. `students.email` was NOT NULL with a UNIQUE key, which is why the form could not simply stop requiring it - an empty string would have been stored and the second student without an email would have collided with the first. Migration 095 makes the column nullable, because MySQL allows any number of NULLs in a UNIQUE index. Required now: `name` and `password`, plus EITHER an email OR a phone number - an account with neither would be created and immediately unreachable, so that case is refused with `error_code: email_or_phone_required`. `academic_year_id` and `study_language` were already optional in the handler; only the form was demanding them.\n\nupdate-4 (CHANGED): NO VERIFICATION CODE. Nothing is generated and nothing is sent. The row is written with `is_email_verified = 1` - not left at 0 - so that screens still reading the column do not show a permanent \"unverified\" badge against an account nobody will ever be asked to verify. The response no longer carries a `verification` object; it carries `requires_email_verification: false` (always) and the usual `tokens`, so the student is signed in by the act of signing up.\n\nupdate-4 (CHANGED): `default_phone_dial_code` in site_settings is seeded to 961 (Lebanon) by migration 095. The setting already existed and had never been given a value, so the hard-coded fallback behind it - Egypt's 20 - was what a number typed without a country code became.",
+        "summary": "MOVED FROM `update-4 / Student - Auth`. update-4 (CHANGED): Student registration - email optional, no verification code, straight in. update-7: a profile picture can be sent with the sign-up itself",
+        "description": "update-4 (CHANGED): refused with `error_code: registration_disabled` while the `registration_enabled` setting is 0 (migration 074).\n\nChecked before anything is read or written, so a closed platform never half-creates an account and never sends a verification email for one that will not exist. Existing accounts are unaffected - only new sign-ups are closed. The message shown is the admin-editable `registration_disabled_message_ar` / `_en`.\n\nTeacher registration is deliberately NOT covered: a teacher account does not work until an admin approves it, so it is already gated by a person.\n\nupdate-4 (CHANGED): THE EMAIL IS OPTIONAL. `students.email` was NOT NULL with a UNIQUE key, which is why the form could not simply stop requiring it - an empty string would have been stored and the second student without an email would have collided with the first. Migration 095 makes the column nullable, because MySQL allows any number of NULLs in a UNIQUE index. Required now: `name` and `password`, plus EITHER an email OR a phone number - an account with neither would be created and immediately unreachable, so that case is refused with `error_code: email_or_phone_required`. `academic_year_id` and `study_language` were already optional in the handler; only the form was demanding them.\n\nupdate-4 (CHANGED): NO VERIFICATION CODE. Nothing is generated and nothing is sent. The row is written with `is_email_verified = 1` - not left at 0 - so that screens still reading the column do not show a permanent \"unverified\" badge against an account nobody will ever be asked to verify. The response no longer carries a `verification` object; it carries `requires_email_verification: false` (always) and the usual `tokens`, so the student is signed in by the act of signing up.\n\nupdate-4 (CHANGED): `default_phone_dial_code` in site_settings is seeded to 961 (Lebanon) by migration 095. The setting already existed and had never been given a value, so the hard-coded fallback behind it - Egypt's 20 - was what a number typed without a country code became.\n\n=== update-7 ===\n\nThe account's picture can now be set AT SIGN-UP, in `image`, exactly as `PUT /user/student/auth/profile` already accepted it: a `data:image/...;base64,` payload, a multipart file, or a path that has already been uploaded. `avatar`, `photo`, `profile_image`, `picture` and `file` are accepted as aliases, in the body or as the multipart field name.\n\nThe field was technically read before this, but stored verbatim - an app sending a picture the way every other screen sends one wrote a whole base64 payload into a column that holds a filename, so the picture only appeared once the profile screen had been opened a second time to set it again. A caller that was already sending an uploaded path is unaffected: such a value still passes through unchanged.\n\nStill optional. An account with no picture is normal, and one can be added later from the profile screen.",
         "security": [],
         "responses": {
           "200": {
@@ -16207,6 +16207,77 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "password"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 6
+                  },
+                  "email": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Optional since update-4, but not together with an empty phone."
+                  },
+                  "phone": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "phone_country_code": {
+                    "type": "string",
+                    "description": "Aliases: `country_code`, `dial_code`. A number that already carries its own code wins over it."
+                  },
+                  "image": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "update-7: base64 data URL, an already-uploaded path, or a multipart file. Aliases: `avatar`, `photo`, `profile_image`, `picture`, `file`."
+                  },
+                  "age": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "school_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "city_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "academic_year_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "study_language": {
+                    "type": "string",
+                    "enum": [
+                      "arabic",
+                      "english",
+                      "french"
+                    ],
+                    "default": "arabic",
+                    "description": "An unrecognised value falls back to arabic."
+                  },
+                  "referral_code": {
+                    "type": "string",
+                    "nullable": true
+                  }
                 }
               }
             }
@@ -25511,6 +25582,9 @@
     },
     {
       "name": "update-7 / Admin / Cities"
+    },
+    {
+      "name": "update-7 / Student - Auth"
     }
   ]
 }
