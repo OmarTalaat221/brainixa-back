@@ -76,7 +76,8 @@ if (!function_exists('format_response_images')) {
             'cover_image', 'cover', 'attachment', 'attachment_url',
             'audio', 'audio_url', 'media', 'media_url',
             'certificate_file', 'certificate_path', 'certificate_url',
-            'banner', 'banner_url', 'doc', 'doc_url', 'document'
+            'banner', 'banner_url', 'doc', 'doc_url', 'document',
+            'transfer_receipt', 'receipt', 'receipt_image'
         ];
 
         foreach ($data as $k => $v) {
@@ -275,6 +276,54 @@ if (!function_exists('upload_audio_file')) {
         }
 
         return null;
+    }
+}
+
+if (!function_exists('process_receipt_input')) {
+    /**
+     * A file offered as proof of payment: an image or a PDF, as base64 or as an upload.
+     *
+     * process_image_input() covers the image half and refuses the other: a PDF arrives as
+     * `data:application/pdf;base64,` and its allow-list only names image, video and audio. A
+     * receipt is a photo of a screen as often as it is a bank's PDF, so both have to be taken -
+     * and nothing else, because the one thing this must never do is write an executable
+     * extension into a directory that is served back.
+     */
+    function process_receipt_input($input, string $subfolder = 'receipts', ?array $fileInput = null): ?string {
+        if (is_array($fileInput) && !empty($fileInput['tmp_name'])) {
+            $ext = strtolower(pathinfo($fileInput['name'] ?? '', PATHINFO_EXTENSION));
+            if ($ext === 'pdf') {
+                return upload_document_file($fileInput, $subfolder);
+            }
+            return upload_image_file($fileInput, $subfolder) ?? upload_document_file($fileInput, $subfolder);
+        }
+
+        if (is_string($input) && preg_match('/^data:application\/pdf;base64,/i', trim($input))) {
+            $input = trim($input);
+            $payload = base64_decode(substr($input, strpos($input, ',') + 1));
+            if ($payload === false) {
+                return null;
+            }
+
+            // The same ceiling process_image_input() applies, for the same reason: a data URI is
+            // ~4/3 the size of its payload, and without a limit one request can fill the disk.
+            if (strlen($payload) > 12 * 1024 * 1024) {
+                return null;
+            }
+
+            $targetDir = __DIR__ . '/../uploads/' . $subfolder . '/';
+            if (!file_exists($targetDir)) {
+                mkdir($targetDir, 0777, true);
+            }
+
+            $fileName = uniqid('doc_', true) . '.pdf';
+            if (file_put_contents($targetDir . $fileName, $payload)) {
+                return 'uploads/' . $subfolder . '/' . $fileName;
+            }
+            return null;
+        }
+
+        return process_image_input($input, $subfolder, $fileInput);
     }
 }
 

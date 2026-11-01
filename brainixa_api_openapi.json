@@ -22418,6 +22418,11 @@
                               "created_at": {
                                 "type": "string",
                                 "format": "date-time"
+                              },
+                              "transfer_receipt": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "update-7 (NEW, migration 121): absolute URL of the transfer proof - an image or a PDF - or null. Which one it is, is the extension's job to say; there is no preview that works for both, so a link is the honest way to show it."
                               }
                             }
                           }
@@ -22517,6 +22522,11 @@
                     "type": "string",
                     "format": "date-time",
                     "nullable": true
+                  },
+                  "transfer_receipt": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "update-7 (NEW, migration 121): proof of the transfer. A `data:image/...;base64,` or `data:application/pdf;base64,` payload, a multipart file, or a path already uploaded. Aliases: `receipt`, `receipt_image`, `transfer_image`.\n\nOptional - a row is normally written the moment the sale is agreed, before any receipt exists. On an update: omit it to leave the stored file alone, send it EMPTY to take the file off the row. The 12MB ceiling on base64 payloads applies here too."
                   }
                 }
               }
@@ -22620,6 +22630,11 @@
                             "created_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "transfer_receipt": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "update-7 (NEW, migration 121): absolute URL of the transfer proof - an image or a PDF - or null. Which one it is, is the extension's job to say; there is no preview that works for both, so a link is the honest way to show it."
                             }
                           }
                         }
@@ -22730,6 +22745,11 @@
                     "type": "string",
                     "format": "date-time",
                     "nullable": true
+                  },
+                  "transfer_receipt": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "update-7 (NEW, migration 121): proof of the transfer. A `data:image/...;base64,` or `data:application/pdf;base64,` payload, a multipart file, or a path already uploaded. Aliases: `receipt`, `receipt_image`, `transfer_image`.\n\nOptional - a row is normally written the moment the sale is agreed, before any receipt exists. On an update: omit it to leave the stored file alone, send it EMPTY to take the file off the row. The 12MB ceiling on base64 payloads applies here too."
                   }
                 }
               }
@@ -22833,6 +22853,11 @@
                             "created_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "transfer_receipt": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "update-7 (NEW, migration 121): absolute URL of the transfer proof - an image or a PDF - or null. Which one it is, is the extension's job to say; there is no preview that works for both, so a link is the honest way to show it."
                             }
                           }
                         }
@@ -23017,6 +23042,11 @@
                             "created_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "transfer_receipt": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "update-7 (NEW, migration 121): absolute URL of the transfer proof - an image or a PDF - or null. Which one it is, is the extension's job to say; there is no preview that works for both, so a link is the honest way to show it."
                             }
                           }
                         }
@@ -23231,6 +23261,11 @@
                               "created_at": {
                                 "type": "string",
                                 "format": "date-time"
+                              },
+                              "transfer_receipt": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "update-7 (NEW, migration 121): absolute URL of the transfer proof - an image or a PDF - or null. Which one it is, is the extension's job to say; there is no preview that works for both, so a link is the honest way to show it."
                               }
                             }
                           }
@@ -23330,6 +23365,11 @@
                     "type": "string",
                     "format": "date-time",
                     "nullable": true
+                  },
+                  "transfer_receipt": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "update-7 (NEW, migration 121): proof of the transfer. A `data:image/...;base64,` or `data:application/pdf;base64,` payload, a multipart file, or a path already uploaded. Aliases: `receipt`, `receipt_image`, `transfer_image`.\n\nOptional - a row is normally written the moment the sale is agreed, before any receipt exists. On an update: omit it to leave the stored file alone, send it EMPTY to take the file off the row. The 12MB ceiling on base64 payloads applies here too."
                   }
                 }
               }
@@ -23433,6 +23473,11 @@
                             "created_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "transfer_receipt": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "update-7 (NEW, migration 121): absolute URL of the transfer proof - an image or a PDF - or null. Which one it is, is the extension's job to say; there is no preview that works for both, so a link is the honest way to show it."
                             }
                           }
                         }
@@ -23543,6 +23588,11 @@
                     "type": "string",
                     "format": "date-time",
                     "nullable": true
+                  },
+                  "transfer_receipt": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "update-7 (NEW, migration 121): proof of the transfer. A `data:image/...;base64,` or `data:application/pdf;base64,` payload, a multipart file, or a path already uploaded. Aliases: `receipt`, `receipt_image`, `transfer_image`.\n\nOptional - a row is normally written the moment the sale is agreed, before any receipt exists. On an update: omit it to leave the stored file alone, send it EMPTY to take the file off the row. The 12MB ceiling on base64 payloads applies here too."
                   }
                 }
               }
@@ -23646,6 +23696,11 @@
                             "created_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "transfer_receipt": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "update-7 (NEW, migration 121): absolute URL of the transfer proof - an image or a PDF - or null. Which one it is, is the extension's job to say; there is no preview that works for both, so a link is the honest way to show it."
                             }
                           }
                         }
@@ -23830,6 +23885,11 @@
                             "created_at": {
                               "type": "string",
                               "format": "date-time"
+                            },
+                            "transfer_receipt": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "update-7 (NEW, migration 121): absolute URL of the transfer proof - an image or a PDF - or null. Which one it is, is the extension's job to say; there is no preview that works for both, so a link is the honest way to show it."
                             }
                           }
                         }

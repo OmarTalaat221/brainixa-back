@@ -175,20 +175,21 @@ if (!function_exists('teacherCreateManualSale')) {
         $currency = strtoupper(trim($body['currency'] ?? 'EGP')) ?: 'EGP';
         $note = trim($body['note'] ?? '');
         $paidAt = trim($body['paid_at'] ?? '') ?: null;
+        $receipt = manual_sale_receipt_value($body) ?: null;
 
         $stmt = mysqli_prepare($con, "
             INSERT INTO manual_sales
                 (student_name, phone, phone_country_code, item_type, item_name, item_id,
-                 channel, status, amount, currency, student_id, note, created_by_type, created_by_id, paid_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'teacher', ?, ?)
+                 channel, status, amount, currency, student_id, note, transfer_receipt, created_by_type, created_by_id, paid_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'teacher', ?, ?)
         ");
         if (!$stmt) {
             return ['status' => 'error', 'message' => 'Failed to prepare manual sale insert: ' . mysqli_error($con)];
         }
         mysqli_stmt_bind_param(
-            $stmt, "sssssissdsisis",
+            $stmt, "sssssissdsissis",
             $studentName, $phone, $dial, $itemType, $itemName, $itemId,
-            $channel, $status, $amount, $currency, $studentId, $note, $teacherId, $paidAt
+            $channel, $status, $amount, $currency, $studentId, $note, $receipt, $teacherId, $paidAt
         );
 
         if (!mysqli_stmt_execute($stmt)) {
@@ -266,6 +267,14 @@ if (!function_exists('teacherUpdateManualSale')) {
                 $types .= 'i';
                 $values[] = (int)$body[$ref] > 0 ? (int)$body[$ref] : null;
             }
+        }
+
+        // A receipt sent empty really does come off the row; one not mentioned is left alone.
+        $receipt = manual_sale_receipt_value($body);
+        if ($receipt !== null) {
+            $fields[] = 'transfer_receipt = ?';
+            $types .= 's';
+            $values[] = $receipt !== '' ? $receipt : null;
         }
 
         if (empty($fields)) {

@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/functions.php';
+require_once __DIR__ . '/../../../helpers/upload.php';
 
 /**
  * The manual sales sheet.
@@ -50,6 +51,48 @@ if (!function_exists('manual_sale_split_phone')) {
     }
 }
 
+if (!function_exists('manual_sale_receipt_value')) {
+    /**
+     * The transfer proof, as a stored path.
+     *
+     * Returns null when the caller said nothing about it, and '' when they sent it empty - the
+     * two mean different things on an edit: leave the file alone, versus take it off the row.
+     * An image or a PDF, base64 or multipart, in that order of likelihood.
+     */
+    function manual_sale_receipt_value(array $body): ?string {
+        $keys = ['transfer_receipt', 'receipt', 'receipt_image', 'transfer_image'];
+
+        $input = null;
+        $sent = false;
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $body)) {
+                $sent = true;
+                $input = $body[$key];
+                break;
+            }
+        }
+
+        $file = null;
+        foreach ($keys as $key) {
+            if (!empty($_FILES[$key]['tmp_name'])) {
+                $file = $_FILES[$key];
+                $sent = true;
+                break;
+            }
+        }
+
+        if (!$sent) {
+            return null;
+        }
+
+        if ($file === null && (!is_string($input) || trim($input) === '')) {
+            return '';
+        }
+
+        return process_receipt_input($input, 'receipts', $file) ?? '';
+    }
+}
+
 if (!function_exists('manual_sale_row')) {
     function manual_sale_row(array $row): array {
         $row['id'] = (int)$row['id'];
@@ -63,7 +106,9 @@ if (!function_exists('manual_sale_row')) {
         $number = trim((string)($row['phone'] ?? ''));
         $row['phone_full'] = $number === '' ? '' : ($dial !== '' ? '+' . $dial . $number : $number);
 
-        return $row;
+        // transfer_receipt holds a path; whoever reads the sheet needs something they can open.
+        // Every other file column in this API is sent the same way.
+        return format_response_images($row);
     }
 }
 
@@ -225,20 +270,21 @@ if (!function_exists('adminCreateManualSale')) {
         $note = trim($body['note'] ?? '');
         $paidAt = trim($body['paid_at'] ?? '') ?: null;
         $createdBy = (int)($adminData['id'] ?? 0) ?: null;
+        $receipt = manual_sale_receipt_value($body) ?: null;
 
         $stmt = mysqli_prepare($con, "
             INSERT INTO manual_sales
                 (student_name, phone, phone_country_code, item_type, item_name, item_id,
-                 channel, status, amount, currency, student_id, note, created_by_id, paid_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 channel, status, amount, currency, student_id, note, transfer_receipt, created_by_id, paid_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         if (!$stmt) {
             return ['status' => 'error', 'message' => 'Failed to prepare manual sale insert: ' . mysqli_error($con)];
         }
         mysqli_stmt_bind_param(
-            $stmt, "sssssissdsisis",
+            $stmt, "sssssissdsissis",
             $studentName, $phone, $dial, $itemType, $itemName, $itemId,
-            $channel, $status, $amount, $currency, $studentId, $note, $createdBy, $paidAt
+            $channel, $status, $amount, $currency, $studentId, $note, $receipt, $createdBy, $paidAt
         );
 
         if (!mysqli_stmt_execute($stmt)) {
@@ -311,6 +357,14 @@ if (!function_exists('adminUpdateManualSale')) {
                 $types .= 'i';
                 $values[] = (int)$body[$ref] > 0 ? (int)$body[$ref] : null;
             }
+        }
+
+        // A receipt sent empty really does come off the row; one not mentioned is left alone.
+        $receipt = manual_sale_receipt_value($body);
+        if ($receipt !== null) {
+            $fields[] = 'transfer_receipt = ?';
+            $types .= 's';
+            $values[] = $receipt !== '' ? $receipt : null;
         }
 
         if (empty($fields)) {
