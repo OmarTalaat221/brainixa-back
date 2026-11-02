@@ -238,17 +238,19 @@ if (!function_exists('studentListAvailableExams')) {
             $extraConditions[] = "course_id = ?";
             $params[] = $reqCourseId;
             $types .= "i";
-
-            // unit_id in the request already scopes to one specific unit below, so none of this
-            // applies then; otherwise pick one of the 3 states described above.
-            if ($unitId <= 0) {
-                if ($onlyUnitExams) {
-                    $extraConditions[] = "unit_id IS NOT NULL";
-                } elseif (!$includeUnitExams) {
-                    $extraConditions[] = "unit_id IS NULL";
-                }
-                // else ($includeUnitExams && !$onlyUnitExams): combined - no extra restriction.
+        }
+        // A unit exam only ever surfaces when the request explicitly names that unit, or opts
+        // into it via include_unit_exams/with_unit_exams - otherwise it would leak into the
+        // general "my exams" tab (no course_id filter at all) as well as into a course_id-scoped
+        // request, both of which are meant to show only the whole-course/standalone/subject exams.
+        // Same 3 states described above, now applied regardless of whether course_id was passed.
+        if ($unitId <= 0) {
+            if ($onlyUnitExams) {
+                $extraConditions[] = "unit_id IS NOT NULL";
+            } elseif (!$includeUnitExams) {
+                $extraConditions[] = "unit_id IS NULL";
             }
+            // else ($includeUnitExams && !$onlyUnitExams): combined - no extra restriction.
         }
         if ($reqSubjectId > 0) {
             $extraConditions[] = "subject_id = ?";
