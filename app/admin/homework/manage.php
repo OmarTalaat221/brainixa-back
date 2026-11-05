@@ -165,11 +165,20 @@ if (!function_exists('adminCreateHomework')) {
             return ['status' => 'error', 'message' => 'Failed to create homework: ' . mysqli_error($con)];
         }
 
-        return [
+        $homeworkId = mysqli_insert_id($con);
+
+        $notEligible = [];
+        if (!empty($body['student_ids']) && is_array($body['student_ids'])) {
+            homework_sync_target_students($con, $homeworkId, $body['student_ids'], $notEligible);
+        }
+
+        $response = [
             'status' => 'success',
             'message' => app_text($con, 'تم إنشاء الواجب بنجاح.', 'Homework created successfully'),
-            'data' => admin_homework_row($con, mysqli_insert_id($con)),
+            'data' => admin_homework_row($con, $homeworkId),
         ];
+
+        return homework_targeting_notice($con, $response, $notEligible);
     }
 }
 
@@ -230,11 +239,18 @@ if (!function_exists('adminUpdateHomework')) {
             mysqli_stmt_execute($uStmt);
         }
 
-        return [
+        $notEligible = [];
+        if (array_key_exists('student_ids', $body) && is_array($body['student_ids'])) {
+            homework_sync_target_students($con, $id, $body['student_ids'], $notEligible);
+        }
+
+        $response = [
             'status' => 'success',
             'message' => app_text($con, 'تم تحديث الواجب بنجاح.', 'Homework updated successfully'),
             'data' => admin_homework_row($con, $id),
         ];
+
+        return homework_targeting_notice($con, $response, $notEligible);
     }
 }
 

@@ -35,16 +35,32 @@ if (!function_exists('studentListHomework')) {
         $placeholders = implode(',', array_fill(0, count($subjectIds), '?'));
         $types = str_repeat('i', count($subjectIds));
 
-        $countSql = "SELECT COUNT(*) AS total FROM homework WHERE is_active = 1 AND subject_id IN ({$placeholders})";
+        // Targeting (migration 126) narrows an audience, it never widens one: the subject filter
+        // above still decides what this student could see at all, and this only removes homework
+        // that was aimed at other people. A homework with no targeting rows has no row in
+        // homework_students, so NOT EXISTS keeps it visible to everyone exactly as before.
+        $targetClause = '';
+        $targetParams = [];
+        $targetTypes = '';
+        if (homework_students_table_exists($con)) {
+            $targetClause = " AND (
+                NOT EXISTS (SELECT 1 FROM homework_students hs WHERE hs.homework_id = homework.id)
+                OR EXISTS (SELECT 1 FROM homework_students hs2 WHERE hs2.homework_id = homework.id AND hs2.student_id = ?)
+            )";
+            $targetParams = [$studentId];
+            $targetTypes = 'i';
+        }
+
+        $countSql = "SELECT COUNT(*) AS total FROM homework WHERE is_active = 1 AND subject_id IN ({$placeholders}){$targetClause}";
         $countStmt = mysqli_prepare($con, $countSql);
-        mysqli_stmt_bind_param($countStmt, $types, ...$subjectIds);
+        mysqli_stmt_bind_param($countStmt, $types . $targetTypes, ...array_merge($subjectIds, $targetParams));
         mysqli_stmt_execute($countStmt);
         $totalRecords = (int)(mysqli_fetch_assoc(mysqli_stmt_get_result($countStmt))['total'] ?? 0);
 
-        $sql = "SELECT id FROM homework WHERE is_active = 1 AND subject_id IN ({$placeholders}) ORDER BY id DESC LIMIT ? OFFSET ?";
+        $sql = "SELECT id FROM homework WHERE is_active = 1 AND subject_id IN ({$placeholders}){$targetClause} ORDER BY id DESC LIMIT ? OFFSET ?";
         $stmt = mysqli_prepare($con, $sql);
-        $bindTypes = $types . "ii";
-        $bindParams = array_merge($subjectIds, [$limit, $offset]);
+        $bindTypes = $types . $targetTypes . "ii";
+        $bindParams = array_merge($subjectIds, $targetParams, [$limit, $offset]);
         mysqli_stmt_bind_param($stmt, $bindTypes, ...$bindParams);
         mysqli_stmt_execute($stmt);
         $res = mysqli_stmt_get_result($stmt);
@@ -90,6 +106,19 @@ if (!function_exists('studentSubmitHomework')) {
         }
         if (!in_array((int)$hwRow['subject_id'], $subjectIds)) {
             return ['status' => 'error', 'message' => 'You are not subscribed to this homework\'s subject'];
+        }
+
+        // Checked here and not only in the listing: a homework a student was never shown must not
+        // become submittable just because its id was guessed or kept from an older response.
+        if (!homework_student_may_see($con, $homeworkId, $studentId)) {
+            return [
+                'status' => 'error',
+                'message' => app_text(
+                    $con,
+                    'هذا الواجب مخصَّص لطلاب آخرين.',
+                    'This homework was set for other students.'
+                ),
+            ];
         }
 
         $fileInput = $body['file'] ?? $body['file_path'] ?? null;

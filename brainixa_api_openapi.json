@@ -1,8 +1,8 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Brainixa Backend - Session Changelog API (update-11)",
-    "version": "11.0.0",
+    "title": "Brainixa Backend - Session Changelog API (update-12)",
+    "version": "12.0.0",
     "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109.\n\n`update-7` is the live-class batch and the loose ends around it: Zoom played inside the platform for all three kinds of live meeting (the weekly class sessions, the dated package appointments and the 1:1 consultations), a manual-sales sheet for admin and teacher, a chat contact directory read from the real tables instead of Firebase's stale copy, and hero slides as a table of their own.\n\nupdate-7 also turns the books library into a STORE. No products table was added: `course_books.file_type` carries `physical` for an item with no file, so every existing book endpoint sells one unchanged. Clients branch on that field rather than assuming a file exists.\n\n`update-8` (FIX): GET /student/exams leaked unit-scoped exams into the general listing whenever the request carried no `course_id` at all - the documented \"whole-course exams only by default\" rule was only ever enforced when `course_id` was explicitly passed. A student's general exams tab (no filters) could show a unit exam mixed in with the whole-course/standalone ones. The same default - `unit_id IS NULL` unless `include_unit_exams`/`with_unit_exams` says otherwise - now applies regardless of whether `course_id` is present. No response shape change, no new field; strictly fewer rows come back from the general (no-filter) call than before. A unit's own exams remain fully visible from inside that unit's content (GET /student/courses .../units, unaffected - that endpoint always filtered by `unit_id` directly)."
   },
   "servers": [
@@ -27749,6 +27749,116 @@
           }
         }
       }
+    },
+    "/teacher/homework/students": {
+      "get": {
+        "tags": [
+          "update-12 / Teacher / Homework"
+        ],
+        "summary": "update-12 (NEW): the students a homework in this subject would reach",
+        "description": "update-12 (NEW): the students a homework in this subject would reach - the list to pick from when aiming one at only some of them.\n\nOne aggregate query mirroring the paths a subscription can grant a subject by: the subject named directly, a course that belongs to it, or a teacher who teaches it - each arriving either on the subscription or on the subscription code behind it.\n\nIt is a picker, not an authority. The save path re-checks the handful of students actually chosen against the real access function and warns about any who cannot see the subject, so a name this list gets wrong is caught there rather than quietly acted on.\n\nQuery: `subject_id` (required), `search`, `limit` (default 200, capped at 500).",
+        "parameters": [
+          {
+            "name": "subject_id",
+            "in": "query",
+            "required": true,
+            "description": "The homework's subject.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Filters by student name, email or phone.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Default 200, capped at 500.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/homework/students": {
+      "get": {
+        "tags": [
+          "update-12 / Admin / Homework"
+        ],
+        "summary": "update-12 (NEW): the students a homework in this subject would reach",
+        "description": "update-12 (NEW): the students a homework in this subject would reach - the list to pick from when aiming one at only some of them.\n\nOne aggregate query mirroring the paths a subscription can grant a subject by: the subject named directly, a course that belongs to it, or a teacher who teaches it - each arriving either on the subscription or on the subscription code behind it.\n\nIt is a picker, not an authority. The save path re-checks the handful of students actually chosen against the real access function and warns about any who cannot see the subject, so a name this list gets wrong is caught there rather than quietly acted on.\n\nQuery: `subject_id` (required), `search`, `limit` (default 200, capped at 500).",
+        "parameters": [
+          {
+            "name": "subject_id",
+            "in": "query",
+            "required": true,
+            "description": "The homework's subject.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Filters by student name, email or phone.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Default 200, capped at 500.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "tags": [
@@ -28179,6 +28289,18 @@
     {
       "name": "update-11 / Student / Class Ratings",
       "description": "update-11: rating a class after attending it."
+    },
+    {
+      "name": "update-12 / Teacher / Homework",
+      "description": "update-12: homework aimed at particular students, set by a teacher."
+    },
+    {
+      "name": "update-12 / Admin / Homework",
+      "description": "update-12: the same targeting from the admin's side."
+    },
+    {
+      "name": "update-12 / Student / Homework",
+      "description": "update-12: a student sees untargeted homework plus the homework aimed at them."
     }
   ]
 }

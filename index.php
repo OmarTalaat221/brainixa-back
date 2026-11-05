@@ -1561,6 +1561,17 @@ $routes = [
     // academy running a subject without a teacher account had no way to post an assignment.
     [
         "method" => "GET",
+        "path" => "/brain-ixa/admin/homework/students",
+        "handler" => function ($con) {
+            include_once "./middlewares/adminauthmiddleware.php";
+            include_once "./app/admin/homework/manage.php";
+            $adminData = adminAuthMiddleware();
+            requirePermission($con, $adminData, 'manage_homework');
+            return homeworkEligibleStudents($con);
+        },
+    ],
+    [
+        "method" => "GET",
         "path" => "/brain-ixa/admin/homework",
         "handler" => function ($con) {
             include_once "./middlewares/adminauthmiddleware.php";
@@ -1627,6 +1638,18 @@ $routes = [
     ],
 
     // Teacher Homework Routes --------------------------------
+    // The students a homework in this subject would reach - the list to pick from when aiming it
+    // at only some of them. Read-only, and the same answer on both sides of the desk.
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/teacher/homework/students",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/teacher/homework/manage.php";
+            teacherAuthMiddleware();
+            return homeworkEligibleStudents($con);
+        },
+    ],
     [
         "method" => "GET",
         "path" => "/brain-ixa/teacher/homework",
