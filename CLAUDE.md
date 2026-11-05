@@ -73,6 +73,11 @@ Done:
   `admin@brainixa.cloud`, `teacher1..3@brainixa.cloud`, `student1..3@brainixa.cloud`. There is
   also a question bank of 7 folders / 169 questions, owned across the admin and teachers 1-3.
   Regenerate a seed only if the database is rebuilt.
+- Zoom: `ZOOM_INTEGRATION.md` is the integration guide handed to the mobile developer (three
+  live-class paths, endpoints, entitlement rules, account limits). `seed_zoom_test_student2005.sql`
+  prepares the Zoom test account `student2005@example.com` / `12345678` — package
+  `package-zoom-test-2026` with `teacher1@brainixa.cloud`, booked and open slots, consultations,
+  and weekly `class_sessions`. Idempotent; run it on the server by hand.
 
 Pending / known gaps:
 - Admin and teacher dashboards are rebuilt locally but **not committed or pushed** yet
