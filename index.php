@@ -2142,6 +2142,27 @@ $routes = [
             return teacherMarkSessionAttendance($con, $teacherData);
         },
     ],
+    // Teacher Session Ratings - their own classes only, scoped inside the handler.
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/teacher/session-ratings",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/content/session_ratings/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherListSessionRatings($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/teacher/session-ratings/summary",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/content/session_ratings/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherSessionRatingsSummary($con, $teacherData);
+        },
+    ],
     [
         "method" => "GET",
         "path" => "/brain-ixa/teacher/sessions/attendance/stats",
@@ -2289,6 +2310,27 @@ $routes = [
         },
     ],
 
+    // Student Session Ratings -----------------------------------
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/student/sessions/ratable",
+        "handler" => function ($con) {
+            include_once "./middlewares/studentauthmiddleware.php";
+            include_once "./app/content/session_ratings/manage.php";
+            $studentData = studentAuthMiddleware();
+            return studentListRatableSessions($con, $studentData);
+        },
+    ],
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/student/sessions/rate",
+        "handler" => function ($con) {
+            include_once "./middlewares/studentauthmiddleware.php";
+            include_once "./app/content/session_ratings/manage.php";
+            $studentData = studentAuthMiddleware();
+            return studentRateSession($con, $studentData);
+        },
+    ],
     // Student Attendance Routes (Section 10) --------------------------------
     [
         "method" => "POST",
@@ -5149,6 +5191,88 @@ $routes = [
                 $adminData = adminAuthMiddleware();
                 requirePermission($con, $adminData, 'manage_attendance');
                 return adminListAttendanceExceptionRequests($con);
+            },
+        ],
+
+        // Admin Attendance Reports ----------------------------------
+        // Reading back what the live classes have been recording all along. Nothing here writes.
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/attendance/report/overview",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/attendance/reports.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_attendance');
+                return adminAttendanceReportOverview($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/attendance/report/students",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/attendance/reports.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_attendance');
+                return adminAttendanceReportStudents($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/attendance/report/teachers",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/attendance/reports.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_attendance');
+                return adminAttendanceReportTeachers($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/attendance/report/sessions",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/attendance/reports.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_attendance');
+                return adminAttendanceReportSessions($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/attendance/report/export",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/attendance/reports.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_attendance');
+                return adminExportAttendanceReport($con);
+            },
+        ],
+
+        // Admin Session Ratings -------------------------------------
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/session-ratings",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/content/session_ratings/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_reports');
+                return adminListSessionRatings($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/session-ratings/summary",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/content/session_ratings/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_reports');
+                return adminSessionRatingsSummary($con);
             },
         ],
         [

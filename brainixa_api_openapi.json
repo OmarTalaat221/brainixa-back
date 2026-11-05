@@ -1,8 +1,8 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Brainixa Backend - Session Changelog API (update-10)",
-    "version": "10.0.0",
+    "title": "Brainixa Backend - Session Changelog API (update-11)",
+    "version": "11.0.0",
     "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109.\n\n`update-7` is the live-class batch and the loose ends around it: Zoom played inside the platform for all three kinds of live meeting (the weekly class sessions, the dated package appointments and the 1:1 consultations), a manual-sales sheet for admin and teacher, a chat contact directory read from the real tables instead of Firebase's stale copy, and hero slides as a table of their own.\n\nupdate-7 also turns the books library into a STORE. No products table was added: `course_books.file_type` carries `physical` for an item with no file, so every existing book endpoint sells one unchanged. Clients branch on that field rather than assuming a file exists.\n\n`update-8` (FIX): GET /student/exams leaked unit-scoped exams into the general listing whenever the request carried no `course_id` at all - the documented \"whole-course exams only by default\" rule was only ever enforced when `course_id` was explicitly passed. A student's general exams tab (no filters) could show a unit exam mixed in with the whole-course/standalone ones. The same default - `unit_id IS NULL` unless `include_unit_exams`/`with_unit_exams` says otherwise - now applies regardless of whether `course_id` is present. No response shape change, no new field; strictly fewer rows come back from the general (no-filter) call than before. A unit's own exams remain fully visible from inside that unit's content (GET /student/courses .../units, unaffected - that endpoint always filtered by `unit_id` directly)."
   },
   "servers": [
@@ -27033,6 +27033,722 @@
           }
         }
       }
+    },
+    "/admin/attendance/report/overview": {
+      "get": {
+        "tags": [
+          "update-11 / Admin / Attendance Reports"
+        ],
+        "summary": "update-11 (NEW): attendance totals for a date range",
+        "description": "update-11 (NEW): attendance, read back as a report.\n\nEvery live class has been writing attendance for both sides for a long time - the students in `session_attendance`, the teacher in `teacher_session_attendance`, the second of which is what the wallet's earnings and deductions are computed from. The admin could read none of it: the only attendance endpoint was the list of EXCEPTION requests, which is the excuses rather than the attendance. A teacher could see their own classes and a parent could see their own child, and nobody could see the school.\n\nNothing here writes. It needs no migration, because the data was always being recorded.\n\nThe figures come from the attendance rows, not from the weekly `class_sessions` template: the template says a class is meant to happen on Mondays, the rows say what happened. `present` and `late` both count as attendance; only `absent` does not. An excused absence is reported separately from an unexcused one, because only one of the two costs a teacher money.\n\nReturns the two sides separately - `data.students` and `data.teachers`, each with present / late / absent / excused_absent / minutes_late / attendance_rate / people - plus `data.sessions_held`, the number of distinct (class, day) pairs recorded. The two sides are never added together: a school where the students turn up and the teachers do not has a different problem from the reverse, and one blended rate hides which it is.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/attendance/report/students": {
+      "get": {
+        "tags": [
+          "update-11 / Admin / Attendance Reports"
+        ],
+        "summary": "update-11 (NEW): attendance per student",
+        "description": "update-11 (NEW): attendance, read back as a report.\n\nEvery live class has been writing attendance for both sides for a long time - the students in `session_attendance`, the teacher in `teacher_session_attendance`, the second of which is what the wallet's earnings and deductions are computed from. The admin could read none of it: the only attendance endpoint was the list of EXCEPTION requests, which is the excuses rather than the attendance. A teacher could see their own classes and a parent could see their own child, and nobody could see the school.\n\nNothing here writes. It needs no migration, because the data was always being recorded.\n\nThe figures come from the attendance rows, not from the weekly `class_sessions` template: the template says a class is meant to happen on Mondays, the rows say what happened. `present` and `late` both count as attendance; only `absent` does not. An excused absence is reported separately from an unexcused one, because only one of the two costs a teacher money.\n\nOne row per student: total classes, present, late, absent, excused_absent, unexcused_absent, minutes_late and attendance_rate.\n\nOrdered by absences first - a report whose job is to show who is missing classes should open on the people who are missing them.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "1-based page number.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows per page, capped at 100.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Filters by student name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/attendance/report/teachers": {
+      "get": {
+        "tags": [
+          "update-11 / Admin / Attendance Reports"
+        ],
+        "summary": "update-11 (NEW): attendance per teacher",
+        "description": "update-11 (NEW): attendance, read back as a report.\n\nEvery live class has been writing attendance for both sides for a long time - the students in `session_attendance`, the teacher in `teacher_session_attendance`, the second of which is what the wallet's earnings and deductions are computed from. The admin could read none of it: the only attendance endpoint was the list of EXCEPTION requests, which is the excuses rather than the attendance. A teacher could see their own classes and a parent could see their own child, and nobody could see the school.\n\nNothing here writes. It needs no migration, because the data was always being recorded.\n\nThe figures come from the attendance rows, not from the weekly `class_sessions` template: the template says a class is meant to happen on Mondays, the rows say what happened. `present` and `late` both count as attendance; only `absent` does not. An excused absence is reported separately from an unexcused one, because only one of the two costs a teacher money.\n\nOne row per teacher: total classes, present, late, absent, excused_absent, unexcused_absent, minutes_late and attendance_rate. Teacher rows also carry `earnings`, summed from the same attendance rows the wallet was credited from.\n\nOrdered by absences first - a report whose job is to show who is missing classes should open on the people who are missing them.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "1-based page number.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows per page, capped at 100.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Filters by teacher name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/attendance/report/sessions": {
+      "get": {
+        "tags": [
+          "update-11 / Admin / Attendance Reports"
+        ],
+        "summary": "update-11 (NEW): attendance per class that happened",
+        "description": "update-11 (NEW): attendance, read back as a report.\n\nEvery live class has been writing attendance for both sides for a long time - the students in `session_attendance`, the teacher in `teacher_session_attendance`, the second of which is what the wallet's earnings and deductions are computed from. The admin could read none of it: the only attendance endpoint was the list of EXCEPTION requests, which is the excuses rather than the attendance. A teacher could see their own classes and a parent could see their own child, and nobody could see the school.\n\nNothing here writes. It needs no migration, because the data was always being recorded.\n\nThe figures come from the attendance rows, not from the weekly `class_sessions` template: the template says a class is meant to happen on Mondays, the rows say what happened. `present` and `late` both count as attendance; only `absent` does not. An excused absence is reported separately from an unexcused one, because only one of the two costs a teacher money.\n\nOne row per (class, day): the teacher, the subject and course, how many of its students turned up, and the teacher's own status that day.\n\nThe list of occurrences is the UNION of the two attendance tables rather than either one. A class where the teacher was marked and no student was still happened, and so did one where the students were marked and the teacher's row never landed.\n\n`teacher_status` is NULL when no row exists at all. Not recorded is deliberately not reported as absent: only one of those two costs a teacher money.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "1-based page number.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows per page, capped at 100.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/attendance/report/export": {
+      "get": {
+        "tags": [
+          "update-11 / Admin / Attendance Reports"
+        ],
+        "summary": "update-11 (NEW): the same three reports as a spreadsheet",
+        "description": "Returns a file, not JSON, over the same date range the screen is filtered to.\n\n`type` picks which: `students` (the default), `teachers` or `sessions`.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "description": "students | teachers | sessions.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Same filter as the matching report.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/student/sessions/ratable": {
+      "get": {
+        "tags": [
+          "update-11 / Student / Class Ratings"
+        ],
+        "summary": "update-11 (NEW): the classes this student may still rate",
+        "description": "update-11 (NEW): a rating for ONE live class, left by a student who was in it.\n\n`teacher_ratings` and `course_ratings` already existed and neither can answer this, because neither has a session in it: a student rates their teacher once, and that single number has to stand for a whole term. It cannot say that last Tuesday went badly.\n\nWhat is rated is one OCCURRENCE. `class_sessions` is a weekly template, so the key is (session_id, occurrence_date, student_id) - the same pair the attendance tables use, which is what makes \"who rated the class they were actually in\" a join rather than a guess.\n\nNeeds migration 125. Until it has run these answer with nothing rather than failing.\n\nClasses they were marked `present` or `late` for, that have already happened, and that they have not rated yet. Absences are excluded: a rating of a class nobody attended is not feedback about the class.",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "1-based page number.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows per page, capped at 100.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/student/sessions/rate": {
+      "post": {
+        "tags": [
+          "update-11 / Student / Class Ratings"
+        ],
+        "summary": "update-11 (NEW): rate a class",
+        "description": "update-11 (NEW): a rating for ONE live class, left by a student who was in it.\n\n`teacher_ratings` and `course_ratings` already existed and neither can answer this, because neither has a session in it: a student rates their teacher once, and that single number has to stand for a whole term. It cannot say that last Tuesday went badly.\n\nWhat is rated is one OCCURRENCE. `class_sessions` is a weekly template, so the key is (session_id, occurrence_date, student_id) - the same pair the attendance tables use, which is what makes \"who rated the class they were actually in\" a join rather than a guess.\n\nNeeds migration 125. Until it has run these answer with nothing rather than failing.\n\nBody: `session_id`, `occurrence_date` (YYYY-MM-DD), `rating` (1-5) and an optional `comment`.\n\nThe attendance row is checked server-side before the rating is accepted - rating a class you were not in is refused, whatever the request claims. A second submission for the same class EDITS the first rather than adding a vote, which the unique key enforces underneath.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "session_id",
+                  "occurrence_date",
+                  "rating"
+                ],
+                "properties": {
+                  "session_id": {
+                    "type": "integer"
+                  },
+                  "occurrence_date": {
+                    "type": "string",
+                    "example": "2026-11-09"
+                  },
+                  "rating": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5
+                  },
+                  "comment": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/session-ratings": {
+      "get": {
+        "tags": [
+          "update-11 / Admin / Class Ratings"
+        ],
+        "summary": "update-11 (NEW): the ratings themselves - every teacher",
+        "description": "update-11 (NEW): a rating for ONE live class, left by a student who was in it.\n\n`teacher_ratings` and `course_ratings` already existed and neither can answer this, because neither has a session in it: a student rates their teacher once, and that single number has to stand for a whole term. It cannot say that last Tuesday went badly.\n\nWhat is rated is one OCCURRENCE. `class_sessions` is a weekly template, so the key is (session_id, occurrence_date, student_id) - the same pair the attendance tables use, which is what makes \"who rated the class they were actually in\" a join rather than a guess.\n\nNeeds migration 125. Until it has run these answer with nothing rather than failing.\n\nFilters: the date range, `teacher_id`, `rating`, `with_comment=1` (the comments are the part worth reading, and a screenful of bare 5s buries them) and `search` over teacher name, student name and comment text.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "1-based page number.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows per page, capped at 100.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": false,
+            "description": "Narrow to one teacher. Ignored on the teacher endpoint, which is already scoped.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "rating",
+            "in": "query",
+            "required": false,
+            "description": "1-5.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "with_comment",
+            "in": "query",
+            "required": false,
+            "description": "1 to return only ratings that carry a written comment.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Teacher name, student name or comment text.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/session-ratings/summary": {
+      "get": {
+        "tags": [
+          "update-11 / Admin / Class Ratings"
+        ],
+        "summary": "update-11 (NEW): averages per teacher - every teacher",
+        "description": "update-11 (NEW): a rating for ONE live class, left by a student who was in it.\n\n`teacher_ratings` and `course_ratings` already existed and neither can answer this, because neither has a session in it: a student rates their teacher once, and that single number has to stand for a whole term. It cannot say that last Tuesday went badly.\n\nWhat is rated is one OCCURRENCE. `class_sessions` is a weekly template, so the key is (session_id, occurrence_date, student_id) - the same pair the attendance tables use, which is what makes \"who rated the class they were actually in\" a join rather than a guess.\n\nNeeds migration 125. Until it has run these answer with nothing rather than failing.\n\nOne row per teacher: the average over the window, how many classes were rated, and the distribution of stars. The spread is returned alongside the mean on purpose - a teacher averaging 4 from all 4s is not the same teacher as one averaging 4 from 5s and 2s.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/session-ratings": {
+      "get": {
+        "tags": [
+          "update-11 / Teacher / Class Ratings"
+        ],
+        "summary": "update-11 (NEW): the ratings themselves - their own classes only, scoped server-side",
+        "description": "update-11 (NEW): a rating for ONE live class, left by a student who was in it.\n\n`teacher_ratings` and `course_ratings` already existed and neither can answer this, because neither has a session in it: a student rates their teacher once, and that single number has to stand for a whole term. It cannot say that last Tuesday went badly.\n\nWhat is rated is one OCCURRENCE. `class_sessions` is a weekly template, so the key is (session_id, occurrence_date, student_id) - the same pair the attendance tables use, which is what makes \"who rated the class they were actually in\" a join rather than a guess.\n\nNeeds migration 125. Until it has run these answer with nothing rather than failing.\n\nFilters: the date range, `teacher_id`, `rating`, `with_comment=1` (the comments are the part worth reading, and a screenful of bare 5s buries them) and `search` over teacher name, student name and comment text.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "1-based page number.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows per page, capped at 100.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": false,
+            "description": "Narrow to one teacher. Ignored on the teacher endpoint, which is already scoped.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "rating",
+            "in": "query",
+            "required": false,
+            "description": "1-5.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "with_comment",
+            "in": "query",
+            "required": false,
+            "description": "1 to return only ratings that carry a written comment.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Teacher name, student name or comment text.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teacher/session-ratings/summary": {
+      "get": {
+        "tags": [
+          "update-11 / Teacher / Class Ratings"
+        ],
+        "summary": "update-11 (NEW): averages per teacher - their own classes only, scoped server-side",
+        "description": "update-11 (NEW): a rating for ONE live class, left by a student who was in it.\n\n`teacher_ratings` and `course_ratings` already existed and neither can answer this, because neither has a session in it: a student rates their teacher once, and that single number has to stand for a whole term. It cannot say that last Tuesday went badly.\n\nWhat is rated is one OCCURRENCE. `class_sessions` is a weekly template, so the key is (session_id, occurrence_date, student_id) - the same pair the attendance tables use, which is what makes \"who rated the class they were actually in\" a join rather than a guess.\n\nNeeds migration 125. Until it has run these answer with nothing rather than failing.\n\nOne row per teacher: the average over the window, how many classes were rated, and the distribution of stars. The spread is returned alongside the mean on purpose - a teacher averaging 4 from all 4s is not the same teacher as one averaging 4 from 5s and 2s.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "tags": [
@@ -27447,6 +28163,22 @@
     {
       "name": "update-10 / Teacher / Consultations",
       "description": "update-10: consultation slots from a calendar, and an optional hourly price."
+    },
+    {
+      "name": "update-11 / Admin / Attendance Reports",
+      "description": "update-11: the attendance the live classes were already recording, readable at last."
+    },
+    {
+      "name": "update-11 / Admin / Class Ratings",
+      "description": "update-11: how each live class was rated by the students in it."
+    },
+    {
+      "name": "update-11 / Teacher / Class Ratings",
+      "description": "update-11: a teacher's own class ratings."
+    },
+    {
+      "name": "update-11 / Student / Class Ratings",
+      "description": "update-11: rating a class after attending it."
     }
   ]
 }
