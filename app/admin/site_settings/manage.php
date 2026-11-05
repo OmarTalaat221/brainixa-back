@@ -431,41 +431,44 @@ if (!function_exists('getPublicLandingConfig')) {
 
         // The carousel. Stored as one JSON array, each entry {image, caption_ar, caption_en}.
         //
-        // It goes out under two keys on purpose. `promo_gallery_slides` carries the captions;
-        // `promo_gallery_items` stays the plain list of URLs it has always been, so a copy of the
-        // website that has not been redeployed yet keeps rendering pictures instead of crashing
-        // on an object where it expects a string.
+        // The served field is deliberately named `src`, NOT `image`. Every response on the way out
+        // runs through format_response_images, which rewrites any value under an `image` key - and
+        // any bare string in a plain list that ends in a picture extension - into an absolute URL
+        // on THIS server. These pictures live on the website, not on the API, so that rewrite
+        // turns '/promo/journey.jpg' into a 404. `src` is not one of the keys it touches, and an
+        // array of objects is not a list of bare strings, so the path is served exactly as stored
+        // - relative paths stay relative to the website, absolute URLs stay untouched.
+        //
+        // `promo_gallery_items` is deliberately NOT resolved here. It passes through as the raw
+        // JSON string it is stored as, which a copy of the website expecting an array of URLs
+        // reads as "not configured" and answers by showing the pictures it shipped with. That is
+        // the right thing for it to show until it is redeployed - and far better than five broken
+        // images, which is what a list of rewritten paths would have given it.
         $galleryRaw = json_decode($rawSettings['promo_gallery_items'] ?? '[]', true);
-        $gallerySlides = is_array($galleryRaw)
+        $settings['promo_gallery_slides'] = is_array($galleryRaw)
             ? array_values(array_filter(array_map(
                 function ($item) use ($langCode) {
                     // Accepts a bare URL string as well as the object, so neither side has to be
                     // redeployed in step with the other.
                     if (!is_array($item)) {
                         $plain = trim((string)$item);
-                        return $plain !== '' ? ['image' => $plain, 'caption' => ''] : null;
+                        return $plain !== '' ? ['src' => $plain, 'caption' => ''] : null;
                     }
 
-                    $url = trim($item['image'] ?? $item['url'] ?? '');
+                    $url = trim($item['image'] ?? $item['url'] ?? $item['src'] ?? '');
                     if ($url === '') return null;
 
                     $ar = trim($item['caption_ar'] ?? '');
                     $en = trim($item['caption_en'] ?? '');
 
                     return [
-                        'image' => $url,
+                        'src' => $url,
                         'caption' => $langCode === 'en' ? ($en ?: $ar) : ($ar ?: $en),
                     ];
                 },
                 $galleryRaw
             )))
             : [];
-
-        $settings['promo_gallery_slides'] = $gallerySlides;
-        $settings['promo_gallery_items'] = array_map(
-            function ($slide) { return $slide['image']; },
-            $gallerySlides
-        );
 
         $bannersRes = mysqli_query($con, "SELECT id, title_ar, title_en, image_ar, image_en, link, type FROM banners WHERE is_active = 1 ORDER BY id DESC");
         $banners = [];
