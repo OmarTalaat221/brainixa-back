@@ -711,6 +711,10 @@ if (!function_exists('adminListBookPurchaseRequests')) {
                 cb.link AS book_cover_image,
                 cb.price AS book_price,
                 cb.allow_download AS book_allow_download,
+                -- Added so a client can tell a shipped item from a downloadable one without
+                -- inferring it from an absent file_path. Purely additive: every field that was
+                -- here before is still here, under the same name.
+                cb.file_type AS book_file_type,
                 cb.subject_id AS subject_id,
                 subt.name AS subject_name
 
