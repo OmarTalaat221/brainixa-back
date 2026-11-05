@@ -36,6 +36,94 @@ if (!function_exists('consultation_slots_has_meeting_link')) {
     }
 }
 
+if (!function_exists('consultation_slots_has_price')) {
+    /**
+     * Migration 124 adds `price_per_hour`. Until it has run, a consultation simply has no price -
+     * which is how every one of them behaved before this existed.
+     */
+    function consultation_slots_has_price($con): bool {
+        static $cached = null;
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $res = @mysqli_query($con, "SHOW COLUMNS FROM `consultation_slots` LIKE 'price_per_hour'");
+
+        return $cached = (bool)($res && mysqli_num_rows($res) > 0);
+    }
+}
+
+if (!function_exists('consultation_price_input')) {
+    /**
+     * The hourly price as it arrives from a form: optional, and blank is not zero.
+     *
+     * An empty box means "no price set" and must stay NULL; a typed 0 means the hour is free on
+     * purpose. Collapsing the two would make every untouched consultation look deliberately free.
+     * Returns false when the value is there but unusable, so the caller can refuse it instead of
+     * silently storing nothing.
+     */
+    function consultation_price_input(array $body) {
+        $raw = $body['price_per_hour'] ?? $body['hourly_price'] ?? $body['price'] ?? null;
+
+        if ($raw === null || $raw === '' || (is_string($raw) && trim($raw) === '')) {
+            return null;
+        }
+
+        if (!is_numeric($raw)) {
+            return false;
+        }
+
+        $value = (float)$raw;
+
+        return $value < 0 ? false : round($value, 2);
+    }
+}
+
+if (!function_exists('consultation_explicit_dates')) {
+    /**
+     * An explicit list of dates, as picked on a calendar.
+     *
+     * The weekly form - pick weekdays, pick an end date, repeat - can only describe a run that
+     * falls on the same weekday every week. Most consultation timetables do not: a week is skipped
+     * for a holiday, two days are added before an exam. Those are ordinary dates, and this is how
+     * they arrive.
+     *
+     * Returns false on a value that is not a date, so a typo becomes a refusal rather than a
+     * silently shorter run than the admin picked.
+     */
+    function consultation_explicit_dates(array $body) {
+        $raw = $body['dates'] ?? $body['slot_dates'] ?? null;
+
+        if ($raw === null || $raw === '') {
+            return [];
+        }
+        if (!is_array($raw)) {
+            $raw = [$raw];
+        }
+
+        $dates = [];
+        foreach ($raw as $item) {
+            $value = trim((string)$item);
+            if ($value === '') continue;
+
+            $timestamp = strtotime($value);
+            if ($timestamp === false) {
+                return false;
+            }
+
+            $formatted = date('Y-m-d', $timestamp);
+            if (!in_array($formatted, $dates, true)) {
+                $dates[] = $formatted;
+            }
+        }
+
+        sort($dates);
+
+        return $dates;
+    }
+}
+
 if (!function_exists('consultation_slots_has_live_state')) {
     /**
      * Migration 108 adds `started_at` and `ended_at`. Until it has run, a consultation simply
@@ -78,7 +166,8 @@ if (!function_exists('get_consultation_slot_details')) {
         $linkColumn = consultation_slots_has_meeting_link($con) ? ", meeting_link" : "";
         $liveColumns = consultation_slots_has_live_state($con) ? ", started_at, ended_at" : "";
         $zoomColumns = consultation_slots_has_zoom($con) ? ", zoom_meeting_id, zoom_password" : "";
-        $stmt = mysqli_prepare($con, "SELECT id, teacher_id, subject_id, type, meeting_type, slot_date, slot_time, notes, is_booked, student_id, booked_at, status, is_active, created_at{$linkColumn}{$liveColumns}{$zoomColumns} FROM consultation_slots WHERE id = ? LIMIT 1");
+        $priceColumn = consultation_slots_has_price($con) ? ", price_per_hour" : "";
+        $stmt = mysqli_prepare($con, "SELECT id, teacher_id, subject_id, type, meeting_type, slot_date, slot_time, notes, is_booked, student_id, booked_at, status, is_active, created_at{$linkColumn}{$liveColumns}{$zoomColumns}{$priceColumn} FROM consultation_slots WHERE id = ? LIMIT 1");
         if (!$stmt) return null;
         mysqli_stmt_bind_param($stmt, "i", $slotId);
         mysqli_stmt_execute($stmt);
@@ -101,6 +190,13 @@ if (!function_exists('get_consultation_slot_details')) {
             $row['type_label'] = 'استشارة تربوية';
             $row['type_ar'] = 'تربوية';
         }
+
+        // Null, not 0: a consultation nobody priced is not a free one, and the screen has to be
+        // able to tell them apart. `is_free` answers the question the UI actually asks.
+        $row['price_per_hour'] = isset($row['price_per_hour']) && $row['price_per_hour'] !== null
+            ? (float)$row['price_per_hour']
+            : null;
+        $row['is_free'] = $row['price_per_hour'] !== null && $row['price_per_hour'] <= 0;
 
         $row['meeting_link'] = $row['meeting_link'] ?? null;
         $row['started_at'] = $row['started_at'] ?? null;
@@ -320,19 +416,39 @@ if (!function_exists('teacherCreateConsultationSlot')) {
             return ['status' => 'error', 'message' => trans('slot_date_time_required')];
         }
 
-        // The link is only written where migration 107 has run, so the create still works on a
-        // database that has not had it.
-        $meetingLink = trim((string)($body['meeting_link'] ?? '')) ?: null;
-        $withLink = consultation_slots_has_meeting_link($con);
-
-        $stmt = $withLink
-            ? mysqli_prepare($con, "INSERT INTO consultation_slots (teacher_id, subject_id, type, meeting_type, slot_date, slot_time, notes, meeting_link, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available')")
-            : mysqli_prepare($con, "INSERT INTO consultation_slots (teacher_id, subject_id, type, meeting_type, slot_date, slot_time, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'available')");
-        if ($withLink) {
-            mysqli_stmt_bind_param($stmt, "iissssss", $teacherId, $subjectId, $type, $meetingType, $slotDate, $slotTime, $notes, $meetingLink);
-        } else {
-            mysqli_stmt_bind_param($stmt, "iisssss", $teacherId, $subjectId, $type, $meetingType, $slotDate, $slotTime, $notes);
+        $price = consultation_price_input($body);
+        if ($price === false) {
+            return ['status' => 'error', 'message' => trans('invalid_consultation_price')];
         }
+
+        // The link is only written where migration 107 has run, and the price only where 124 has,
+        // so the create still works on a database that has had neither. The column list is built
+        // rather than branched: two optional columns is four hand-written statements, and the
+        // fourth is the one nobody tests.
+        $meetingLink = trim((string)($body['meeting_link'] ?? '')) ?: null;
+
+        $columns = ['teacher_id', 'subject_id', 'type', 'meeting_type', 'slot_date', 'slot_time', 'notes'];
+        $types = 'iisssss';
+        $values = [$teacherId, $subjectId, $type, $meetingType, $slotDate, $slotTime, $notes];
+
+        if (consultation_slots_has_meeting_link($con)) {
+            $columns[] = 'meeting_link';
+            $types .= 's';
+            $values[] = $meetingLink;
+        }
+        if (consultation_slots_has_price($con)) {
+            $columns[] = 'price_per_hour';
+            $types .= 'd';
+            $values[] = $price;
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($columns), '?'));
+        $stmt = mysqli_prepare($con, "INSERT INTO consultation_slots (" . implode(', ', $columns) . ", status) VALUES ({$placeholders}, 'available')");
+        if (!$stmt) {
+            return ['status' => 'error', 'message' => 'Failed to create slot: ' . mysqli_error($con)];
+        }
+
+        mysqli_stmt_bind_param($stmt, $types, ...$values);
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => 'Failed to create slot: ' . mysqli_error($con)];
         }
@@ -363,7 +479,15 @@ if (!function_exists('create_recurring_consultation_slots_core')) {
                 $days[] = $normalized;
             }
         }
-        if (empty($days)) {
+        // Dates picked on a calendar are the primary way now. They need not fall on the same
+        // weekday, need not repeat, and need no end date. The weekday + end_date form still works
+        // exactly as it did, for every caller already sending it.
+        $explicitDates = consultation_explicit_dates($body);
+        if ($explicitDates === false) {
+            return ['status' => 'error', 'message' => trans('invalid_consultation_date')];
+        }
+
+        if (empty($days) && empty($explicitDates)) {
             return ['status' => 'error', 'message' => trans('at_least_one_day_required')];
         }
 
@@ -387,42 +511,65 @@ if (!function_exists('create_recurring_consultation_slots_core')) {
             return ['status' => 'error', 'message' => trans('slot_time_required')];
         }
 
-        $endDateStr = !empty($body['end_date']) ? date('Y-m-d', strtotime($body['end_date'])) : null;
-        if (empty($endDateStr)) {
-            return ['status' => 'error', 'message' => trans('end_date_required')];
+        $price = consultation_price_input($body);
+        if ($price === false) {
+            return ['status' => 'error', 'message' => trans('invalid_consultation_price')];
         }
 
         $today = get_request_now();
         $todayStr = $today->format('Y-m-d');
-        if ($endDateStr < $todayStr) {
-            return ['status' => 'error', 'message' => trans('end_date_must_be_in_future')];
-        }
-
         $maxEndDateStr = (clone $today)->modify('+180 days')->format('Y-m-d');
-        if ($endDateStr > $maxEndDateStr) {
-            return ['status' => 'error', 'message' => trans('end_date_too_far')];
-        }
 
-        // For every selected weekday, walk from today (or that weekday's next occurrence)
-        // in 7-day steps up to end_date inclusive — same day-name resolution approach as
-        // get_session_calculated_date() for class_sessions, just repeated until the end date
-        // instead of stopping at the first occurrence.
-        $datesToCreate = [];
-        foreach ($days as $dayName) {
-            $cursor = clone $today;
-            if (strcasecmp($today->format('l'), $dayName) !== 0) {
-                $cursor->modify("next {$dayName}");
+        if (!empty($explicitDates)) {
+            // The same window the weekly form is held to - a slot in the past can never be booked,
+            // and one beyond six months is a timetable nobody has written yet. Refused by name
+            // rather than quietly dropped: an admin who picked twelve dates and got nine would
+            // have no way to tell which three went missing.
+            foreach ($explicitDates as $picked) {
+                if ($picked < $todayStr) {
+                    return ['status' => 'error', 'message' => trans('end_date_must_be_in_future')];
+                }
+                if ($picked > $maxEndDateStr) {
+                    return ['status' => 'error', 'message' => trans('end_date_too_far')];
+                }
             }
 
-            while ($cursor->format('Y-m-d') <= $endDateStr) {
-                $datesToCreate[] = $cursor->format('Y-m-d');
-                $cursor = clone $cursor;
-                $cursor->modify('+7 days');
+            $datesToCreate = $explicitDates;
+        } else {
+            $endDateStr = !empty($body['end_date']) ? date('Y-m-d', strtotime($body['end_date'])) : null;
+            if (empty($endDateStr)) {
+                return ['status' => 'error', 'message' => trans('end_date_required')];
             }
-        }
 
-        $datesToCreate = array_values(array_unique($datesToCreate));
-        sort($datesToCreate);
+            if ($endDateStr < $todayStr) {
+                return ['status' => 'error', 'message' => trans('end_date_must_be_in_future')];
+            }
+
+            if ($endDateStr > $maxEndDateStr) {
+                return ['status' => 'error', 'message' => trans('end_date_too_far')];
+            }
+
+            // For every selected weekday, walk from today (or that weekday's next occurrence)
+            // in 7-day steps up to end_date inclusive — same day-name resolution approach as
+            // get_session_calculated_date() for class_sessions, just repeated until the end date
+            // instead of stopping at the first occurrence.
+            $datesToCreate = [];
+            foreach ($days as $dayName) {
+                $cursor = clone $today;
+                if (strcasecmp($today->format('l'), $dayName) !== 0) {
+                    $cursor->modify("next {$dayName}");
+                }
+
+                while ($cursor->format('Y-m-d') <= $endDateStr) {
+                    $datesToCreate[] = $cursor->format('Y-m-d');
+                    $cursor = clone $cursor;
+                    $cursor->modify('+7 days');
+                }
+            }
+
+            $datesToCreate = array_values(array_unique($datesToCreate));
+            sort($datesToCreate);
+        }
 
         if (empty($datesToCreate)) {
             return ['status' => 'error', 'message' => trans('no_dates_in_range')];
@@ -454,15 +601,30 @@ if (!function_exists('create_recurring_consultation_slots_core')) {
         $meetingLink = trim((string)($body['meeting_link'] ?? '')) ?: null;
         $withLink = consultation_slots_has_meeting_link($con);
 
-        $insertStmt = $withLink
-            ? mysqli_prepare($con, "INSERT INTO consultation_slots (teacher_id, subject_id, type, meeting_type, slot_date, slot_time, notes, meeting_link, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available')")
-            : mysqli_prepare($con, "INSERT INTO consultation_slots (teacher_id, subject_id, type, meeting_type, slot_date, slot_time, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'available')");
+        // Built rather than branched, for the same reason as the single-slot create: two optional
+        // columns would otherwise mean four hand-written statements.
+        $withPrice = consultation_slots_has_price($con);
+
+        $columns = ['teacher_id', 'subject_id', 'type', 'meeting_type', 'slot_date', 'slot_time', 'notes'];
+        $types = 'iisssss';
+        if ($withLink) {
+            $columns[] = 'meeting_link';
+            $types .= 's';
+        }
+        if ($withPrice) {
+            $columns[] = 'price_per_hour';
+            $types .= 'd';
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($columns), '?'));
+        $insertStmt = mysqli_prepare($con, "INSERT INTO consultation_slots (" . implode(', ', $columns) . ", status) VALUES ({$placeholders}, 'available')");
+
         foreach ($newDates as $slotDate) {
-            if ($withLink) {
-                mysqli_stmt_bind_param($insertStmt, "iissssss", $teacherId, $subjectId, $type, $meetingType, $slotDate, $slotTime, $notes, $meetingLink);
-            } else {
-                mysqli_stmt_bind_param($insertStmt, "iisssss", $teacherId, $subjectId, $type, $meetingType, $slotDate, $slotTime, $notes);
-            }
+            $values = [$teacherId, $subjectId, $type, $meetingType, $slotDate, $slotTime, $notes];
+            if ($withLink) $values[] = $meetingLink;
+            if ($withPrice) $values[] = $price;
+
+            mysqli_stmt_bind_param($insertStmt, $types, ...$values);
             if (mysqli_stmt_execute($insertStmt)) {
                 $createdSlots[] = ['id' => mysqli_insert_id($con), 'slot_date' => $slotDate, 'slot_time' => $slotTime];
             }

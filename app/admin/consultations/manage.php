@@ -126,6 +126,18 @@ if (!function_exists('adminUpdateConsultationSlot')) {
             $params[] = trim((string)$body['meeting_link']) ?: null;
             $types .= "s";
         }
+        // The hourly price. Sending an empty value clears it back to "no price set", which is
+        // not the same as pricing the hour at zero - so the key being present is what matters,
+        // not whether it carries a number.
+        if ((array_key_exists('price_per_hour', $body) || array_key_exists('price', $body)) && consultation_slots_has_price($con)) {
+            $priceVal = consultation_price_input($body);
+            if ($priceVal === false) {
+                return ['status' => 'error', 'message' => trans('invalid_consultation_price')];
+            }
+            $updateFields[] = "price_per_hour = ?";
+            $params[] = $priceVal;
+            $types .= "d";
+        }
         if (array_key_exists('subject_id', $body)) {
             $updateFields[] = "subject_id = ?";
             $params[] = $body['subject_id'] ? (int)$body['subject_id'] : null;
