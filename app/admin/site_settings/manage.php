@@ -387,26 +387,85 @@ if (!function_exists('getPublicLandingConfig')) {
             $settings[$flagKey] = $rawSettings[$flagKey] ?? '1';
         }
 
-        foreach (['promo_offer_title', 'promo_offer_subtitle', 'promo_video_title', 'promo_video_subtitle'] as $textKey) {
+        // Every line of copy in the three sections, not only the headings. All of it used to live
+        // in the website's translation files, so changing the discount, a badge or a button meant
+        // a developer and a deploy. An empty key means the website keeps the wording it shipped
+        // with, so an installation that has never touched these reads exactly as it did.
+        $promoTextKeys = [
+            'promo_offer_badge', 'promo_offer_amount', 'promo_offer_title', 'promo_offer_subtitle',
+            'promo_offer_cta', 'promo_offer_image_alt',
+            'promo_video_title', 'promo_video_subtitle', 'promo_video_cta',
+            'promo_gallery_title', 'promo_gallery_subtitle',
+        ];
+
+        foreach ($promoTextKeys as $textKey) {
             $settings[$textKey] = $langCode === 'en'
                 ? ($rawSettings[$textKey . '_en'] ?? $rawSettings[$textKey . '_ar'] ?? '')
                 : ($rawSettings[$textKey . '_ar'] ?? $rawSettings[$textKey . '_en'] ?? '');
         }
 
-        // One JSON array rather than a fixed set of columns, exactly like the announcement bar,
-        // so the carousel can hold as many pictures as the admin wants.
-        $galleryItems = json_decode($rawSettings['promo_gallery_items'] ?? '[]', true);
-        $settings['promo_gallery_items'] = is_array($galleryItems)
-            ? array_values(array_filter(array_map(
-                function ($item) {
-                    // Accepts both a bare URL string and {image, alt}, so the shape the dashboard
-                    // sends can grow without the website needing to be redeployed to read it.
-                    $url = is_array($item) ? trim($item['image'] ?? $item['url'] ?? '') : trim((string)$item);
-                    return $url !== '' ? $url : null;
+        // The two short lists: the pills under the offer, and the ticks beside the video. One
+        // JSON array each, text_ar/text_en per entry - the same shape as the announcement bar, so
+        // the admin can add or drop a line without a column being added for it.
+        $promoList = function ($raw) use ($langCode) {
+            $items = json_decode($raw ?? '[]', true);
+            if (!is_array($items)) return [];
+
+            return array_values(array_filter(array_map(
+                function ($item) use ($langCode) {
+                    if (!is_array($item)) {
+                        $plain = trim((string)$item);
+                        return $plain !== '' ? $plain : null;
+                    }
+                    $ar = trim($item['text_ar'] ?? '');
+                    $en = trim($item['text_en'] ?? '');
+                    $picked = $langCode === 'en' ? ($en ?: $ar) : ($ar ?: $en);
+                    return $picked !== '' ? $picked : null;
                 },
-                $galleryItems
+                $items
+            )));
+        };
+
+        $settings['promo_offer_pills'] = $promoList($rawSettings['promo_offer_pills'] ?? '[]');
+        $settings['promo_video_points'] = $promoList($rawSettings['promo_video_points'] ?? '[]');
+
+        // The carousel. Stored as one JSON array, each entry {image, caption_ar, caption_en}.
+        //
+        // It goes out under two keys on purpose. `promo_gallery_slides` carries the captions;
+        // `promo_gallery_items` stays the plain list of URLs it has always been, so a copy of the
+        // website that has not been redeployed yet keeps rendering pictures instead of crashing
+        // on an object where it expects a string.
+        $galleryRaw = json_decode($rawSettings['promo_gallery_items'] ?? '[]', true);
+        $gallerySlides = is_array($galleryRaw)
+            ? array_values(array_filter(array_map(
+                function ($item) use ($langCode) {
+                    // Accepts a bare URL string as well as the object, so neither side has to be
+                    // redeployed in step with the other.
+                    if (!is_array($item)) {
+                        $plain = trim((string)$item);
+                        return $plain !== '' ? ['image' => $plain, 'caption' => ''] : null;
+                    }
+
+                    $url = trim($item['image'] ?? $item['url'] ?? '');
+                    if ($url === '') return null;
+
+                    $ar = trim($item['caption_ar'] ?? '');
+                    $en = trim($item['caption_en'] ?? '');
+
+                    return [
+                        'image' => $url,
+                        'caption' => $langCode === 'en' ? ($en ?: $ar) : ($ar ?: $en),
+                    ];
+                },
+                $galleryRaw
             )))
             : [];
+
+        $settings['promo_gallery_slides'] = $gallerySlides;
+        $settings['promo_gallery_items'] = array_map(
+            function ($slide) { return $slide['image']; },
+            $gallerySlides
+        );
 
         $bannersRes = mysqli_query($con, "SELECT id, title_ar, title_en, image_ar, image_en, link, type FROM banners WHERE is_active = 1 ORDER BY id DESC");
         $banners = [];
