@@ -505,9 +505,14 @@ if (!function_exists('question_bank_duplicate_into_exam')) {
      *
      * The copy inherits the EXAM's course, unit and subject - the bank original has none of them.
      */
-    function question_bank_duplicate_into_exam($con, int $bankQuestionId, int $examId, array $examRow, int $orderNum): int {
+    function question_bank_duplicate_into_exam($con, int $bankQuestionId, int $examId, array $examRow, int $orderNum, ?string &$failure = null): int {
+        $failure = null;
+
         $src = mysqli_fetch_assoc(mysqli_query($con, "SELECT question_type, question_image, score, is_active FROM questions WHERE id = {$bankQuestionId} AND is_bank = 1 LIMIT 1"));
-        if (!$src) return 0;
+        if (!$src) {
+            $failure = 'the bank question no longer exists';
+            return 0;
+        }
 
         $courseId = !empty($examRow['course_id']) ? (int)$examRow['course_id'] : null;
         $unitId = !empty($examRow['unit_id']) ? (int)$examRow['unit_id'] : null;
@@ -519,10 +524,16 @@ if (!function_exists('question_bank_duplicate_into_exam')) {
         $isActive = (int)$src['is_active'];
 
         $stmt = mysqli_prepare($con, "INSERT INTO questions (exam_id, is_bank, bank_folder_id, course_id, unit_id, subject_id, question_type, question_image, order_num, score, is_active, created_by_type, created_by_id) SELECT ?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?, created_by_type, created_by_id FROM questions WHERE id = ?");
-        if (!$stmt) return 0;
+        if (!$stmt) {
+            // Swallowing this is what made the failure impossible to explain from outside: the
+            // screen said "no question could be added" and the reason died right here.
+            $failure = mysqli_error($con) ?: 'the insert could not be prepared';
+            return 0;
+        }
 
         mysqli_stmt_bind_param($stmt, "iiiissidii", $examId, $courseId, $unitId, $subjectId, $qType, $qImage, $orderNum, $score, $isActive, $bankQuestionId);
         if (!mysqli_stmt_execute($stmt)) {
+            $failure = mysqli_stmt_error($stmt) ?: mysqli_error($con) ?: 'the insert was refused';
             mysqli_stmt_close($stmt);
             return 0;
         }
@@ -607,6 +618,54 @@ if (!function_exists('questionBankCopyToExam')) {
             return json_error(app_text($con, 'الامتحان ده مش موجود.', 'That exam does not exist.'), 404);
         }
 
+        // An exam can outlive the course it belongs to. `course_exams` has no foreign key to
+        // `courses`, so deleting a course leaves its exams behind pointing at an id that is gone -
+        // while `questions.course_id` DOES have that key. Every insert into such an exam is then
+        // refused by the database, and the exam can never hold a question again, however many
+        // times an admin ticks the boxes.
+        //
+        // Checked here, before anything is attempted, so the screen can say what is actually
+        // wrong instead of reporting that the questions could not be copied. The same goes for a
+        // deleted unit: the unit key is ON DELETE SET NULL, which clears the exam's own column but
+        // does nothing for a row being inserted now.
+        $missing = [];
+
+        $examCourseId = (int)($examRow['course_id'] ?? 0);
+        if ($examCourseId > 0 && !mysqli_fetch_assoc(mysqli_query($con, "SELECT id FROM courses WHERE id = {$examCourseId} LIMIT 1"))) {
+            $missing[] = app_text(
+                $con,
+                'الكورس المرتبط بالامتحان ده (رقم ' . $examCourseId . ') مش موجود - يبدو إنه اتمسح والامتحان فضل مكانه.',
+                'The course this exam belongs to (id ' . $examCourseId . ') no longer exists - it looks deleted, and the exam was left behind.'
+            );
+        }
+
+        $examUnitId = (int)($examRow['unit_id'] ?? 0);
+        if ($examUnitId > 0 && !mysqli_fetch_assoc(mysqli_query($con, "SELECT id FROM units WHERE id = {$examUnitId} LIMIT 1"))) {
+            $missing[] = app_text(
+                $con,
+                'الوحدة المرتبطة بالامتحان ده (رقم ' . $examUnitId . ') مش موجودة.',
+                'The unit this exam belongs to (id ' . $examUnitId . ') no longer exists.'
+            );
+        }
+
+        if ($missing) {
+            return [
+                'status' => 'success',
+                'severity' => 'warning',
+                'message' => implode(' ', $missing) . ' ' . app_text(
+                    $con,
+                    'عشان كده مفيش سؤال ينفع يتضاف للامتحان ده، والطالب أصلًا مش بيشوفه. امسح الامتحان أو اعمله من جديد تحت كورس موجود.',
+                    'That is why no question can be added to this exam, and why no student can reach it either. Delete the exam, or recreate it under a course that exists.'
+                ),
+                'data' => [
+                    'copied_question_ids' => [],
+                    'exam_is_orphaned' => true,
+                    'missing_course_id' => $examCourseId,
+                    'missing_unit_id' => $examUnitId,
+                ],
+            ];
+        }
+
         $nextRow = mysqli_fetch_assoc(mysqli_query($con, "SELECT COALESCE(MAX(order_num), 0) + 1 AS next_order FROM questions WHERE exam_id = {$examId}"));
         $orderNum = (int)($nextRow['next_order'] ?? 1);
 
@@ -646,7 +705,9 @@ if (!function_exists('questionBankCopyToExam')) {
         }
 
         $copied = [];
-        $skipped = [];
+        $notAllowed = [];
+        $failed = [];
+        $failures = [];
         $skippedDuplicates = [];
         foreach ($ids as $bankId) {
             if (!empty($duplicate[$bankId])) {
@@ -654,36 +715,74 @@ if (!function_exists('questionBankCopyToExam')) {
                 continue;
             }
             if (empty($allowed[$bankId])) {
-                $skipped[] = $bankId;
+                $notAllowed[] = $bankId;
                 continue;
             }
 
-            $newId = question_bank_duplicate_into_exam($con, $bankId, $examId, $examRow, $orderNum);
+            $why = null;
+            $newId = question_bank_duplicate_into_exam($con, $bankId, $examId, $examRow, $orderNum, $why);
             if ($newId > 0) {
                 $copied[] = $newId;
                 $orderNum++;
             } else {
-                $skipped[] = $bankId;
+                $failed[] = $bankId;
+                if ($why) $failures[] = $why;
             }
         }
 
         $dupCount = count($skippedDuplicates);
 
         if (!$copied) {
-            // Nothing was added because everything asked for was already there - that is not a
-            // failure, and saying "no question could be added" would read as one.
-            if ($dupCount && !$skipped) {
-                return [
-                    'status' => 'success',
-                    'message' => app_text(
-                        $con,
-                        'كل الأسئلة دي موجودة في الامتحان بالفعل.',
-                        'Those questions are already in this exam.'
-                    ),
-                    'data' => ['copied_question_ids' => [], 'skipped_duplicate_ids' => $skippedDuplicates],
-                ];
+            // Nothing being added is almost never a broken request, so none of these answer with
+            // an error. An error makes an admin think the platform is down, when the commonest
+            // case by far is that the exam already holds the questions they ticked.
+            //
+            // `severity` rides along so the dashboard can pick the right colour without parsing
+            // the sentence, and every branch stays `success`: the request was understood and
+            // carried out, there was simply nothing left for it to do.
+            $parts = [];
+
+            if ($dupCount) {
+                $parts[] = app_text(
+                    $con,
+                    $dupCount . ' سؤال منهم موجود في الامتحان بالفعل بنفس النصّ ونفس الإجابة الصحيحة، فاتساب زي ما هو.',
+                    $dupCount . ' of them are already in this exam, word for word and with the same correct answer, so they were left alone.'
+                );
             }
-            return json_error(app_text($con, 'مفيش أي سؤال اتضاف.', 'No question could be added.'), 422);
+
+            if ($notAllowed) {
+                $parts[] = app_text(
+                    $con,
+                    count($notAllowed) . ' سؤال مش في بنك أسئلة تقدر تقرأه، أو اتشال من البنك، فمينفعش يتنسخ.',
+                    count($notAllowed) . ' are not in a bank folder you can read, or were removed from the bank, so they could not be copied.'
+                );
+            }
+
+            if ($failed) {
+                $detail = $failures ? ' (' . implode(' | ', array_unique($failures)) . ')' : '';
+                $parts[] = app_text(
+                    $con,
+                    'قاعدة البيانات رفضت نسخ ' . count($failed) . ' سؤال' . $detail . '.',
+                    'The database refused to copy ' . count($failed) . ' question(s)' . $detail . '.'
+                );
+            }
+
+            if (!$parts) {
+                $parts[] = app_text($con, 'مفيش سؤال محدَّد ينفع يتضاف.', 'None of the selected questions could be added.');
+            }
+
+            return [
+                'status' => 'success',
+                'severity' => 'warning',
+                'message' => app_text($con, 'مفيش حاجة اتضافت. ', 'Nothing was added. ') . implode(' ', $parts),
+                'data' => [
+                    'copied_question_ids' => [],
+                    'skipped_duplicate_ids' => $skippedDuplicates,
+                    'not_allowed_ids' => $notAllowed,
+                    'failed_ids' => $failed,
+                    'failure_reasons' => array_values(array_unique($failures)),
+                ],
+            ];
         }
 
         $message = app_text(
