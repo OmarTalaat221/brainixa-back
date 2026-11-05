@@ -1556,6 +1556,76 @@ $routes = [
         },
     ],
 
+    // Admin Homework Routes -----------------------------------
+    // The same homework a teacher sets, from the other side of the desk: until these existed an
+    // academy running a subject without a teacher account had no way to post an assignment.
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/admin/homework",
+        "handler" => function ($con) {
+            include_once "./middlewares/adminauthmiddleware.php";
+            include_once "./app/admin/homework/manage.php";
+            $adminData = adminAuthMiddleware();
+            requirePermission($con, $adminData, 'manage_homework');
+            return adminListHomework($con);
+        },
+    ],
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/admin/homework",
+        "handler" => function ($con) {
+            include_once "./middlewares/adminauthmiddleware.php";
+            include_once "./app/admin/homework/manage.php";
+            $adminData = adminAuthMiddleware();
+            requirePermission($con, $adminData, 'manage_homework');
+            return adminCreateHomework($con);
+        },
+    ],
+    [
+        "method" => "PUT",
+        "path" => "/brain-ixa/admin/homework",
+        "handler" => function ($con) {
+            include_once "./middlewares/adminauthmiddleware.php";
+            include_once "./app/admin/homework/manage.php";
+            $adminData = adminAuthMiddleware();
+            requirePermission($con, $adminData, 'manage_homework');
+            return adminUpdateHomework($con);
+        },
+    ],
+    [
+        "method" => "DELETE",
+        "path" => "/brain-ixa/admin/homework",
+        "handler" => function ($con) {
+            include_once "./middlewares/adminauthmiddleware.php";
+            include_once "./app/admin/homework/manage.php";
+            $adminData = adminAuthMiddleware();
+            requirePermission($con, $adminData, 'manage_homework');
+            return adminDeleteHomework($con);
+        },
+    ],
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/admin/homework/submissions",
+        "handler" => function ($con) {
+            include_once "./middlewares/adminauthmiddleware.php";
+            include_once "./app/admin/homework/manage.php";
+            $adminData = adminAuthMiddleware();
+            requirePermission($con, $adminData, 'manage_homework');
+            return adminListHomeworkSubmissions($con);
+        },
+    ],
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/admin/homework/feedback",
+        "handler" => function ($con) {
+            include_once "./middlewares/adminauthmiddleware.php";
+            include_once "./app/admin/homework/manage.php";
+            $adminData = adminAuthMiddleware();
+            requirePermission($con, $adminData, 'manage_homework');
+            return adminGradeHomeworkSubmission($con);
+        },
+    ],
+
     // Teacher Homework Routes --------------------------------
     [
         "method" => "GET",
