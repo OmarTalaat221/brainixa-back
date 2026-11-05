@@ -375,6 +375,39 @@ if (!function_exists('getPublicLandingConfig')) {
             )))
             : [];
 
+        // The three marketing sections on the home page - the offer, the intro video and the
+        // picture carousel. Their creatives were files committed into the website's repo, so
+        // changing a campaign picture meant a developer and a deploy. The media is a setting
+        // now; the site still falls back to the committed files when a key is empty, so an
+        // untouched installation looks exactly as it did.
+        //
+        // Each section defaults to ENABLED when its key was never written, for the same reason:
+        // these sections are on today, and adding a switch should not turn them off.
+        foreach (['promo_offer_enabled', 'promo_video_enabled', 'promo_gallery_enabled'] as $flagKey) {
+            $settings[$flagKey] = $rawSettings[$flagKey] ?? '1';
+        }
+
+        foreach (['promo_offer_title', 'promo_offer_subtitle', 'promo_video_title', 'promo_video_subtitle'] as $textKey) {
+            $settings[$textKey] = $langCode === 'en'
+                ? ($rawSettings[$textKey . '_en'] ?? $rawSettings[$textKey . '_ar'] ?? '')
+                : ($rawSettings[$textKey . '_ar'] ?? $rawSettings[$textKey . '_en'] ?? '');
+        }
+
+        // One JSON array rather than a fixed set of columns, exactly like the announcement bar,
+        // so the carousel can hold as many pictures as the admin wants.
+        $galleryItems = json_decode($rawSettings['promo_gallery_items'] ?? '[]', true);
+        $settings['promo_gallery_items'] = is_array($galleryItems)
+            ? array_values(array_filter(array_map(
+                function ($item) {
+                    // Accepts both a bare URL string and {image, alt}, so the shape the dashboard
+                    // sends can grow without the website needing to be redeployed to read it.
+                    $url = is_array($item) ? trim($item['image'] ?? $item['url'] ?? '') : trim((string)$item);
+                    return $url !== '' ? $url : null;
+                },
+                $galleryItems
+            )))
+            : [];
+
         $bannersRes = mysqli_query($con, "SELECT id, title_ar, title_en, image_ar, image_en, link, type FROM banners WHERE is_active = 1 ORDER BY id DESC");
         $banners = [];
         if ($bannersRes) {
