@@ -2,6 +2,17 @@
 
 Options -Indexes
 
+# Apache was refusing any request body over 1 MiB with its own HTML 413 page, before PHP ever ran.
+# Every avatar, cover and receipt on the platform is posted as a base64 data URI, and base64 is 4/3
+# the size of the file it carries - so a photo over roughly 780 KB, which is every photo a phone
+# takes, could never be uploaded. The client saw only "تعذر حفظ التعديلات", because what came back
+# was an HTML error page where it expected JSON.
+#
+# 20 MiB leaves room for the 12 MiB ceiling that helpers/upload.php already enforces on a decoded
+# data URI, plus its base64 overhead. That ceiling, not this one, is the real limit on what gets
+# written to disk; this line only stops Apache from cutting the request off before PHP can judge it.
+LimitRequestBody 20971520
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
 
