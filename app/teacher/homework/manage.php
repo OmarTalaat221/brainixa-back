@@ -134,6 +134,42 @@ if (!function_exists('homework_sync_target_students')) {
     }
 }
 
+if (!function_exists('homework_student_ids_input')) {
+    /**
+     * Reads `student_ids` off a request body, whichever way it arrived.
+     *
+     * Returns null when the key was not sent at all - which must stay distinguishable from an
+     * empty list, because the first means "leave the audience alone" and the second means "give
+     * this back to the whole subject".
+     *
+     * A form-data request carrying an attached worksheet cannot send an empty array at all (an
+     * empty `student_ids[]` simply does not appear in $_POST), so a plain string is accepted as
+     * well: "3,7,12" or "" or a JSON array. The empty string is how a multipart client clears the
+     * targeting.
+     */
+    function homework_student_ids_input(array $body): ?array {
+        if (!array_key_exists('student_ids', $body)) return null;
+
+        $raw = $body['student_ids'];
+
+        if (is_array($raw)) {
+            return array_values(array_filter(array_map('intval', $raw), fn($id) => $id > 0));
+        }
+
+        if (!is_string($raw)) return [];
+
+        $raw = trim($raw);
+        if ($raw === '') return [];
+
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            return array_values(array_filter(array_map('intval', $decoded), fn($id) => $id > 0));
+        }
+
+        return array_values(array_filter(array_map('intval', explode(',', $raw)), fn($id) => $id > 0));
+    }
+}
+
 if (!function_exists('homework_eligible_students')) {
     /**
      * The students who can currently see a subject - the audience a homework in that subject
@@ -337,8 +373,9 @@ if (!function_exists('teacherCreateHomework')) {
         $homeworkId = mysqli_insert_id($con);
 
         $notEligible = [];
-        if (!empty($body['student_ids']) && is_array($body['student_ids'])) {
-            homework_sync_target_students($con, $homeworkId, $body['student_ids'], $notEligible);
+        $targetIds = homework_student_ids_input($body);
+        if ($targetIds !== null && !empty($targetIds)) {
+            homework_sync_target_students($con, $homeworkId, $targetIds, $notEligible);
         }
 
         $response = [
@@ -391,8 +428,9 @@ if (!function_exists('teacherUpdateHomework')) {
         // Only touched when the key is sent. An older client that does not know about targeting
         // can still edit a title without silently publishing the homework to the whole subject.
         $notEligible = [];
-        if (array_key_exists('student_ids', $body) && is_array($body['student_ids'])) {
-            homework_sync_target_students($con, $id, $body['student_ids'], $notEligible);
+        $targetIds = homework_student_ids_input($body);
+        if ($targetIds !== null) {
+            homework_sync_target_students($con, $id, $targetIds, $notEligible);
         }
 
         $response = ['status' => 'success', 'message' => 'Homework updated successfully', 'data' => get_homework_details($con, $id)];

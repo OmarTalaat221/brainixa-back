@@ -168,8 +168,9 @@ if (!function_exists('adminCreateHomework')) {
         $homeworkId = mysqli_insert_id($con);
 
         $notEligible = [];
-        if (!empty($body['student_ids']) && is_array($body['student_ids'])) {
-            homework_sync_target_students($con, $homeworkId, $body['student_ids'], $notEligible);
+        $targetIds = homework_student_ids_input($body);
+        if ($targetIds !== null && !empty($targetIds)) {
+            homework_sync_target_students($con, $homeworkId, $targetIds, $notEligible);
         }
 
         $response = [
@@ -240,8 +241,9 @@ if (!function_exists('adminUpdateHomework')) {
         }
 
         $notEligible = [];
-        if (array_key_exists('student_ids', $body) && is_array($body['student_ids'])) {
-            homework_sync_target_students($con, $id, $body['student_ids'], $notEligible);
+        $targetIds = homework_student_ids_input($body);
+        if ($targetIds !== null) {
+            homework_sync_target_students($con, $id, $targetIds, $notEligible);
         }
 
         $response = [
