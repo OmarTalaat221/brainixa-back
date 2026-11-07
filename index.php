@@ -5309,6 +5309,82 @@ $routes = [
                 return adminReviewAttendanceExceptionRequest($con, $adminData);
             },
         ],
+
+        // Admin Report Center ---------------------------------------
+        // مركز التقارير: المبيعات، الحضور والغياب، الرواتب والخصومات، تقييم الحصص المباشرة.
+        // كل تقرير يقرأ الصفوف الموجودة فعلًا ويقبل date_from / date_to، وكلٌّ منها قابل للتصدير.
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/report-center",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/reports/center.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_reports');
+                return adminReportCenterCatalog($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/report-center/sales",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/reports/center.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_reports');
+                return adminReportCenterSales($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/report-center/attendance",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/reports/center.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_reports');
+                return adminReportCenterAttendance($con);
+            },
+        ],
+        [
+            // Salaries are gated on the wallet permission, not the report one: an admin trusted to
+            // read attendance is not automatically trusted to read what every teacher is paid.
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/report-center/payroll",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/reports/center.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_wallets');
+                return adminReportCenterPayroll($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/report-center/ratings",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/reports/center.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_reports');
+                return adminReportCenterRatings($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/report-center/export",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/reports/center.php";
+                $adminData = adminAuthMiddleware();
+                // The download is gated exactly as the screen it comes from is.
+                $permission = strtolower(trim($_GET['type'] ?? 'sales')) === 'payroll'
+                    ? 'manage_wallets'
+                    : 'manage_reports';
+                requirePermission($con, $adminData, $permission);
+                return adminReportCenterExport($con);
+            },
+        ],
         [
             "method" => "GET",
             "path" => "/brain-ixa/admin/teacher-wallets",

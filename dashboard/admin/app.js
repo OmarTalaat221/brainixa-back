@@ -208,6 +208,7 @@ const titles = {
   parents: "إدارة أولياء الأمور",
   admins: "إدارة المسؤولين",
   "student-reports": "التقارير الأكاديمية",
+  "report-center": "مركز التقارير",
   roles: "الرولز والصلاحيات",
   courses: "إدارة الكورسات",
   units: "الوحدات الدراسية",
@@ -246,6 +247,7 @@ function navigate(view) {
     parents: () => renderCrudView(parentsCfg),
     admins: () => renderCrudView(adminsCfg),
     "student-reports": () => renderCrudView(studentReportsCfg),
+    "report-center": renderReportCenterView,
     roles: renderRolesView,
     courses: () => renderCrudView(coursesCfg),
     units: () => renderCrudView(unitsCfg),
@@ -2871,6 +2873,378 @@ async function loadSiteVisibilityTables() {
   }
 }
 
+
+/* ================= مركز التقارير — Report Center ================= */
+/**
+ * The four automatic reports, over one shared date range: المبيعات، الحضور والغياب،
+ * الرواتب والخصومات، تقييم الحصص المباشرة. Every number on this screen is pulled by
+ * /admin/report-center/* out of rows the platform already writes - nothing here is entered by
+ * hand, and every tab downloads as .xlsx over the range it is filtered to.
+ */
+const reportState = {
+  tab: "sales",
+  date_from: "",
+  date_to: "",
+  side: "students",
+  page: 1,
+  limit: 20,
+};
+
+const REPORT_TABS = [
+  { key: "sales", label: "💰 المبيعات" },
+  { key: "attendance", label: "🗓️ الحضور والغياب" },
+  { key: "payroll", label: "🧾 الرواتب والخصومات" },
+  { key: "ratings", label: "⭐ تقييم الحصص" },
+];
+
+function reportMoney(v) {
+  if (v === null || v === undefined || v === "") return "—";
+  return Number(v).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
+}
+
+function reportStatCards(cards) {
+  return `<div class="stat-grid">${cards
+    .map(
+      (c) => `<div class="stat-card">
+        <div class="icon" style="background:${c.color}22;color:${c.color}">${c.icon}</div>
+        <div class="value">${c.val ?? "—"}</div>
+        <div class="label">${escapeHtml(c.label)}</div>
+      </div>`
+    )
+    .join("")}</div>`;
+}
+
+function reportTable(columns, rows, emptyText) {
+  if (!rows.length) {
+    return `<div class="card"><div class="card-body" style="color:var(--text-muted)">${escapeHtml(
+      emptyText || "لا توجد بيانات في هذه الفترة"
+    )}</div></div>`;
+  }
+  return `
+    <div class="card"><div class="card-body" style="overflow-x:auto">
+      <table class="table" style="width:100%;font-size:13px">
+        <thead><tr>${columns.map((c) => `<th>${escapeHtml(c.label)}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${rows.map((r) => `<tr>${columns.map((c) => `<td>${c.render(r)}</td>`).join("")}</tr>`).join("")}
+        </tbody>
+      </table>
+    </div></div>`;
+}
+
+/** The .xlsx download. Needs the bearer token, so it goes through fetch and a blob rather than
+ *  through a plain link - a link would arrive unauthenticated and come back as a 401 JSON body. */
+async function downloadReport(params) {
+  const tokens = getTokens(NS);
+  const path = "/admin/report-center/export" + qs(params);
+  try {
+    const res = await fetch(API_BASE + path, {
+      headers: {
+        Authorization: "Bearer " + (tokens.token || ""),
+        "Accept-Language": localStorage.getItem("najeh_lang") || "ar",
+      },
+    });
+    if (!res.ok) throw new Error("تعذر تصدير التقرير");
+    const blob = await res.blob();
+    // A JSON body here is the API refusing, not a spreadsheet - surface its message.
+    if ((blob.type || "").includes("json")) {
+      const text = await blob.text();
+      let message = "تعذر تصدير التقرير";
+      try {
+        message = JSON.parse(text).message || message;
+      } catch (e) {
+        /* keep the default */
+      }
+      throw new Error(message);
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${params.type || "report"}_${reportState.date_from || "all"}_${reportState.date_to || "all"}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast("تم تنزيل التقرير");
+  } catch (err) {
+    toast(err.message || "تعذر تصدير التقرير", "error");
+  }
+}
+
+function reportRangeQuery(extra) {
+  return qs(Object.assign({ date_from: reportState.date_from, date_to: reportState.date_to }, extra || {}));
+}
+
+async function renderReportCenterView(root) {
+  customPageRefresh = () => renderReportCenterView(root);
+
+  root.innerHTML = `
+    <div class="card" style="margin-bottom:15px"><div class="card-body">
+      <div class="grid-3" style="align-items:end">
+        <div class="field"><label>من تاريخ</label><input type="date" id="rcFrom" value="${escapeHtml(reportState.date_from)}"></div>
+        <div class="field"><label>إلى تاريخ</label><input type="date" id="rcTo" value="${escapeHtml(reportState.date_to)}"></div>
+        <div style="display:flex;gap:8px;padding-bottom:14px">
+          <button class="btn btn-primary btn-sm" id="rcApply">تطبيق الفترة</button>
+          <button class="btn btn-outline btn-sm" id="rcReset">آخر 30 يومًا</button>
+          <button class="btn btn-success btn-sm" id="rcExport">⬇️ تصدير Excel</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px" id="rcTabs">
+        ${REPORT_TABS.map(
+          (t) =>
+            `<button type="button" class="btn btn-sm ${
+              t.key === reportState.tab ? "btn-primary" : "btn-outline"
+            }" data-rtab="${t.key}">${t.label}</button>`
+        ).join("")}
+      </div>
+    </div></div>
+    <div id="rcBody"><div class="full-loader" style="min-height:160px"><span class="spinner spinner-dark" style="width:26px;height:26px"></span></div></div>`;
+
+  document.getElementById("rcApply").onclick = () => {
+    reportState.date_from = document.getElementById("rcFrom").value;
+    reportState.date_to = document.getElementById("rcTo").value;
+    reportState.page = 1;
+    renderReportCenterView(root);
+  };
+  document.getElementById("rcReset").onclick = () => {
+    reportState.date_from = "";
+    reportState.date_to = "";
+    reportState.page = 1;
+    renderReportCenterView(root);
+  };
+  document.getElementById("rcExport").onclick = () =>
+    downloadReport({
+      type: reportState.tab,
+      date_from: reportState.date_from,
+      date_to: reportState.date_to,
+      side: reportState.tab === "attendance" ? reportState.side : undefined,
+    });
+  document.getElementById("rcTabs").onclick = (e) => {
+    const btn = e.target.closest("[data-rtab]");
+    if (!btn) return;
+    reportState.tab = btn.dataset.rtab;
+    reportState.page = 1;
+    renderReportCenterView(root);
+  };
+
+  const body = document.getElementById("rcBody");
+  try {
+    if (reportState.tab === "sales") await renderSalesReport(body);
+    else if (reportState.tab === "attendance") await renderAttendanceReport(body, root);
+    else if (reportState.tab === "payroll") await renderPayrollReport(body, root);
+    else await renderRatingsReport(body);
+  } catch (err) {
+    body.innerHTML = `<div class="card"><div class="card-body error-box show">${escapeHtml(
+      err.message || "تعذر تحميل التقرير"
+    )}</div></div>`;
+  }
+}
+
+async function renderSalesReport(body) {
+  const res = await api.get(NS, "/admin/report-center/sales" + reportRangeQuery());
+  const d = res.data;
+  const cur = d.currency || "";
+
+  body.innerHTML = `
+    ${reportStatCards([
+      { label: `إيراد الفترة (${cur})`, icon: "💰", color: "#1fa96e", val: reportMoney(d.summary.total) },
+      { label: "عدد العمليات", icon: "🧾", color: "#4f5fe8", val: d.summary.orders },
+      { label: `متوسط العملية (${cur})`, icon: "📊", color: "#7b5ce8", val: reportMoney(d.summary.average_order) },
+      { label: `المتوسط اليومي (${cur})`, icon: "📅", color: "#d98a1f", val: reportMoney(d.summary.daily_average) },
+    ])}
+    <h4 style="margin:18px 0 10px;color:var(--primary)">مصادر الإيراد</h4>
+    ${reportTable(
+      [
+        { label: "المصدر", render: (r) => escapeHtml(r.label_ar || r.key) },
+        { label: "عدد العمليات", render: (r) => r.orders },
+        { label: `الإيراد (${cur})`, render: (r) => reportMoney(r.total) },
+      ],
+      (d.sources || []).filter((s) => s.orders > 0 || s.total > 0)
+    )}
+    <h4 style="margin:18px 0 10px;color:var(--primary)">الأكثر بيعًا</h4>
+    ${reportTable(
+      [
+        { label: "النوع", render: (r) => ({ course: "كورس", package: "باقة", book: "كتاب" }[r.kind] || r.kind) },
+        { label: "الاسم", render: (r) => escapeHtml(r.name) },
+        { label: "عدد المبيعات", render: (r) => r.sales_count },
+        { label: `الإيراد (${cur})`, render: (r) => reportMoney(r.revenue) },
+      ],
+      d.top_items || []
+    )}
+    <h4 style="margin:18px 0 10px;color:var(--primary)">الإيراد يومًا بيوم</h4>
+    ${reportTable(
+      [
+        { label: "التاريخ", render: (r) => escapeHtml(r.date) },
+        { label: "عدد العمليات", render: (r) => r.orders },
+        { label: `الإيراد (${cur})`, render: (r) => reportMoney(r.total) },
+      ],
+      d.daily || []
+    )}`;
+}
+
+async function renderAttendanceReport(body, root) {
+  const res = await api.get(
+    NS,
+    "/admin/report-center/attendance" +
+      reportRangeQuery({ side: reportState.side, page: reportState.page, limit: reportState.limit })
+  );
+  const d = res.data;
+  const s = d.summary || {};
+  const isTeacher = d.side === "teachers";
+  const sideData = isTeacher ? s.teachers || {} : s.students || {};
+
+  body.innerHTML = `
+    ${reportStatCards([
+      { label: "حصص انعقدت", icon: "🏫", color: "#4f5fe8", val: s.sessions_held },
+      { label: isTeacher ? "معلمون مسجَّلون" : "طلاب مسجَّلون", icon: "👥", color: "#7b5ce8", val: sideData.people },
+      { label: "نسبة الحضور %", icon: "✅", color: "#1fa96e", val: sideData.attendance_rate },
+      { label: "غياب", icon: "❌", color: "#e5484d", val: sideData.absent },
+      { label: "دقائق التأخير", icon: "⏱️", color: "#d98a1f", val: sideData.minutes_late },
+    ])}
+    <div style="display:flex;gap:8px;margin:14px 0">
+      <button type="button" class="btn btn-sm ${isTeacher ? "btn-outline" : "btn-primary"}" data-rside="students">الطلاب</button>
+      <button type="button" class="btn btn-sm ${isTeacher ? "btn-primary" : "btn-outline"}" data-rside="teachers">المعلمون</button>
+    </div>
+    ${reportTable(
+      [
+        { label: isTeacher ? "المعلم" : "الطالب", render: (r) => escapeHtml(r.name || "") },
+        { label: "إجمالي الحصص", render: (r) => r.total },
+        { label: "حاضر", render: (r) => r.present },
+        { label: "متأخر", render: (r) => r.late },
+        { label: "غائب", render: (r) => r.absent },
+        { label: "غياب بعذر", render: (r) => r.excused_absent },
+        { label: "دقائق التأخير", render: (r) => r.minutes_late },
+        { label: "نسبة الحضور %", render: (r) => r.attendance_rate },
+      ].concat(isTeacher ? [{ label: "الأرباح", render: (r) => reportMoney(r.earnings) }] : []),
+      d.people || []
+    )}
+    ${
+      d.pagination
+        ? paginationHtml(
+            d.pagination.current_page,
+            d.pagination.total_pages,
+            d.pagination.total_records,
+            d.pagination.per_page
+          )
+        : ""
+    }`;
+
+  body.querySelectorAll("[data-rside]").forEach((btn) => {
+    btn.onclick = () => {
+      reportState.side = btn.dataset.rside;
+      reportState.page = 1;
+      renderReportCenterView(root);
+    };
+  });
+  bindReportPagination(body, root);
+}
+
+async function renderPayrollReport(body, root) {
+  const res = await api.get(
+    NS,
+    "/admin/report-center/payroll" + reportRangeQuery({ page: reportState.page, limit: reportState.limit })
+  );
+  const st = res.statistics || {};
+  const cur = res.currency || "";
+
+  body.innerHTML = `
+    ${reportStatCards([
+      { label: "معلمون في الفترة", icon: "👨‍🏫", color: "#4f5fe8", val: st.teachers },
+      { label: `الأرباح (${cur})`, icon: "💰", color: "#1fa96e", val: reportMoney(st.earnings) },
+      { label: `الخصومات (${cur})`, icon: "✂️", color: "#e5484d", val: reportMoney(st.fines) },
+      { label: `الصافي المستحق (${cur})`, icon: "🧾", color: "#7b5ce8", val: reportMoney(st.net_payable) },
+      { label: "تظلمات معلّقة", icon: "⚖️", color: "#d98a1f", val: st.pending_appeals },
+    ])}
+    ${reportTable(
+      [
+        { label: "المعلم", render: (r) => escapeHtml(r.teacher_name || "") },
+        { label: "حصص تمّت", render: (r) => r.sessions_held },
+        { label: "تأخير/غياب", render: (r) => `${r.sessions_late} / ${r.sessions_absent}` },
+        { label: `الأرباح (${cur})`, render: (r) => reportMoney(r.earnings) },
+        { label: `الخصومات (${cur})`, render: (r) => reportMoney(r.fines) },
+        { label: `تسويات (${cur})`, render: (r) => reportMoney(r.adjustments) },
+        { label: `الصافي (${cur})`, render: (r) => `<strong>${reportMoney(r.net)}</strong>` },
+        { label: "نموذج الأجر", render: (r) => escapeHtml(r.pay_model || "—") },
+        {
+          label: "تظلمات معلّقة",
+          render: (r) => (r.pending_appeals ? `<span class="badge-new">${r.pending_appeals}</span>` : "—"),
+        },
+        { label: `رصيد المحفظة (${cur})`, render: (r) => reportMoney(r.wallet_balance) },
+      ],
+      res.data || []
+    )}
+    ${
+      res.pagination
+        ? paginationHtml(
+            res.pagination.current_page,
+            res.pagination.total_pages,
+            res.pagination.total_records,
+            res.pagination.per_page
+          )
+        : ""
+    }`;
+
+  bindReportPagination(body, root);
+}
+
+async function renderRatingsReport(body) {
+  const res = await api.get(NS, "/admin/report-center/ratings" + reportRangeQuery({ limit: 20 }));
+  const d = res.data;
+  const o = d.overall || {};
+
+  body.innerHTML = `
+    ${reportStatCards([
+      { label: "عدد التقييمات", icon: "⭐", color: "#d98a1f", val: o.ratings },
+      { label: "حصص مُقيَّمة", icon: "🏫", color: "#4f5fe8", val: o.sessions_rated },
+      { label: "المتوسط العام", icon: "📊", color: "#1fa96e", val: o.average ?? "—" },
+    ])}
+    <h4 style="margin:18px 0 10px;color:var(--primary)">متوسط كل معلم (الأقل أولًا)</h4>
+    ${reportTable(
+      [
+        { label: "المعلم", render: (r) => escapeHtml(r.teacher_name || "") },
+        { label: "المتوسط", render: (r) => r.average ?? "—" },
+        { label: "عدد التقييمات", render: (r) => r.ratings },
+        { label: "حصص مُقيَّمة", render: (r) => r.sessions_rated },
+        {
+          label: "توزيع النجوم (5←1)",
+          render: (r) => [5, 4, 3, 2, 1].map((n) => (r.distribution || {})[n] ?? 0).join(" / "),
+        },
+      ],
+      d.teachers || []
+    )}
+    <h4 style="margin:18px 0 10px;color:var(--primary)">أحدث التقييمات</h4>
+    ${reportTable(
+      [
+        { label: "التاريخ", render: (r) => escapeHtml(r.occurrence_date || "") },
+        { label: "المعلم", render: (r) => escapeHtml(r.teacher_name || "") },
+        { label: "الطالب", render: (r) => escapeHtml(r.student_name || "") },
+        { label: "المادة", render: (r) => escapeHtml(r.subject_name || r.course_name || "—") },
+        { label: "التقييم", render: (r) => "★".repeat(r.rating) },
+        { label: "التعليق", render: (r) => escapeHtml(r.comment || "—") },
+      ],
+      d.ratings || []
+    )}`;
+}
+
+/** The shared pagination wiring for the two paged report tabs. */
+function bindReportPagination(body, root) {
+  body.querySelectorAll("[data-pg]").forEach((btn) => {
+    btn.onclick = () => {
+      const v = btn.dataset.pg;
+      if (v === "prev") reportState.page = Math.max(1, reportState.page - 1);
+      else if (v === "next") reportState.page += 1;
+      else reportState.page = Number(v);
+      renderReportCenterView(root);
+    };
+  });
+  const perPage = body.querySelector("[data-perpage]");
+  if (perPage) {
+    perPage.onchange = () => {
+      reportState.limit = Number(perPage.value);
+      reportState.page = 1;
+      renderReportCenterView(root);
+    };
+  }
+}
 /* ---------- boot ---------- */
 (function init() {
   const savedLang = localStorage.getItem("najeh_lang") || "ar";

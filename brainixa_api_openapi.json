@@ -1,9 +1,9 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Brainixa Backend - Session Changelog API (update-12)",
-    "version": "12.0.0",
-    "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109.\n\n`update-7` is the live-class batch and the loose ends around it: Zoom played inside the platform for all three kinds of live meeting (the weekly class sessions, the dated package appointments and the 1:1 consultations), a manual-sales sheet for admin and teacher, a chat contact directory read from the real tables instead of Firebase's stale copy, and hero slides as a table of their own.\n\nupdate-7 also turns the books library into a STORE. No products table was added: `course_books.file_type` carries `physical` for an item with no file, so every existing book endpoint sells one unchanged. Clients branch on that field rather than assuming a file exists.\n\n`update-8` (FIX): GET /student/exams leaked unit-scoped exams into the general listing whenever the request carried no `course_id` at all - the documented \"whole-course exams only by default\" rule was only ever enforced when `course_id` was explicitly passed. A student's general exams tab (no filters) could show a unit exam mixed in with the whole-course/standalone ones. The same default - `unit_id IS NULL` unless `include_unit_exams`/`with_unit_exams` says otherwise - now applies regardless of whether `course_id` is present. No response shape change, no new field; strictly fewer rows come back from the general (no-filter) call than before. A unit's own exams remain fully visible from inside that unit's content (GET /student/courses .../units, unaffected - that endpoint always filtered by `unit_id` directly)."
+    "title": "Brainixa Backend - Session Changelog API (update-13)",
+    "version": "13.0.0",
+    "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109.\n\n`update-7` is the live-class batch and the loose ends around it: Zoom played inside the platform for all three kinds of live meeting (the weekly class sessions, the dated package appointments and the 1:1 consultations), a manual-sales sheet for admin and teacher, a chat contact directory read from the real tables instead of Firebase's stale copy, and hero slides as a table of their own.\n\nupdate-7 also turns the books library into a STORE. No products table was added: `course_books.file_type` carries `physical` for an item with no file, so every existing book endpoint sells one unchanged. Clients branch on that field rather than assuming a file exists.\n\n`update-8` (FIX): GET /student/exams leaked unit-scoped exams into the general listing whenever the request carried no `course_id` at all - the documented \"whole-course exams only by default\" rule was only ever enforced when `course_id` was explicitly passed. A student's general exams tab (no filters) could show a unit exam mixed in with the whole-course/standalone ones. The same default - `unit_id IS NULL` unless `include_unit_exams`/`with_unit_exams` says otherwise - now applies regardless of whether `course_id` is present. No response shape change, no new field; strictly fewer rows come back from the general (no-filter) call than before. A unit's own exams remain fully visible from inside that unit's content (GET /student/courses .../units, unaffected - that endpoint always filtered by `unit_id` directly).\n\n`update-13` is the Report Center (مركز التقارير): the four reports an owner asked to be pulled automatically rather than compiled by hand - sales, live-class attendance for both students and teachers, payroll with its deductions, and the after-class ratings - each over a `date_from`/`date_to` range and each downloadable as .xlsx. No migration: every figure already existed in rows the platform writes, and each report delegates to the module that already owns its numbers, so none of them can drift from the Sales screen, the attendance report or the ratings summary. Payroll is the one report with queries of its own, because the wallet had a ledger and a balance but never a per-period payslip; it is gated on `manage_wallets` rather than `manage_reports`."
   },
   "servers": [
     {
@@ -1920,6 +1920,430 @@
     }
   },
   "paths": {
+    "/admin/report-center": {
+      "get": {
+        "tags": [
+          "update-13 / Admin / Report Center (NEW - update-13)"
+        ],
+        "summary": "update-13 (NEW): the report catalogue",
+        "description": "update-13 (NEW): مركز التقارير - the Report Center.\n\nFour reports pulled automatically out of rows the platform already writes, with no new table and nothing entered by hand: sales (المبيعات), live-class attendance for students AND teachers (الحضور والغياب), payroll with its deductions (الرواتب والخصومات), and the after-class ratings (تقييم الحصة المباشرة).\n\nThis endpoint returns the catalogue itself - one entry per report with its `key`, Arabic and English title, description, `endpoint`, `export` link and the `filters` it accepts - so the dashboard renders the list of reports from the API and a fifth report needs no front-end release to appear. Also returns `default_range` (the last 30 days) and the platform's base `currency`.\n\nEvery report in the centre answers the same `date_from` / `date_to` pair, and every one of them downloads as .xlsx from `/admin/report-center/export`.\n\nPermission: `manage_reports`.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/report-center/sales": {
+      "get": {
+        "tags": [
+          "update-13 / Admin / Report Center (NEW - update-13)"
+        ],
+        "summary": "update-13 (NEW): sales report for a date range",
+        "description": "update-13 (NEW): تقرير المبيعات - revenue over a range, per source, per day, and per item.\n\nRead through the SAME revenue-source definitions the home dashboard and the Sales screen use, not through `transactions` alone: a sale on this platform can arrive as a gateway payment, a redeemed subscription code, an approved bank transfer, a book granted by hand or a subscription an admin typed in, and a sales report that sees only one of those is wrong by however much the others are worth. Nothing about \"what counts as revenue\" is defined a second time here, so this report cannot drift from the dashboard's figure.\n\nReturns `summary` (total, orders, average_order, daily_average), `sources` (each revenue door with its own total and order count, highest first), `daily` (one bucket per calendar day, summed across the sources), and `top_items` (up to 20 courses, packages and books by revenue).\n\nPermission: `manage_reports`.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/report-center/attendance": {
+      "get": {
+        "tags": [
+          "update-13 / Admin / Report Center (NEW - update-13)"
+        ],
+        "summary": "update-13 (NEW): live-class attendance report, both sides",
+        "description": "update-13 (NEW): تقرير الحضور والغياب - the students and the teachers of the same live classes.\n\nThe figures come from the update-11 attendance report module rather than from a second set of queries, so this screen and `/admin/attendance/report/*` can never disagree. `summary` carries both sides separately - they are never added together, because a school where the students turn up and the teachers do not has a different problem from the reverse - and `people` is one page of per-person rows for whichever side is being read.\n\n`side=students` (default) or `side=teachers`. Teacher rows additionally carry `earnings`.\n\nPermission: `manage_reports`.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "side",
+            "in": "query",
+            "required": false,
+            "description": "`students` (default) or `teachers`.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "students",
+                "teachers"
+              ]
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Narrows the per-person rows by name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/report-center/payroll": {
+      "get": {
+        "tags": [
+          "update-13 / Admin / Report Center (NEW - update-13)"
+        ],
+        "summary": "update-13 (NEW): payroll and deductions report",
+        "description": "update-13 (NEW): تقرير الرواتب والخصومات - a payslip-shaped row per teacher for the period.\n\nThe wallet already held every figure needed: `teacher_wallet_transactions` is written by the attendance run (an earning per class held, a fine per late arrival or absence) and by admin adjustments and approved appeals. What was missing was reading it per PERIOD instead of as a running balance - an owner paying monthly cannot pay out of a lifetime total, and the existing wallet endpoints only ever gave a balance and a ledger.\n\nThe money is taken from the ledger rather than recomputed from the pay rate times the hours: the ledger is what the teacher was actually credited, including any correction an admin has since made, and a report that disagrees with the wallet is a report nobody can pay from.\n\nEach row: `earnings`, `fines`, `refunds`, `adjustments`, `net`, the entry counts behind them, `sessions_held` / `sessions_late` / `sessions_absent` / `minutes_late` from the attendance side of the same classes, the `pay_model` and `pay_rate` in force, `wallet_balance`, `is_attendance_suspended`, and `pending_appeals` - a disputed deduction is still deducted while the appeal is open, so a row that does not say one is pending invites paying a figure that is about to change. `statistics` totals the page-independent figures across the whole filtered range.\n\nPermission: `manage_wallets`, NOT `manage_reports` - an admin trusted to read attendance is not automatically trusted to read what every teacher is paid.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": false,
+            "description": "One teacher only.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Matches the teacher name or email.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/report-center/ratings": {
+      "get": {
+        "tags": [
+          "update-13 / Admin / Report Center (NEW - update-13)"
+        ],
+        "summary": "update-13 (NEW): live-class ratings report",
+        "description": "update-13 (NEW): تقرير تقييم الحصص المباشرة - what the students said after each class.\n\nBuilt on the update-11 ratings endpoints: `overall` and `teachers` are the per-teacher averages and star distribution, ordered worst average first so the teacher who needs looking at is the first row rather than something to be found by sorting. `ratings` is a page of the individual ratings, newest first; `rating=1` or `with_comment=1` narrow them to the bad ones and the ones with something written in them, which is the part anybody acts on.\n\nThe distribution matters as much as the mean: a teacher averaging 4 from all 4s is a different teacher from one averaging 4 from 5s and 2s.\n\nPermission: `manage_reports`.",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "rating",
+            "in": "query",
+            "required": false,
+            "description": "1 to 5; keeps only that score.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "with_comment",
+            "in": "query",
+            "required": false,
+            "description": "1 keeps only the ratings that carry a written comment.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/report-center/export": {
+      "get": {
+        "tags": [
+          "update-13 / Admin / Report Center (NEW - update-13)"
+        ],
+        "summary": "update-13 (NEW): any of the four reports as .xlsx",
+        "description": "update-13 (NEW): the report being read, as a spreadsheet, over the same range the screen is filtered to.\n\n`type` picks the report: `sales` (the sources, the range total, the day-by-day and the top sellers in one sheet), `attendance` (handed to the update-11 attendance export - add `side=students|teachers|sessions`), `payroll`, or `ratings`.\n\nReturns a binary .xlsx body, not JSON, so it needs fetching with the bearer header and saving as a blob - a plain link arrives unauthenticated and comes back as a 401 JSON body. The sheet is right-to-left when the request's language is Arabic.\n\nPermission: `manage_wallets` for `type=payroll`, `manage_reports` for the rest - the download is gated exactly as the screen it comes from is.",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "description": "`sales` (default), `attendance`, `payroll` or `ratings`.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sales",
+                "attendance",
+                "payroll",
+                "ratings"
+              ]
+            }
+          },
+          {
+            "name": "side",
+            "in": "query",
+            "required": false,
+            "description": "With `type=attendance`: `students` (default), `teachers` or `sessions`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window, YYYY-MM-DD. Defaults to 29 days before today.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "description": "End of the window, YYYY-MM-DD. Defaults to today. A range entered backwards is swapped rather than refused.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An .xlsx spreadsheet.",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/upload/audio": {
       "post": {
         "tags": [
