@@ -106,13 +106,6 @@ if (!function_exists('studentHome')) {
         //
         // The rows are still normalized to the class_sessions shape, so a client that wants the
         // old combined list can concatenate the three keys and get exactly what it had before.
-        //
-        // Both lists are complete from today onward, not capped. They used to stop at five each,
-        // which was defensible while they were only feeding a single "next session" card and
-        // invisible while they sat mixed into one list - but a key named upcoming_package_sessions
-        // that silently returns the first five of nine is a key nobody can count from. Each is
-        // bounded by what this one student has actually booked, which is not a quantity that
-        // grows without limit.
         $upcomingConsultations = [];
         $upcomingPackageSessions = [];
 
@@ -122,6 +115,7 @@ if (!function_exists('studentHome')) {
             WHERE student_id = {$stId} AND is_booked = 1 AND status = 'approved'
               AND is_active = 1 AND slot_date >= '{$todayDateStr}'
             ORDER BY slot_date ASC, slot_time ASC
+            LIMIT 5
         ");
         if ($consultRes) {
             while ($cRow = mysqli_fetch_assoc($consultRes)) {
@@ -181,6 +175,7 @@ if (!function_exists('studentHome')) {
             WHERE sb.student_id = {$stId} AND sb.status = 'booked'
               AND s.slot_date >= '{$todayDateStr}'
             ORDER BY s.slot_date ASC, s.start_time ASC
+            LIMIT 5
         ");
         if ($availRes) {
             while ($aRow = mysqli_fetch_assoc($availRes)) {
