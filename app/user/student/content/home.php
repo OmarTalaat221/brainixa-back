@@ -118,10 +118,20 @@ if (!function_exists('studentHome')) {
         }
 
         // ---- Upcoming consultations booked by this student (approved, from today onward) ----
-        // Folded into the same list the "next session" card reads, normalized to the same
-        // shape class_sessions already returns - so nothing downstream needs to learn a second
-        // vocabulary. Before this, a confirmed consultation never appeared here at all; the
-        // card only ever knew about recurring weekly classes.
+        // Served under `upcoming_consultations`, NOT inside `today_sessions`.
+        //
+        // These used to be folded into `today_sessions` so the "next session" card would see them
+        // without learning a second vocabulary. The cost was that one key answered three different
+        // questions at once: a weekly class the student may or may not be subscribed to, a 1:1
+        // consultation, and a package appointment - all wearing the same shape, told apart only by
+        // a `scope` string a caller had to know to read. `today_sessions` now means today's
+        // classes and nothing else.
+        //
+        // The rows are still normalized to the class_sessions shape, so a client that wants the
+        // old combined list can concatenate the three keys and get exactly what it had before.
+        $upcomingConsultations = [];
+        $upcomingPackageSessions = [];
+
         $todayDateStr = $now->format('Y-m-d');
         $consultRes = @mysqli_query($con, "
             SELECT id FROM consultation_slots
@@ -138,7 +148,7 @@ if (!function_exists('studentHome')) {
                 $isEndedConsult = !empty($slot['ended_at']);
                 $isLiveConsult = !empty($slot['is_live']);
 
-                $todaySessions[] = [
+                $upcomingConsultations[] = [
                     'id' => $slot['id'],
                     'teacher_id' => $slot['teacher_id'],
                     'subject_id' => $slot['subject_id'],
@@ -177,9 +187,11 @@ if (!function_exists('studentHome')) {
         }
 
         // ---- Upcoming package-session appointments booked by this student (مواعيد الباقات) ----
-        // Same fold-in as consultations just above, normalized to the same class_sessions-shaped
-        // entry - the "next session" card on home must not only know about the generic weekly
-        // schedule, which real live classes do not run on any more.
+        // Served under `upcoming_package_sessions`, for the same reason as the consultations
+        // above. Still normalized to the class_sessions shape, and still the thing the home's
+        // "next session" card most often has to show: real live classes mostly do not run on the
+        // generic weekly schedule any more, so a home that reads `today_sessions` alone will be
+        // empty for a student whose next appointment is a package one.
         $availRes = @mysqli_query($con, "
             SELECT sb.slot_id FROM availability_slot_bookings sb
             INNER JOIN teacher_availability_slots s ON s.id = sb.slot_id
@@ -196,7 +208,7 @@ if (!function_exists('studentHome')) {
                 $isEndedSlot = !empty($slot['ended_at']);
                 $isLiveSlot = !empty($slot['is_live']);
 
-                $todaySessions[] = [
+                $upcomingPackageSessions[] = [
                     'id' => $slot['id'],
                     'teacher_id' => $slot['teacher_id'],
                     'subject_id' => $slot['subject_id'],
@@ -338,7 +350,11 @@ if (!function_exists('studentHome')) {
                 'books_count' => $booksCount,
                 'notifications_count' => $notifCount,
                 'unread_notifications_count' => $unreadNotifCount,
+                // Today's weekly classes, and only those. The student's booked consultations and
+                // package appointments are their own keys below rather than being mixed in here.
                 'today_sessions' => $todaySessions,
+                'upcoming_consultations' => $upcomingConsultations,
+                'upcoming_package_sessions' => $upcomingPackageSessions,
                 'banners' => $banners,
                 'subscribed_courses' => $subscribedCourses,
                 'all_courses' => $allCourses
