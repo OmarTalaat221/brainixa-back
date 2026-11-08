@@ -8,6 +8,7 @@ require_once __DIR__ . '/../subscriptions/manage.php';
 require_once __DIR__ . '/../../../teacher/sessions/manage.php'; // get_class_session_details / class_session_is_available_now
 require_once __DIR__ . '/../../../teacher/consultations/manage.php'; // get_consultation_slot_details
 require_once __DIR__ . '/../../../../helpers/availability.php'; // get_availability_slot_details
+require_once __DIR__ . '/../../../../helpers/student_sessions.php'; // who may see which weekly class
 
 if (!function_exists('studentHome')) {
     function studentHome($con, $studentData = null) {
@@ -69,29 +70,15 @@ if (!function_exists('studentHome')) {
 
         $studentAcademicYearId = get_student_academic_year_id($con, $stId);
 
-        // A session tied to a specific course (scope='course') must be gated on course access
-        // alone - it used to also pass through on subject-wide access, which let a student with
-        // a broad subject subscription see every teacher's weekly class in that subject, not
-        // only the course they actually subscribed to. A session with no course (scope='subject',
-        // a teacher's general class for the whole subject) still goes through subject access,
-        // since that is exactly what a subject-level subscription is for.
-        $subWhere = [];
-        if (!empty($courseIds)) {
-            $cList = implode(',', array_map('intval', $courseIds));
-            $subWhere[] = "(course_id IS NOT NULL AND course_id IN ({$cList}))";
-        }
-        if (!empty($subjectIds)) {
-            $sList = implode(',', array_map('intval', $subjectIds));
-            $gradeCondition = $studentAcademicYearId
-                ? "(academic_year_id IS NULL OR academic_year_id = " . (int)$studentAcademicYearId . ")"
-                : "academic_year_id IS NULL";
-            $subWhere[] = "(course_id IS NULL AND subject_id IN ({$sList}) AND {$gradeCondition})";
-        }
+        // The rule this screen was corrected to use now lives in helpers/student_sessions.php and
+        // is shared with GET /student/sessions/today, which had kept the uncorrected copy. See
+        // that file for what the rule is and what the two versions disagreed about.
+        $entityCondition = student_session_access_condition($courseIds, $subjectIds, $studentAcademicYearId);
 
-        if (empty($subWhere)) {
+        if ($entityCondition === null) {
             $sessRes = false;
         } else {
-            $sessionWhere[] = "(" . implode(' OR ', $subWhere) . ")";
+            $sessionWhere[] = $entityCondition;
             $sessRes = mysqli_query($con, "SELECT id FROM class_sessions WHERE " . implode(' AND ', $sessionWhere) . " ORDER BY start_time ASC");
         }
 
@@ -99,20 +86,10 @@ if (!function_exists('studentHome')) {
             while ($sessRow = mysqli_fetch_assoc($sessRes)) {
                 $sessDetails = get_class_session_details($con, (int)$sessRow['id']);
                 if ($sessDetails) {
-                    $sessCourseId = (int)($sessDetails['course_id'] ?? 0);
-                    $sessSubId = (int)($sessDetails['subject_id'] ?? 0);
-                    $isSessSubscribed = (
-                        ($sessCourseId > 0 && in_array($sessCourseId, $courseIds)) ||
-                        ($sessSubId > 0 && in_array($sessSubId, $subjectIds))
-                    );
-                    $sessDetails['has_access'] = $isSessSubscribed;
-                    $sessDetails['is_subscribed'] = $isSessSubscribed;
-                    $sessDetails['is_locked'] = !$isSessSubscribed;
-                    $sessDetails['is_open'] = $isSessSubscribed;
-                    if (!$isSessSubscribed) {
-                        $sessDetails['meeting_link'] = null;
-                    }
-                    $todaySessions[] = $sessDetails;
+                    // Same stamping the timetable endpoint now does, from the same helper. There
+                    // is no preview on the home screen - nothing here was shown to somebody who
+                    // had not subscribed - so the preview flag is false.
+                    $todaySessions[] = student_session_mark_access($sessDetails, $courseIds, $subjectIds, false);
                 }
             }
         }

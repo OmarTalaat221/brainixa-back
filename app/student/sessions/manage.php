@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../../../helpers/functions.php';
 require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/entities.php';
+require_once __DIR__ . '/../../../helpers/student_sessions.php';
 require_once __DIR__ . '/../../user/student/subscriptions/manage.php';
 require_once __DIR__ . '/../../teacher/sessions/manage.php';
 require_once __DIR__ . '/../../student/homework/manage.php';
@@ -73,7 +74,8 @@ if (!function_exists('studentTodaySessions')) {
         $accessible = get_student_accessible_entities($con, $studentId);
         $courseIds = $accessible['course_ids'] ?? [];
         $subjectIds = $accessible['subject_ids'] ?? [];
-        $teacherIds = $accessible['teacher_ids'] ?? [];
+        // `teacher_ids` is deliberately not read: access is to courses and subjects, and being
+        // subscribed to a teacher never granted their whole weekly schedule on the home screen.
 
         // update-1: optional narrowing to a single course's own schedule (e.g. viewing a package's
         // weekly sessions on its course-details page) — normally still constrained to the
@@ -95,7 +97,6 @@ if (!function_exists('studentTodaySessions')) {
             }
             $courseIds = $canPreview ? [$requestedCourseId] : [];
             $subjectIds = [];
-            $teacherIds = [];
         }
         $studentAcademicYearId = get_student_academic_year_id($con, $studentId);
 
@@ -113,38 +114,19 @@ if (!function_exists('studentTodaySessions')) {
             $types .= "s";
         }
 
-        $entityWhere = [];
-        if (!empty($subjectIds)) {
-            $placeholders = implode(',', array_fill(0, count($subjectIds), '?'));
-            // Subject-scoped sessions (no course) can be tagged with a specific academic_year_id
-            // (a grade) - only show them to a student of that same grade, or to everyone when the
-            // session was left ungraded (academic_year_id IS NULL, the legacy/blanket behavior).
-            if ($studentAcademicYearId) {
-                $entityWhere[] = "(subject_id IN ({$placeholders}) AND (academic_year_id IS NULL OR academic_year_id = ?))";
-                foreach ($subjectIds as $sId) { $params[] = (int)$sId; $types .= "i"; }
-                $params[] = $studentAcademicYearId;
-                $types .= "i";
-            } else {
-                $entityWhere[] = "(subject_id IN ({$placeholders}) AND academic_year_id IS NULL)";
-                foreach ($subjectIds as $sId) { $params[] = (int)$sId; $types .= "i"; }
-            }
-        }
-        if (!empty($courseIds)) {
-            $placeholders = implode(',', array_fill(0, count($courseIds), '?'));
-            $entityWhere[] = "course_id IN ({$placeholders})";
-            foreach ($courseIds as $cId) { $params[] = (int)$cId; $types .= "i"; }
-        }
-        if (!empty($teacherIds)) {
-            $placeholders = implode(',', array_fill(0, count($teacherIds), '?'));
-            $entityWhere[] = "teacher_id IN ({$placeholders})";
-            foreach ($teacherIds as $tId) { $params[] = (int)$tId; $types .= "i"; }
-        }
+        // Who may see what is decided by helpers/student_sessions.php, the same function the home
+        // screen calls. It used to be written out here a second time and had drifted: this copy
+        // let a course-bound session through on subject access, and let ANY of a teacher's
+        // sessions through on `teacher_id` alone - so one package with a teacher showed that
+        // teacher's whole week. The home screen's copy had been corrected for exactly that and
+        // this one had not, which is why the two endpoints disagreed about the same day.
+        $entityCondition = student_session_access_condition($courseIds, $subjectIds, $studentAcademicYearId);
 
-        if (empty($entityWhere)) {
+        if ($entityCondition === null) {
             return build_paginated_response([], $page, $limit, 0);
         }
 
-        $where[] = "(" . implode(" OR ", $entityWhere) . ")";
+        $where[] = $entityCondition;
         $whereSql = implode(" AND ", $where);
 
         if ($upcoming) {
@@ -211,10 +193,7 @@ if (!function_exists('studentTodaySessions')) {
                 if ($details) {
                     $details['next_session_date'] = date('Y-m-d', $entry['occ']);
                     $details['next_start_datetime'] = date('Y-m-d H:i:s', $entry['occ']);
-                    if ($isPreviewOnly) {
-                        $details['meeting_link'] = null;
-                    }
-                    $items[] = $details;
+                    $items[] = student_session_mark_access($details, $courseIds, $subjectIds, $isPreviewOnly);
                 }
             }
 
@@ -245,10 +224,10 @@ if (!function_exists('studentTodaySessions')) {
             if ($res) {
                 while ($row = mysqli_fetch_assoc($res)) {
                     $sessionDetails = get_class_session_details($con, (int)$row['id'], $overrideDate);
-                    if ($sessionDetails && $isPreviewOnly) {
-                        $sessionDetails['meeting_link'] = null;
+                    if (!$sessionDetails) {
+                        continue;
                     }
-                    $items[] = $sessionDetails;
+                    $items[] = student_session_mark_access($sessionDetails, $courseIds, $subjectIds, $isPreviewOnly);
                 }
             }
         }
