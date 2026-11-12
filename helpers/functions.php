@@ -375,6 +375,117 @@ if (!function_exists('generate_entity_code')) {
     }
 }
 
+if (!function_exists('describe_db_write_error')) {
+    /**
+     * A failed write, said in words the person reading the screen can act on.
+     *
+     * "Duplicate entry '-' for key 'uq_courses_slug'" was being handed to the admin verbatim. It
+     * names a column they have never seen, on a form that has no field for it, and says nothing
+     * about what to do next. The underlying cause is always worth fixing - but so is the message,
+     * because the next unique key added here would have read exactly as badly.
+     */
+    function describe_db_write_error($con, string $fallback): string {
+        $raw = mysqli_error($con);
+
+        if (stripos($raw, 'Duplicate entry') !== false) {
+            if (stripos($raw, 'slug') !== false) {
+                return 'يوجد عنصر آخر بنفس الـ slug. غيّر الاسم أو اكتب slug مختلفًا.';
+            }
+            if (stripos($raw, 'email') !== false) {
+                return 'هذا البريد الإلكتروني مستخدم بالفعل.';
+            }
+            if (stripos($raw, 'code') !== false) {
+                return 'هذا الكود مستخدم بالفعل.';
+            }
+            return 'هذه البيانات مسجّلة بالفعل، ولا يمكن تكرارها.';
+        }
+
+        if (stripos($raw, 'foreign key') !== false) {
+            return 'أحد الحقول المرتبطة يشير إلى عنصر غير موجود. راجع المادة أو التصنيف أو المعلّم المختار.';
+        }
+
+        if (stripos($raw, 'Data too long') !== false) {
+            return 'إحدى القيم أطول من المسموح به. اختصرها وحاول مرة أخرى.';
+        }
+
+        // Nothing recognised: the raw text is still better than silence, but it is labelled.
+        return $fallback . ($raw !== '' ? ' (' . $raw . ')' : '');
+    }
+}
+
+if (!function_exists('generate_unique_slug')) {
+    /**
+     * A slug that is free to insert, derived from a name that may be in any script.
+     *
+     * The course slug used to be built inline as:
+     *
+     *     preg_replace('/[^a-z0-9]+/i', '-', strtolower($nameEn)) ?: ('course-' . uniqid())
+     *
+     * which fails on every Arabic-only name, and fails in the worst way. An Arabic title has no
+     * ASCII letters at all, so the whole string matches as ONE run and collapses to the single
+     * character "-". The `?:` fallback never fires, because "-" is not an empty string - it is a
+     * perfectly good truthy value. So the first Arabic-named course took the slug "-", and every
+     * Arabic-named course after it died on `uq_courses_slug` with a raw MySQL duplicate-key
+     * error shown to the admin verbatim.
+     *
+     * Three things fix it, and all three are needed:
+     *
+     *   1. Arabic letters are kept rather than stripped. `\p{L}` with the /u modifier means a
+     *      name in any script produces a real slug instead of nothing. MySQL's utf8mb4 columns
+     *      store it, and browsers percent-encode it in a URL without trouble.
+     *   2. Separators are trimmed from both ends and collapsed, so a name that reduces to
+     *      punctuation reduces to the empty string - which IS falsy, and so can be caught.
+     *   3. The result is checked against the table before it is returned. UNIQUE means a clash is
+     *      a refusal rather than a warning, so a taken slug walks to `-2`, `-3` and so on. This
+     *      is what `generate_entity_code()` already does for codes; the slug simply never had it.
+     */
+    function generate_unique_slug($con, string $table, string $from, string $prefix = 'item', ?int $excludeId = null): string {
+        $base = trim($from);
+
+        // Separators first, then anything that is not a letter or a digit in any script.
+        $base = preg_replace('/[\s_]+/u', '-', $base);
+        $base = preg_replace('/[^\p{L}\p{N}-]+/u', '', $base);
+        $base = preg_replace('/-+/u', '-', (string)$base);
+        $base = trim((string)$base, '-');
+
+        // Lowercased for the Latin half; mb_strtolower leaves Arabic alone, which has no case.
+        $base = function_exists('mb_strtolower') ? mb_strtolower($base, 'UTF-8') : strtolower($base);
+        $base = function_exists('mb_substr') ? mb_substr($base, 0, 80, 'UTF-8') : substr($base, 0, 80);
+        $base = trim($base, '-');
+
+        // Reached only by a name made entirely of punctuation or emoji.
+        if ($base === '') {
+            $base = $prefix . '-' . substr(bin2hex(random_bytes(4)), 0, 6);
+        }
+
+        $safeTable = preg_replace('/[^a-z_]/', '', $table);
+        $candidate = $base;
+
+        // Bounded: after two hundred collisions on one name, a random tail is a better answer
+        // than a loop that keeps going.
+        for ($i = 2; $i < 200; $i++) {
+            $sql = "SELECT id FROM `{$safeTable}` WHERE slug = ? LIMIT 1";
+            $stmt = mysqli_prepare($con, $sql);
+            if (!$stmt) {
+                return $candidate;
+            }
+
+            mysqli_stmt_bind_param($stmt, "s", $candidate);
+            mysqli_stmt_execute($stmt);
+            $row = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+
+            // Free, or already this very row's own slug on an update - either way it may be used.
+            if (!$row || ($excludeId !== null && (int)$row['id'] === $excludeId)) {
+                return $candidate;
+            }
+
+            $candidate = $base . '-' . $i;
+        }
+
+        return $base . '-' . substr(bin2hex(random_bytes(4)), 0, 6);
+    }
+}
+
 // A demo student account: sees and opens everything in the catalogue without paying for any of
 // it, and is kept out of every admin-facing student list and count. It is flagged by a column
 // rather than a hardcoded email so the flag can be moved or revoked from the database alone.

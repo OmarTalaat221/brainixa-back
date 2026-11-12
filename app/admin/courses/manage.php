@@ -573,9 +573,10 @@ if (!function_exists('adminCreateCourse')) {
             return ['status' => 'error', 'message' => 'Course name (name_ar) is required'];
         }
 
-        if (empty($slug)) {
-            $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower($nameEn)) ?: ('course-' . uniqid());
-        }
+        // Built from the Arabic name when that is all there is, and always checked against the
+        // table before it is used: `slug` is UNIQUE, and an Arabic-only name used to collapse to
+        // the single character "-" for every course alike. See generate_unique_slug().
+        $slug = generate_unique_slug($con, 'courses', $slug !== '' ? $slug : ($nameEn !== '' ? $nameEn : $nameAr), 'course');
 
         $imageInput = $body['image'] ?? null;
         $fileImage = $_FILES['image'] ?? $_FILES['file'] ?? null;
@@ -609,7 +610,7 @@ if (!function_exists('adminCreateCourse')) {
         }
 
         if (!$stmt || !mysqli_stmt_execute($stmt)) {
-            return ['status' => 'error', 'message' => 'Failed to create course: ' . mysqli_error($con)];
+            return ['status' => 'error', 'message' => describe_db_write_error($con, 'تعذّر إنشاء الكورس')];
         }
 
         $courseId = mysqli_insert_id($con);
@@ -756,6 +757,12 @@ if (!function_exists('adminUpdateCourse')) {
             }
         }
         if ($slug !== null) {
+            // Was written straight in, so renaming a course to a slug another one already holds
+            // failed on the UNIQUE key with a raw MySQL message - and silently, since the result
+            // of the execute was never read. Resolved to a free slug instead, with this course's
+            // own current slug excluded so saving a course without changing its slug is a no-op
+            // rather than a walk to "-2".
+            $slug = generate_unique_slug($con, 'courses', $slug, 'course', $id);
             $stmt = mysqli_prepare($con, "UPDATE courses SET slug = ? WHERE id = ?");
             if ($stmt) {
                 mysqli_stmt_bind_param($stmt, "si", $slug, $id);

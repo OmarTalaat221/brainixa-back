@@ -82,9 +82,9 @@ if (!function_exists('teacherCreateCourse')) {
             ];
         }
 
-        if (empty($slug)) {
-            $slug = preg_replace('/[^a-z0-9]+/i', '-', strtolower($nameEn)) ?: ('course-' . uniqid());
-        }
+        // Same rule as the admin's create - one function, so the two cannot disagree about what
+        // an Arabic-named course's slug is. See generate_unique_slug().
+        $slug = generate_unique_slug($con, 'courses', $slug !== '' ? $slug : ($nameEn !== '' ? $nameEn : $nameAr), 'course');
 
         $imageInput = $body['image'] ?? null;
         $fileImage = $_FILES['image'] ?? $_FILES['file'] ?? null;
@@ -101,7 +101,7 @@ if (!function_exists('teacherCreateCourse')) {
         mysqli_stmt_bind_param($stmt, "iiiisssiidsii", $subjectId, $categoryId, $academicYearId, $teacherId, $slug, $type, $kind, $durationMonths, $allowVideoDownload, $price, $image, $isActive, $teacherId);
 
         if (!mysqli_stmt_execute($stmt)) {
-            return ['status' => 'error', 'message' => 'Failed to create course: ' . mysqli_error($con)];
+            return ['status' => 'error', 'message' => describe_db_write_error($con, 'تعذّر إنشاء الكورس')];
         }
 
         $courseId = mysqli_insert_id($con);
