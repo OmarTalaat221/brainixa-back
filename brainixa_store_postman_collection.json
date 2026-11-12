@@ -1,0 +1,1126 @@
+{
+    "info": {
+        "_postman_id": "b7a1c0de-9f32-4c58-badd-5a0e1f7c3d21",
+        "name": "Brainixa — Store: Products & Categories",
+        "description": "The store's products and their categories.\n\nSPLIT BY WHO CALLS IT:\n\n  admin/  — creating, pricing and filing products. Needs `admin_token` and the\n            `manage_products` permission.\n  user/   — the shop front. Auth is optional on /store and not used at all on\n            the two public reads.\n\nSETUP\n\n  1. Import `brainixa_postman_environment.json` and pick \"Brainixa - Live\".\n  2. Sign in as an admin and put the access token in `admin_token`.\n  3. Run admin/Product Categories → Create first: it stores the new id in\n     `product_category_id`, which the product requests then use. Create product\n     does the same for `product_id`.\n\nSo the folders run top to bottom without a single id pasted by hand.\n\nNEEDS MIGRATIONS 127 AND 128. Without 127 the product endpoints report that the\ntable is missing and /store quietly returns only books — a half-deployed server\nshould still have a shop. Without 128 a product simply has no attachment.\n\nNOT HERE: buying. This is the catalogue — the tables, the admin screens and the\nshop front. Checkout is its own piece of work and has not been built.",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "admin",
+            "description": "Everything behind the dashboard. Every request here needs `admin_token` and the\n`manage_products` permission — which is separate from `manage_books` on purpose:\nwhoever prices the school bags is not necessarily whoever uploads the PDFs.",
+            "item": [
+                {
+                    "name": "Product Categories",
+                    "description": "The store's own categories. Run Create first — it fills `product_category_id`.",
+                    "item": [
+                        {
+                            "name": "List product categories",
+                            "request": {
+                                "method": "GET",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/product-categories?page={{page}}&limit={{limit}}",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "product-categories"
+                                    ],
+                                    "query": [
+                                        {
+                                            "key": "page",
+                                            "value": "{{page}}",
+                                            "description": "Page number."
+                                        },
+                                        {
+                                            "key": "limit",
+                                            "value": "{{limit}}",
+                                            "description": "Rows per page, max 100."
+                                        },
+                                        {
+                                            "key": "search",
+                                            "value": "",
+                                            "description": "Matches the code or any translated name.",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "is_active",
+                                            "value": "1",
+                                            "description": "Filter by status.",
+                                            "disabled": true
+                                        }
+                                    ]
+                                },
+                                "description": "Product categories, each with `products_count`.\n\nThese are the STORE's categories, not the courses'. \"School Bags\" is not a course category and the two lists are deliberately separate.\n\nPermission: `manage_products`."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Show product category",
+                            "request": {
+                                "method": "GET",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/product-categories/show?id={{product_category_id}}",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "product-categories",
+                                        "show"
+                                    ],
+                                    "query": [
+                                        {
+                                            "key": "id",
+                                            "value": "{{product_category_id}}",
+                                            "description": "The category id."
+                                        }
+                                    ]
+                                },
+                                "description": "One category with its translations.\n\nPermission: `manage_products`."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Create product category",
+                            "request": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/product-categories",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "product-categories"
+                                    ]
+                                },
+                                "description": "Creates a category and stores this request's id in `product_category_id`.\n\nAt least one of `name_ar` / `name_en` is required. `code` is generated from the name when omitted — including from an Arabic-only name, which an older generator used to collapse to a single dash.\n\n`image` also accepts a URL, a stored path, or a base64 data URI.\n\nPermission: `manage_products`.",
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"name_ar\": \"حقائب مدرسية\",\n    \"name_en\": \"School Bags\",\n    \"description_ar\": \"حقائب وشنط للطلاب\",\n    \"description_en\": \"Bags and backpacks for students\",\n    \"order_num\": 1,\n    \"is_active\": 1\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                }
+                            },
+                            "response": [],
+                            "event": [
+                                {
+                                    "listen": "test",
+                                    "script": {
+                                        "type": "text/javascript",
+                                        "exec": [
+                                            "const body = pm.response.json();",
+                                            "const value = body?.data?.id;",
+                                            "if (value !== undefined && value !== null) {",
+                                            "  pm.environment.set(\"product_category_id\", value);",
+                                            "  console.log(\"product_category_id =\", value);",
+                                            "} else {",
+                                            "  console.warn(\"No id in the response:\", body?.message);",
+                                            "}"
+                                        ]
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "name": "Update product category",
+                            "request": {
+                                "method": "PUT",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/product-categories",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "product-categories"
+                                    ]
+                                },
+                                "description": "Only the fields present in the body are written. Everything else is left alone.\n\nPermission: `manage_products`.",
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"id\": \"{{product_category_id}}\",\n    \"name_ar\": \"حقائب وشنط مدرسية\",\n    \"order_num\": 2,\n    \"is_active\": 1\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                }
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Delete product category",
+                            "request": {
+                                "method": "DELETE",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/product-categories",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "product-categories"
+                                    ]
+                                },
+                                "description": "Deletes the category. THE PRODUCTS SURVIVE — `product_category_id` is ON DELETE SET NULL, so the shelf is emptied rather than the stock on it destroyed.\n\nThe response reports `uncategorised_products`, because \"deleted\" on a screen listing 40 products should not leave you guessing whether the 40 went with it.\n\nPermission: `manage_products`.",
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"id\": \"{{product_category_id}}\"\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                }
+                            },
+                            "response": []
+                        }
+                    ]
+                },
+                {
+                    "name": "Products",
+                    "description": "Create fills `product_id`, which the rest of the folder uses.",
+                    "item": [
+                        {
+                            "name": "List products",
+                            "request": {
+                                "method": "GET",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products?page={{page}}&limit={{limit}}",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products"
+                                    ],
+                                    "query": [
+                                        {
+                                            "key": "page",
+                                            "value": "{{page}}",
+                                            "description": "Page number."
+                                        },
+                                        {
+                                            "key": "limit",
+                                            "value": "{{limit}}",
+                                            "description": "Rows per page, max 100."
+                                        },
+                                        {
+                                            "key": "search",
+                                            "value": "",
+                                            "description": "Matches name, description, slug or SKU.",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "category_id",
+                                            "value": "{{product_category_id}}",
+                                            "description": "One product category.",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "min_price",
+                                            "value": "",
+                                            "description": "Applied to the EFFECTIVE price, so a product on sale is filtered at what it actually costs.",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "max_price",
+                                            "value": "",
+                                            "description": "Same.",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "in_stock",
+                                            "value": "1",
+                                            "description": "Only products that can be bought (stock null or above zero).",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "is_active",
+                                            "value": "1",
+                                            "description": "Filter by status. Admin only — the store never shows inactive products.",
+                                            "disabled": true
+                                        }
+                                    ]
+                                },
+                                "description": "All products, active and not.\n\n`statistics` carries the total / active / inactive / out-of-stock counts.\n\nPermission: `manage_products`."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Show product",
+                            "request": {
+                                "method": "GET",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products/show?id={{product_id}}",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products",
+                                        "show"
+                                    ],
+                                    "query": [
+                                        {
+                                            "key": "id",
+                                            "value": "{{product_id}}",
+                                            "description": "The product id."
+                                        }
+                                    ]
+                                },
+                                "description": "One product with its translations, its category and its attachment.\n\nUnlike the store, this always returns `file_path` — the admin owns the file regardless of `file_is_public`.\n\nPermission: `manage_products`."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Create product",
+                            "request": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products"
+                                    ]
+                                },
+                                "description": "Creates a product and stores its id in `product_id`.\n\nTWO FIELDS MEAN MORE THAN THEY LOOK:\n\n  sale_price   null = not on sale    0 = deliberately free\n  stock        null = not tracked    0 = out of stock\n\nSending 0 for a field you meant to leave blank marks the product free and sold out. Omit them instead.\n\nA `sale_price` above `price` is refused. `effective_price`, `is_on_sale`, `discount_percent` and `is_stock_tracked` come back computed — a sale price that each screen applies for itself is one they eventually disagree about.\n\n`slug` is generated from the name when omitted, Arabic included, and walks to `-2` on a clash.\n\nPermission: `manage_products`.",
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"name_ar\": \"حقيبة مدرسية ظهر\",\n    \"name_en\": \"School Backpack\",\n    \"description_ar\": \"حقيبة ظهر مقاومة للماء\",\n    \"description_en\": \"Water-resistant backpack\",\n    \"product_category_id\": \"{{product_category_id}}\",\n    \"sku\": \"BAG-001\",\n    \"price\": 450,\n    \"sale_price\": 360,\n    \"currency\": \"EGP\",\n    \"stock\": 12,\n    \"is_active\": 1,\n    \"show_on_website\": 1,\n    \"order_num\": 1\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                }
+                            },
+                            "response": [],
+                            "event": [
+                                {
+                                    "listen": "test",
+                                    "script": {
+                                        "type": "text/javascript",
+                                        "exec": [
+                                            "const body = pm.response.json();",
+                                            "const value = body?.data?.id;",
+                                            "if (value !== undefined && value !== null) {",
+                                            "  pm.environment.set(\"product_id\", value);",
+                                            "  console.log(\"product_id =\", value);",
+                                            "} else {",
+                                            "  console.warn(\"No id in the response:\", body?.message);",
+                                            "}"
+                                        ]
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "name": "Create product — minimal",
+                            "request": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products"
+                                    ]
+                                },
+                                "description": "The smallest body that works: a name and a price.\n\nNo category (uncategorised), no sale price (not on sale), no stock (not tracked, so it never reads as sold out).\n\nPermission: `manage_products`.",
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"name_ar\": \"طقم أقلام ملونة\",\n    \"price\": 75\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                }
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Update product",
+                            "request": {
+                                "method": "PUT",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products"
+                                    ]
+                                },
+                                "description": "Only the fields present in the body are written.\n\nBOTH prices are resolved to what they WILL be after the update and checked against each other once. Sending `price` alone, below a sale price already stored, is refused — otherwise the discount would cost more than the product, and lowering a price is the ordinary way that happens.\n\nTo clear the sale price send `\"sale_price\": null`. To stop tracking stock send `\"stock\": null`.\n\nPermission: `manage_products`.",
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"id\": \"{{product_id}}\",\n    \"price\": 400,\n    \"sale_price\": 320,\n    \"stock\": 8\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                }
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Toggle store visibility",
+                            "request": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products/toggle-website-visibility",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products",
+                                        "toggle-website-visibility"
+                                    ]
+                                },
+                                "description": "Flips `show_on_website` and returns the result. The same one-click toggle courses and books have.\n\nA hidden product stays in the admin list and disappears from `/store`.\n\nPermission: `manage_products`.",
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"id\": \"{{product_id}}\"\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                }
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Delete product",
+                            "request": {
+                                "method": "DELETE",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products"
+                                    ]
+                                },
+                                "description": "Permanent. Its translations go with it (ON DELETE CASCADE).\n\nPermission: `manage_products`.",
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"id\": \"{{product_id}}\"\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                }
+                            },
+                            "response": []
+                        }
+                    ]
+                },
+                {
+                    "name": "Product Files",
+                    "description": "Attaching a file of ANY type, and the two requests that prove the guard works.",
+                    "item": [
+                        {
+                            "name": "Upload product file (multipart)",
+                            "request": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    }
+                                ],
+                                "body": {
+                                    "mode": "formdata",
+                                    "formdata": [
+                                        {
+                                            "key": "name_ar",
+                                            "value": "مخطط هندسي",
+                                            "type": "text",
+                                            "description": "Product name."
+                                        },
+                                        {
+                                            "key": "price",
+                                            "value": "500",
+                                            "type": "text",
+                                            "description": "Price."
+                                        },
+                                        {
+                                            "key": "file",
+                                            "type": "file",
+                                            "src": [],
+                                            "description": "ANY file type. Pick one from disk — .dwg, .ttf, .apk, .7z, .stl, anything that is not executable."
+                                        },
+                                        {
+                                            "key": "file_is_public",
+                                            "value": "0",
+                                            "type": "text",
+                                            "description": "0 = only the admin gets the path. 1 = the store serves it to anyone."
+                                        }
+                                    ]
+                                },
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products"
+                                    ]
+                                },
+                                "description": "Creates a product WITH a file, as multipart — which is how the dashboard sends a real upload.\n\nANY extension is accepted EXCEPT what a web server might run: php, phtml, exe, sh, jar, htaccess and the rest. Every segment of the name is checked, so `invoice.pdf.php` is refused as well as `shell.php`.\n\nThe name on disk is always generated; the name you uploaded is stored separately and used only for the download and the screen.\n\nIf the file is refused the PRODUCT IS STILL CREATED, and the message says why — look for `data.file_warning`.\n\nPermission: `manage_products`."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Attach file by data URI",
+                            "request": {
+                                "method": "PUT",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products"
+                                    ]
+                                },
+                                "description": "The JSON way to attach a file: a base64 data URI of ANY media type.\n\nSEND `file_name`. Without it the extension is guessed from the mime subtype, and guessing an extension from a subtype is exactly the hole that once let \"data:image/php;base64,...\" write a webshell — so the subtype is a last resort and is run through the same deny-list.\n\nCeiling: 25 MiB decoded. Apache also caps the whole request at 20 MiB, so 20 MiB is the real limit.\n\nPermission: `manage_products`.",
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"id\": \"{{product_id}}\",\n    \"file\": \"data:application/acad;base64,QUJDREVG\",\n    \"file_name\": \"Final drawing.dwg\",\n    \"file_is_public\": 0\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                }
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Make the file public",
+                            "request": {
+                                "method": "PUT",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products"
+                                    ]
+                                },
+                                "description": "Hands the download link to the shop front.\n\nDefault is 0 — NOT public — because a product file may well BE the thing being sold, and there is no checkout yet to gate it behind. Set 1 for something meant for everyone, like a spec sheet.\n\nPermission: `manage_products`.",
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"id\": \"{{product_id}}\",\n    \"file_is_public\": 1\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                }
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Remove the file",
+                            "request": {
+                                "method": "PUT",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products"
+                                    ]
+                                },
+                                "description": "An explicit null removes the attachment.\n\nAn ABSENT `file` means \"keep the one it has\" — the two are told apart, so saving a product after editing its price does not wipe its file.\n\nPermission: `manage_products`.",
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"id\": \"{{product_id}}\",\n    \"file\": null\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                }
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Rejected: executable file",
+                            "request": {
+                                "method": "PUT",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products"
+                                    ]
+                                },
+                                "description": "Here to be run, not avoided: it SHOULD fail.\n\nExpect the product to save and the message to say the file was refused. Try `invoice.pdf.php` too — the double extension is refused the same way.\n\nIf a file like this ever lands in uploads/, something is wrong: say so rather than working around it.",
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"id\": \"{{product_id}}\",\n    \"file\": \"data:text/plain;base64,PD9waHAgZWNobyAxOw==\",\n    \"file_name\": \"shell.php\"\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                }
+                            },
+                            "response": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "user",
+            "description": "The shop front, as a student or a signed-out visitor sees it.\n\n/store takes an optional student token: remove the Authorization header and it\nstill answers. The other two take none at all.",
+            "item": [
+                {
+                    "name": "Store",
+                    "item": [
+                        {
+                            "name": "Browse the store",
+                            "request": {
+                                "method": "GET",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{student_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/store?page={{page}}&limit={{limit}}",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "store"
+                                    ],
+                                    "query": [
+                                        {
+                                            "key": "page",
+                                            "value": "{{page}}",
+                                            "description": "Page number."
+                                        },
+                                        {
+                                            "key": "limit",
+                                            "value": "{{limit}}",
+                                            "description": "Items per page, max 100."
+                                        },
+                                        {
+                                            "key": "type",
+                                            "value": "",
+                                            "description": "product | book. Omit for both.",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "category_id",
+                                            "value": "",
+                                            "description": "A PRODUCT category. Books have none, so passing this excludes them — the response says so in applied_filters.books_excluded_reason.",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "search",
+                                            "value": "",
+                                            "description": "Matches the name or description.",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "min_price",
+                                            "value": "",
+                                            "description": "On the effective price.",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "max_price",
+                                            "value": "",
+                                            "description": "On the effective price.",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "in_stock",
+                                            "value": "1",
+                                            "description": "Only what can be bought.",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "sort",
+                                            "value": "newest",
+                                            "description": "newest | oldest | price_asc | price_desc | name.",
+                                            "disabled": true
+                                        }
+                                    ]
+                                },
+                                "description": "The shop front: products AND standalone books in ONE list, one shape, one sort.\n\nEvery entry carries `item_type` ('product' or 'book'), and the `id` is unique only WITHIN its type. Key on the pair — an id that silently means two different things in two tables is how a cart buys the wrong row.\n\nAUTH IS OPTIONAL. Remove the Authorization header and it still works: a visitor sees what is on sale. Signed in, books additionally carry `own` and `is_locked`.\n\n`statistics` splits the count into products and books."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Browse — products only",
+                            "request": {
+                                "method": "GET",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{student_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/store?type=product&limit={{limit}}",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "store"
+                                    ],
+                                    "query": [
+                                        {
+                                            "key": "type",
+                                            "value": "product",
+                                            "description": "Products only."
+                                        },
+                                        {
+                                            "key": "limit",
+                                            "value": "{{limit}}",
+                                            "description": ""
+                                        }
+                                    ]
+                                },
+                                "description": "Products without the books.\n\nUseful for telling the two sources apart while checking a number that looks wrong — `/store` returning more than you expect is usually both kinds counted together."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Browse — cheapest first",
+                            "request": {
+                                "method": "GET",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{student_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/store?sort=price_asc&limit={{limit}}",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "store"
+                                    ],
+                                    "query": [
+                                        {
+                                            "key": "sort",
+                                            "value": "price_asc",
+                                            "description": "Cheapest first."
+                                        },
+                                        {
+                                            "key": "limit",
+                                            "value": "{{limit}}",
+                                            "description": ""
+                                        }
+                                    ]
+                                },
+                                "description": "Sorted on `effective_price`, so a discounted product sorts at what it actually costs rather than at its list price."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Store categories",
+                            "request": {
+                                "method": "GET",
+                                "header": [
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/store/categories",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "store",
+                                        "categories"
+                                    ],
+                                    "query": [
+                                        {
+                                            "key": "hide_empty",
+                                            "value": "1",
+                                            "description": "Drop categories with no live products.",
+                                            "disabled": true
+                                        }
+                                    ]
+                                },
+                                "description": "The active product categories a shopper may browse, each with `products_count` — how many live products it holds, so the shop front can hide an empty shelf instead of opening one.\n\nNO AUTH. Names come back in the request's language (`Accept-Language`), falling back to any translation and then to the code."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Show one product",
+                            "request": {
+                                "method": "GET",
+                                "header": [
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{base_url}}/store/products/show?id={{product_id}}",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "store",
+                                        "products",
+                                        "show"
+                                    ],
+                                    "query": [
+                                        {
+                                            "key": "id",
+                                            "value": "{{product_id}}",
+                                            "description": "By id."
+                                        },
+                                        {
+                                            "key": "slug",
+                                            "value": "",
+                                            "description": "Or by slug, which is what a public URL would carry.",
+                                            "disabled": true
+                                        }
+                                    ]
+                                },
+                                "description": "One product, in the same shape the store list uses. Takes `id` OR `slug`.\n\nONLY a live, visible product — this is the shopper's view, not the admin's. An inactive or hidden product returns \"not found\" rather than a card nobody should see.\n\nThe attachment is described (`has_file`, `file_name`, `file_extension`, `file_size_label`) but `file_path` comes back ONLY when `file_is_public` is 1.\n\nNO AUTH."
+                            },
+                            "response": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "variable": [
+        {
+            "key": "product_id",
+            "value": "",
+            "type": "string"
+        },
+        {
+            "key": "product_category_id",
+            "value": "",
+            "type": "string"
+        }
+    ]
+}
