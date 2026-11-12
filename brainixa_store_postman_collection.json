@@ -120,13 +120,55 @@
                                         "key": "Accept-Language",
                                         "value": "{{lang}}",
                                         "type": "text"
-                                    },
-                                    {
-                                        "key": "Content-Type",
-                                        "value": "application/json",
-                                        "type": "text"
                                     }
                                 ],
+                                "body": {
+                                    "mode": "formdata",
+                                    "formdata": [
+                                        {
+                                            "key": "name_ar",
+                                            "value": "حقائب مدرسية",
+                                            "type": "text",
+                                            "description": "Required unless name_en is given."
+                                        },
+                                        {
+                                            "key": "name_en",
+                                            "value": "School Bags",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "description_ar",
+                                            "value": "حقائب وشنط للطلاب",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "description_en",
+                                            "value": "Bags and backpacks for students",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "image",
+                                            "type": "file",
+                                            "src": [],
+                                            "description": "PICK A FILE. Leave the row empty to create the category without one."
+                                        },
+                                        {
+                                            "key": "order_num",
+                                            "value": "1",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "is_active",
+                                            "value": "1",
+                                            "type": "text",
+                                            "description": ""
+                                        }
+                                    ]
+                                },
                                 "url": {
                                     "raw": "{{base_url}}/admin/product-categories",
                                     "host": [
@@ -137,16 +179,7 @@
                                         "product-categories"
                                     ]
                                 },
-                                "description": "Creates a category and stores this request's id in `product_category_id`.\n\nAt least one of `name_ar` / `name_en` is required. `code` is generated from the name when omitted — including from an Arabic-only name, which an older generator used to collapse to a single dash.\n\n`image` also accepts a URL, a stored path, or a base64 data URI.\n\nPermission: `manage_products`.",
-                                "body": {
-                                    "mode": "raw",
-                                    "raw": "{\n    \"name_ar\": \"حقائب مدرسية\",\n    \"name_en\": \"School Bags\",\n    \"description_ar\": \"حقائب وشنط للطلاب\",\n    \"description_en\": \"Bags and backpacks for students\",\n    \"order_num\": 1,\n    \"is_active\": 1\n}",
-                                    "options": {
-                                        "raw": {
-                                            "language": "json"
-                                        }
-                                    }
-                                }
+                                "description": "Creates a category and stores its id in `product_category_id`.\n\nFORM-DATA, so the image is a real file picked from disk — the `image` row's value box turns into a Select Files button. Leave it empty and the category is created without a picture; an empty row is \"nothing chosen\", never \"remove the picture\".\n\nAt least one of `name_ar` / `name_en` is required. `code` is generated from the name when omitted, Arabic included.\n\nIf you would rather send a URL or a base64 data URI than a file, use the JSON variant below.\n\nPermission: `manage_products`."
                             },
                             "response": [],
                             "event": [
@@ -169,9 +202,9 @@
                             ]
                         },
                         {
-                            "name": "Update product category",
+                            "name": "Create product category — JSON",
                             "request": {
-                                "method": "PUT",
+                                "method": "POST",
                                 "header": [
                                     {
                                         "key": "Authorization",
@@ -199,16 +232,88 @@
                                         "product-categories"
                                     ]
                                 },
-                                "description": "Only the fields present in the body are written. Everything else is left alone.\n\nPermission: `manage_products`.",
+                                "description": "The same thing as JSON, for when the image is a URL, a path already on the server, or a base64 data URI rather than a file on your disk.\n\nUse the form-data request above to upload an actual file.\n\nPermission: `manage_products`.",
                                 "body": {
                                     "mode": "raw",
-                                    "raw": "{\n    \"id\": \"{{product_category_id}}\",\n    \"name_ar\": \"حقائب وشنط مدرسية\",\n    \"order_num\": 2,\n    \"is_active\": 1\n}",
+                                    "raw": "{\n    \"name_ar\": \"أدوات كتابية\",\n    \"name_en\": \"Stationery\",\n    \"image\": \"https://example.com/stationery.png\",\n    \"order_num\": 2,\n    \"is_active\": 1\n}",
                                     "options": {
                                         "raw": {
                                             "language": "json"
                                         }
                                     }
                                 }
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Update product category",
+                            "request": {
+                                "method": "PUT",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    }
+                                ],
+                                "body": {
+                                    "mode": "formdata",
+                                    "formdata": [
+                                        {
+                                            "key": "id",
+                                            "value": "{{product_category_id}}",
+                                            "type": "text",
+                                            "description": "Required."
+                                        },
+                                        {
+                                            "key": "name_ar",
+                                            "value": "حقائب وشنط مدرسية",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "name_en",
+                                            "value": "",
+                                            "type": "text",
+                                            "description": "",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "image",
+                                            "type": "file",
+                                            "src": [],
+                                            "description": "Pick a new file to replace the picture. Leave empty to keep the current one."
+                                        },
+                                        {
+                                            "key": "order_num",
+                                            "value": "2",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "is_active",
+                                            "value": "1",
+                                            "type": "text",
+                                            "description": ""
+                                        }
+                                    ]
+                                },
+                                "url": {
+                                    "raw": "{{base_url}}/admin/product-categories",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "product-categories"
+                                    ]
+                                },
+                                "description": "Only the fields present are written; everything else is left alone.\n\nPUT AS FORM-DATA WORKS HERE. PHP itself parses multipart only for POST, but this API parses a PUT body by hand and fills $_FILES the same way — so replacing a picture does not need a different verb.\n\nAn empty `image` row keeps the existing picture. Disabled rows are not sent at all, which is how you update one field without touching the rest.\n\nPermission: `manage_products`."
                             },
                             "response": []
                         },
@@ -392,13 +497,109 @@
                                         "key": "Accept-Language",
                                         "value": "{{lang}}",
                                         "type": "text"
-                                    },
-                                    {
-                                        "key": "Content-Type",
-                                        "value": "application/json",
-                                        "type": "text"
                                     }
                                 ],
+                                "body": {
+                                    "mode": "formdata",
+                                    "formdata": [
+                                        {
+                                            "key": "name_ar",
+                                            "value": "حقيبة مدرسية ظهر",
+                                            "type": "text",
+                                            "description": "Required unless name_en is given."
+                                        },
+                                        {
+                                            "key": "name_en",
+                                            "value": "School Backpack",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "description_ar",
+                                            "value": "حقيبة ظهر مقاومة للماء",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "description_en",
+                                            "value": "Water-resistant backpack",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "product_category_id",
+                                            "value": "{{product_category_id}}",
+                                            "type": "text",
+                                            "description": "Filled by Create product category."
+                                        },
+                                        {
+                                            "key": "sku",
+                                            "value": "BAG-001",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "price",
+                                            "value": "450",
+                                            "type": "text",
+                                            "description": "Required."
+                                        },
+                                        {
+                                            "key": "sale_price",
+                                            "value": "360",
+                                            "type": "text",
+                                            "description": "Leave the row EMPTY for \"not on sale\". 0 means deliberately free."
+                                        },
+                                        {
+                                            "key": "currency",
+                                            "value": "EGP",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "stock",
+                                            "value": "12",
+                                            "type": "text",
+                                            "description": "Leave the row EMPTY for \"not tracked\". 0 means out of stock."
+                                        },
+                                        {
+                                            "key": "image",
+                                            "type": "file",
+                                            "src": [],
+                                            "description": "The product picture. Pick a file."
+                                        },
+                                        {
+                                            "key": "file",
+                                            "type": "file",
+                                            "src": [],
+                                            "description": "The attachment — ANY type except executables. Pick a file, or leave empty."
+                                        },
+                                        {
+                                            "key": "file_is_public",
+                                            "value": "0",
+                                            "type": "text",
+                                            "description": "0 = only the admin gets the path. 1 = the store serves it to anyone."
+                                        },
+                                        {
+                                            "key": "is_active",
+                                            "value": "1",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "show_on_website",
+                                            "value": "1",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "order_num",
+                                            "value": "1",
+                                            "type": "text",
+                                            "description": ""
+                                        }
+                                    ]
+                                },
                                 "url": {
                                     "raw": "{{base_url}}/admin/products",
                                     "host": [
@@ -409,16 +610,7 @@
                                         "products"
                                     ]
                                 },
-                                "description": "Creates a product and stores its id in `product_id`.\n\nTWO FIELDS MEAN MORE THAN THEY LOOK:\n\n  sale_price   null = not on sale    0 = deliberately free\n  stock        null = not tracked    0 = out of stock\n\nSending 0 for a field you meant to leave blank marks the product free and sold out. Omit them instead.\n\nA `sale_price` above `price` is refused. `effective_price`, `is_on_sale`, `discount_percent` and `is_stock_tracked` come back computed — a sale price that each screen applies for itself is one they eventually disagree about.\n\n`slug` is generated from the name when omitted, Arabic included, and walks to `-2` on a clash.\n\nPermission: `manage_products`.",
-                                "body": {
-                                    "mode": "raw",
-                                    "raw": "{\n    \"name_ar\": \"حقيبة مدرسية ظهر\",\n    \"name_en\": \"School Backpack\",\n    \"description_ar\": \"حقيبة ظهر مقاومة للماء\",\n    \"description_en\": \"Water-resistant backpack\",\n    \"product_category_id\": \"{{product_category_id}}\",\n    \"sku\": \"BAG-001\",\n    \"price\": 450,\n    \"sale_price\": 360,\n    \"currency\": \"EGP\",\n    \"stock\": 12,\n    \"is_active\": 1,\n    \"show_on_website\": 1,\n    \"order_num\": 1\n}",
-                                    "options": {
-                                        "raw": {
-                                            "language": "json"
-                                        }
-                                    }
-                                }
+                                "description": "Creates a product WITH its picture and its attachment in one request, and stores the new id in `product_id`.\n\nFORM-DATA, because that is how a file is actually sent. The `image` and `file` rows are file pickers — click Select Files. Leave either empty and the product is created without it; an empty row is \"nothing chosen\", never \"remove it\".\n\nTWO FIELDS MEAN MORE THAN THEY LOOK:\n\n  sale_price   empty = not on sale     0 = deliberately free\n  stock        empty = not tracked     0 = out of stock\n\nTyping 0 into a row you meant to leave blank marks the product free and sold out. Clear the row instead.\n\n`file` takes ANY extension except what a web server might run (php, exe, sh, jar, htaccess…), and every segment of the name is checked, so `invoice.pdf.php` is refused too. If the file is refused the PRODUCT IS STILL CREATED and the message says why — look for `data.file_warning`.\n\nA `sale_price` above `price` is refused outright. `effective_price`, `is_on_sale`, `discount_percent` and `is_stock_tracked` come back computed.\n\nPermission: `manage_products`."
                             },
                             "response": [],
                             "event": [
@@ -441,7 +633,7 @@
                             ]
                         },
                         {
-                            "name": "Create product — minimal",
+                            "name": "Create product — JSON, no files",
                             "request": {
                                 "method": "POST",
                                 "header": [
@@ -471,7 +663,7 @@
                                         "products"
                                     ]
                                 },
-                                "description": "The smallest body that works: a name and a price.\n\nNo category (uncategorised), no sale price (not on sale), no stock (not tracked, so it never reads as sold out).\n\nPermission: `manage_products`.",
+                                "description": "The smallest body that works: a name and a price. JSON, because there is nothing to upload.\n\nNo category (uncategorised), no sale price (not on sale), no stock (not tracked, so it never reads as sold out).\n\nUse this shape when the image is a URL or a base64 data URI rather than a file on your disk. To upload real files, use the form-data request above.\n\nPermission: `manage_products`.",
                                 "body": {
                                     "mode": "raw",
                                     "raw": "{\n    \"name_ar\": \"طقم أقلام ملونة\",\n    \"price\": 75\n}",
@@ -486,6 +678,105 @@
                         },
                         {
                             "name": "Update product",
+                            "request": {
+                                "method": "PUT",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "{{admin_token}}",
+                                        "type": "text"
+                                    },
+                                    {
+                                        "key": "Accept-Language",
+                                        "value": "{{lang}}",
+                                        "type": "text"
+                                    }
+                                ],
+                                "body": {
+                                    "mode": "formdata",
+                                    "formdata": [
+                                        {
+                                            "key": "id",
+                                            "value": "{{product_id}}",
+                                            "type": "text",
+                                            "description": "Required."
+                                        },
+                                        {
+                                            "key": "price",
+                                            "value": "400",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "sale_price",
+                                            "value": "320",
+                                            "type": "text",
+                                            "description": "Empty row = leave it as it is. To CLEAR a sale price, use the JSON variant and send null."
+                                        },
+                                        {
+                                            "key": "stock",
+                                            "value": "8",
+                                            "type": "text",
+                                            "description": ""
+                                        },
+                                        {
+                                            "key": "image",
+                                            "type": "file",
+                                            "src": [],
+                                            "description": "Pick a new picture to replace the current one. Empty keeps it."
+                                        },
+                                        {
+                                            "key": "file",
+                                            "type": "file",
+                                            "src": [],
+                                            "description": "Pick a new attachment to replace the current one. Empty keeps it."
+                                        },
+                                        {
+                                            "key": "file_is_public",
+                                            "value": "0",
+                                            "type": "text",
+                                            "description": "",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "name_ar",
+                                            "value": "",
+                                            "type": "text",
+                                            "description": "",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "is_active",
+                                            "value": "1",
+                                            "type": "text",
+                                            "description": "",
+                                            "disabled": true
+                                        },
+                                        {
+                                            "key": "show_on_website",
+                                            "value": "1",
+                                            "type": "text",
+                                            "description": "",
+                                            "disabled": true
+                                        }
+                                    ]
+                                },
+                                "url": {
+                                    "raw": "{{base_url}}/admin/products",
+                                    "host": [
+                                        "{{base_url}}"
+                                    ],
+                                    "path": [
+                                        "admin",
+                                        "products"
+                                    ]
+                                },
+                                "description": "Only the fields present are written.\n\nPUT AS FORM-DATA WORKS. PHP parses multipart for POST only, but this API parses a PUT body by hand and fills $_FILES itself — so replacing a picture or an attachment is an ordinary update, not a special endpoint.\n\nAn empty `image` or `file` row KEEPS what is there. That matters: the dashboard posts this form every time a price changes, and a blank row that meant \"delete\" would wipe the picture on every save.\n\nBOTH prices are resolved to what they WILL be after the update and checked against each other once. Sending `price` alone, below a sale price already stored, is refused — otherwise the discount costs more than the product, and lowering a price is the ordinary way that happens.\n\nClearing a value needs an explicit null, which form-data cannot express — use the JSON variant below for that.\n\nPermission: `manage_products`."
+                            },
+                            "response": []
+                        },
+                        {
+                            "name": "Update product — JSON, clearing values",
                             "request": {
                                 "method": "PUT",
                                 "header": [
@@ -515,10 +806,10 @@
                                         "products"
                                     ]
                                 },
-                                "description": "Only the fields present in the body are written.\n\nBOTH prices are resolved to what they WILL be after the update and checked against each other once. Sending `price` alone, below a sale price already stored, is refused — otherwise the discount would cost more than the product, and lowering a price is the ordinary way that happens.\n\nTo clear the sale price send `\"sale_price\": null`. To stop tracking stock send `\"stock\": null`.\n\nPermission: `manage_products`.",
+                                "description": "JSON, because only JSON can say null — and null is the one thing form-data cannot express.\n\n  \"sale_price\": null   the product is no longer on sale\n  \"stock\": null        stop tracking stock; it stops reading as sold out\n  \"file\": null         remove the attachment\n  \"image\": null        remove the picture\n\nAn ABSENT field means \"leave it alone\". An explicit null means \"clear it\". The two are deliberately different, which is what lets the form-data request above save without destroying anything.\n\nPermission: `manage_products`.",
                                 "body": {
                                     "mode": "raw",
-                                    "raw": "{\n    \"id\": \"{{product_id}}\",\n    \"price\": 400,\n    \"sale_price\": 320,\n    \"stock\": 8\n}",
+                                    "raw": "{\n    \"id\": \"{{product_id}}\",\n    \"sale_price\": null,\n    \"stock\": null\n}",
                                     "options": {
                                         "raw": {
                                             "language": "json"
@@ -624,9 +915,9 @@
                     "description": "Attaching a file of ANY type, and the two requests that prove the guard works.",
                     "item": [
                         {
-                            "name": "Upload product file (multipart)",
+                            "name": "Replace the attachment",
                             "request": {
-                                "method": "POST",
+                                "method": "PUT",
                                 "header": [
                                     {
                                         "key": "Authorization",
@@ -643,22 +934,23 @@
                                     "mode": "formdata",
                                     "formdata": [
                                         {
-                                            "key": "name_ar",
-                                            "value": "مخطط هندسي",
+                                            "key": "id",
+                                            "value": "{{product_id}}",
                                             "type": "text",
-                                            "description": "Product name."
-                                        },
-                                        {
-                                            "key": "price",
-                                            "value": "500",
-                                            "type": "text",
-                                            "description": "Price."
+                                            "description": "Required."
                                         },
                                         {
                                             "key": "file",
                                             "type": "file",
                                             "src": [],
-                                            "description": "ANY file type. Pick one from disk — .dwg, .ttf, .apk, .7z, .stl, anything that is not executable."
+                                            "description": "ANY file type — .dwg, .ttf, .apk, .7z, .stl, anything that is not executable."
+                                        },
+                                        {
+                                            "key": "file_name",
+                                            "value": "",
+                                            "type": "text",
+                                            "description": "Optional. The upload already carries its own name; this overrides it.",
+                                            "disabled": true
                                         },
                                         {
                                             "key": "file_is_public",
@@ -678,7 +970,7 @@
                                         "products"
                                     ]
                                 },
-                                "description": "Creates a product WITH a file, as multipart — which is how the dashboard sends a real upload.\n\nANY extension is accepted EXCEPT what a web server might run: php, phtml, exe, sh, jar, htaccess and the rest. Every segment of the name is checked, so `invoice.pdf.php` is refused as well as `shell.php`.\n\nThe name on disk is always generated; the name you uploaded is stored separately and used only for the download and the screen.\n\nIf the file is refused the PRODUCT IS STILL CREATED, and the message says why — look for `data.file_warning`.\n\nPermission: `manage_products`."
+                                "description": "Swaps the attachment on an existing product, as multipart — the ordinary way a file is sent.\n\nANY extension EXCEPT what a web server might run: php, phtml, exe, sh, jar, htaccess and the rest. Every segment of the name is checked, so `invoice.pdf.php` is refused as well as `shell.php`.\n\nThe name on disk is always generated; the name you uploaded is stored separately and used only for the download and the screen.\n\nIf the file is refused the product STILL SAVES, and the message says why — look for `data.file_warning`. Deciding that a rejected picture should cancel a price change would be the wrong call.\n\nPermission: `manage_products`."
                             },
                             "response": []
                         },

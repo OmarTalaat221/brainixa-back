@@ -272,7 +272,7 @@ if (!function_exists('adminUpdateProductCategory')) {
             $params[] = generate_entity_code($con, 'product_categories', trim((string)$body['code']), 'category');
             $types .= 's';
         }
-        if (array_key_exists('image', $body) || !empty($_FILES['image'])) {
+        if (product_image_mentioned($body)) {
             $image = process_image_input($body['image'] ?? null, 'products', $_FILES['image'] ?? null);
             $fields[] = 'image = ?'; $params[] = $image; $types .= 's';
         }
@@ -335,6 +335,32 @@ if (!function_exists('adminDeleteProductCategory')) {
 
 /* ============================ المنتجات — Products ============================ */
 
+if (!function_exists('product_image_mentioned')) {
+    /**
+     * Whether this request is actually saying something about the image.
+     *
+     * A form-data request carries an `image` row whether or not a file was picked: the upload
+     * arrives as UPLOAD_ERR_NO_FILE and the text field as an empty string. Neither means "remove
+     * the image", so neither may reach the UPDATE - otherwise editing a price from the dashboard
+     * silently clears the picture.
+     */
+    function product_image_mentioned(array $body): bool {
+        $upload = $_FILES['image'] ?? null;
+        if (is_array($upload) && (int)($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+            return true;
+        }
+
+        if (!array_key_exists('image', $body)) {
+            return false;
+        }
+
+        $raw = $body['image'];
+
+        // An explicit null is a removal and does count. An empty string is a blank form row.
+        return !(is_string($raw) && trim($raw) === '');
+    }
+}
+
 if (!function_exists('product_file_size_label')) {
     /**
      * "2.4 MB", computed once here rather than in each client. Returns null for an absent size
@@ -382,17 +408,29 @@ if (!function_exists('product_file_fields_from_body')) {
             return [];
         }
 
-        $mentioned = array_key_exists('file', $body)
-            || array_key_exists('file_path', $body)
-            || !empty($_FILES['file'])
-            || !empty($_FILES['product_file']);
-
-        if (!$mentioned) {
-            return [];
+        // A form-data request carries a `file` row whether or not the person picked anything, and
+        // an empty one arrives as UPLOAD_ERR_NO_FILE. That is "nothing chosen", not "a file that
+        // failed" - treating it as the latter answers every ordinary save with a bogus "this file
+        // type is not allowed", and treating it as a removal would delete the attachment each
+        // time the price was edited from the dashboard.
+        $upload = $_FILES['file'] ?? $_FILES['product_file'] ?? null;
+        if (is_array($upload) && (int)($upload['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+            $upload = null;
         }
 
+        $rawGiven = array_key_exists('file', $body) || array_key_exists('file_path', $body);
         $raw = $body['file'] ?? $body['file_path'] ?? null;
-        $upload = $_FILES['file'] ?? $_FILES['product_file'] ?? null;
+
+        // The same for the text half: form-data sends an empty string for a row left blank, and
+        // an empty string is not a request to clear the file. Only an explicit JSON null is.
+        if ($rawGiven && is_string($raw) && trim($raw) === '') {
+            $rawGiven = false;
+            $raw = null;
+        }
+
+        if (!$rawGiven && $upload === null) {
+            return [];
+        }
 
         // The edit form prefills the field with the file's stored path, so an admin who changes
         // only the price posts that same path straight back. Treated as "unchanged" rather than
@@ -889,7 +927,7 @@ if (!function_exists('adminUpdateProduct')) {
             $stock = ($body['stock'] === null || trim((string)$body['stock']) === '') ? null : (int)$body['stock'];
             $fields[] = 'stock = ?'; $params[] = $stock; $types .= 'i';
         }
-        if (array_key_exists('image', $body) || !empty($_FILES['image'])) {
+        if (product_image_mentioned($body)) {
             $image = process_image_input($body['image'] ?? null, 'products', $_FILES['image'] ?? null);
             $fields[] = 'image = ?'; $params[] = $image; $types .= 's';
         }
