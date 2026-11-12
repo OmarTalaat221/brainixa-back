@@ -3355,6 +3355,13 @@ const productsCfg = {
           ? r.stock
           : '<span style="color:#e5484d">نفد</span>',
     },
+    {
+      label: "الملف",
+      render: (r) =>
+        !r.has_file
+          ? '<span style="color:var(--text-muted)">—</span>'
+          : `${escapeHtml((r.file_extension || "ملف").toUpperCase())}${r.file_size_label ? ` · ${escapeHtml(r.file_size_label)}` : ""}${r.file_is_public ? "" : " 🔒"}`,
+    },
     { label: "بالمتجر", render: (r) => (r.show_on_website ? "🌐 ظاهر" : "🙈 مخفي") },
     { label: "الحالة", render: (r) => statusBadge(r.is_active) },
   ],
@@ -3401,6 +3408,21 @@ const productsCfg = {
         <div class="field"><label>الترتيب</label><input type="number" id="f_order_num" value="${row?.order_num ?? 1}"></div>
       </div>
       ${imageFieldHtml("f_image", row?.image || "", { kind: "image", label: "صورة المنتج" })}
+      ${imageFieldHtml("f_file", row?.file_path || "", { kind: "file", label: "ملف المنتج (أي نوع — اختياري)" })}
+      <div class="field">
+        <small style="color:var(--text-muted)">
+          ${row?.has_file ? `الملف الحالي: <strong>${escapeHtml(row.file_name || "")}</strong>${row.file_size_label ? ` — ${escapeHtml(row.file_size_label)}` : ""}<br>` : ""}
+          أي امتداد مقبول عدا الملفات التنفيذية (php، exe، sh، jar…) لأنها تُنفَّذ على السيرفر.
+        </small>
+      </div>
+      <div class="field">
+        <label>من يرى رابط الملف؟</label>
+        <select id="f_file_public">
+          <option value="0" ${!row?.file_is_public ? "selected" : ""}>الإدارة فقط — الزائر يرى أن هناك ملفًا دون رابطه</option>
+          <option value="1" ${row?.file_is_public ? "selected" : ""}>الجميع — الملف يُحمَّل من المتجر مباشرة</option>
+        </select>
+        <small style="color:var(--text-muted)">لو الملف هو المنتج نفسه، اتركه على «الإدارة فقط» حتى تُبنى عملية الشراء.</small>
+      </div>
       <div class="grid-2">
         <div class="field"><label>مفعّل؟</label><select id="f_is_active"><option value="1" ${row?.is_active != 0 ? "selected" : ""}>نعم</option><option value="0" ${row?.is_active == 0 ? "selected" : ""}>لا</option></select></div>
         <div class="field"><label>يظهر بالمتجر؟</label><select id="f_show_site"><option value="1" ${row?.show_on_website != 0 ? "selected" : ""}>نعم</option><option value="0" ${row?.show_on_website == 0 ? "selected" : ""}>لا</option></select></div>
@@ -3408,6 +3430,7 @@ const productsCfg = {
   },
   async afterRender(row) {
     wireImageField("f_image");
+    wireImageField("f_file");
 
     const sel = document.getElementById("f_category");
     const cats = await loadProductCategories();
@@ -3443,6 +3466,11 @@ const productsCfg = {
       currency: document.getElementById("f_currency").value.trim() || "EGP",
       stock: stockRaw === "" ? null : Number(stockRaw),
       image: readImageField("f_image") || undefined,
+      // undefined, not null: the API reads an absent `file` as "leave the one it has" and an
+      // explicit null as "remove it". Sending null from an untouched form would wipe the
+      // attachment every time a price was edited.
+      file: readImageField("f_file") || undefined,
+      file_is_public: Number(document.getElementById("f_file_public").value),
       order_num: Number(document.getElementById("f_order_num").value) || 1,
       is_active: Number(document.getElementById("f_is_active").value),
       show_on_website: Number(document.getElementById("f_show_site").value),

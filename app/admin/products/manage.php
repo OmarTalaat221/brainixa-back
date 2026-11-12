@@ -335,6 +335,98 @@ if (!function_exists('adminDeleteProductCategory')) {
 
 /* ============================ المنتجات — Products ============================ */
 
+if (!function_exists('product_file_size_label')) {
+    /**
+     * "2.4 MB", computed once here rather than in each client. Returns null for an absent size
+     * rather than "0 B": a file whose size was never recorded is not a file of nothing.
+     */
+    function product_file_size_label($bytes): ?string {
+        if ($bytes === null || $bytes === '' || (int)$bytes <= 0) {
+            return null;
+        }
+        $bytes = (float)$bytes;
+        $units = ['B', 'KB', 'MB', 'GB'];
+        $i = 0;
+        while ($bytes >= 1024 && $i < count($units) - 1) {
+            $bytes /= 1024;
+            $i++;
+        }
+        return ($i === 0 ? (int)$bytes : round($bytes, 1)) . ' ' . $units[$i];
+    }
+}
+
+if (!function_exists('product_file_columns_ready')) {
+    /** Migration 128. Until it has run a product simply has no attachment. */
+    function product_file_columns_ready($con): bool {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+        $res = @mysqli_query($con, "SHOW COLUMNS FROM `products` LIKE 'file_path'");
+        $cached = $res && mysqli_num_rows($res) > 0;
+        return $cached;
+    }
+}
+
+if (!function_exists('product_file_fields_from_body')) {
+    /**
+     * The attachment off the request, as [column => value] ready to splice into an INSERT or an
+     * UPDATE. Returns an empty array when the body says nothing about a file, which is how a
+     * product is saved without touching the one it already has.
+     *
+     * `file: null` is an explicit "remove it", and is told apart from "not mentioned" - the same
+     * distinction the sale price and the stock make elsewhere in this file.
+     */
+    function product_file_fields_from_body($con, array $body, ?string $currentFilePath = null): array {
+        if (!product_file_columns_ready($con)) {
+            return [];
+        }
+
+        $mentioned = array_key_exists('file', $body)
+            || array_key_exists('file_path', $body)
+            || !empty($_FILES['file'])
+            || !empty($_FILES['product_file']);
+
+        if (!$mentioned) {
+            return [];
+        }
+
+        $raw = $body['file'] ?? $body['file_path'] ?? null;
+        $upload = $_FILES['file'] ?? $_FILES['product_file'] ?? null;
+
+        // The edit form prefills the field with the file's stored path, so an admin who changes
+        // only the price posts that same path straight back. Treated as "unchanged" rather than
+        // as a new file: re-processing it would derive the name from the path and overwrite
+        // "المخطط النهائي.dwg" with "file_6af58740033735.38251147.dwg", which is the name on disk
+        // and not a name anybody chose.
+        if (empty($upload) && is_string($raw) && $currentFilePath !== null && trim($raw) === $currentFilePath) {
+            return [];
+        }
+
+        // Explicitly cleared.
+        if ($raw === null && empty($upload)) {
+            return [
+                'file_path' => null,
+                'file_name' => null,
+                'file_extension' => null,
+                'file_size' => null,
+            ];
+        }
+
+        $result = process_any_file_input($raw, 'products', $upload, $body['file_name'] ?? null);
+        if ($result === null) {
+            return ['__error' => 'نوع الملف غير مسموح، أو تعذّر رفعه. الملفات التنفيذية مرفوضة.'];
+        }
+
+        return [
+            'file_path' => $result['path'],
+            'file_name' => $result['name'],
+            'file_extension' => $result['extension'] !== '' ? $result['extension'] : null,
+            'file_size' => $result['size'] > 0 ? $result['size'] : null,
+        ];
+    }
+}
+
 if (!function_exists('product_row')) {
     /**
      * One product in the shape both the admin list and the store use. `effective_price` is
@@ -367,6 +459,16 @@ if (!function_exists('product_row')) {
             'is_stock_tracked' => $stock !== null,
             'image' => $row['image'] ?? null,
             'gallery' => $row['gallery'] ? (json_decode($row['gallery'], true) ?: []) : [],
+            // The attachment. `file_path` is included here because this is the admin's shape;
+            // the store strips it unless the product says the file is public (see
+            // store_item_from_product), since a digital product's file IS the thing being sold.
+            'has_file' => !empty($row['file_path'] ?? null),
+            'file_path' => $row['file_path'] ?? null,
+            'file_name' => $row['file_name'] ?? null,
+            'file_extension' => $row['file_extension'] ?? null,
+            'file_size' => isset($row['file_size']) && $row['file_size'] !== null ? (int)$row['file_size'] : null,
+            'file_size_label' => product_file_size_label($row['file_size'] ?? null),
+            'file_is_public' => (int)($row['file_is_public'] ?? 0) === 1,
             'is_active' => (int)($row['is_active'] ?? 1),
             'show_on_website' => (int)($row['show_on_website'] ?? 1),
             'order_num' => (int)($row['order_num'] ?? 1),
@@ -558,6 +660,48 @@ if (!function_exists('product_price_input')) {
     }
 }
 
+if (!function_exists('product_apply_file_fields')) {
+    /**
+     * Writes the attachment columns, plus `file_is_public` when the body mentions it. Shared by
+     * create and update so the two cannot drift about what clearing a file means.
+     */
+    function product_apply_file_fields($con, int $productId, array $fileFields, array $body): void {
+        if (!product_file_columns_ready($con)) {
+            return;
+        }
+
+        $sets = [];
+        $params = [];
+        $types = '';
+
+        foreach ($fileFields as $column => $value) {
+            if ($column === '__error') continue;
+            $sets[] = "`{$column}` = ?";
+            $params[] = $value;
+            $types .= ($column === 'file_size') ? 'i' : 's';
+        }
+
+        if (array_key_exists('file_is_public', $body)) {
+            $sets[] = "`file_is_public` = ?";
+            $params[] = (int)(bool)$body['file_is_public'];
+            $types .= 'i';
+        }
+
+        if (!$sets) {
+            return;
+        }
+
+        $stmt = mysqli_prepare($con, "UPDATE products SET " . implode(', ', $sets) . " WHERE id = ?");
+        if (!$stmt) {
+            return;
+        }
+        $params[] = $productId;
+        $types .= 'i';
+        mysqli_stmt_bind_param($stmt, $types, ...$params);
+        mysqli_stmt_execute($stmt);
+    }
+}
+
 if (!function_exists('adminCreateProduct')) {
     function adminCreateProduct($con, $adminData = null) {
         if (!products_tables_ready($con)) return products_not_ready();
@@ -636,10 +780,22 @@ if (!function_exists('adminCreateProduct')) {
         $productId = mysqli_insert_id($con);
         product_save_translations($con, $productId, $body);
 
+        // Written as a second statement rather than spliced into the INSERT: the columns only
+        // exist once migration 128 has run, and the product must still be creatable before then.
+        $fileWarning = null;
+        $fileFields = product_file_fields_from_body($con, $body);
+        if (isset($fileFields['__error'])) {
+            $fileWarning = $fileFields['__error'];
+        } elseif ($fileFields) {
+            product_apply_file_fields($con, $productId, $fileFields, $body);
+        }
+
         return [
             'status' => 'success',
-            'message' => 'تم إنشاء المنتج بنجاح',
-            'data' => ['id' => $productId, 'slug' => $slug],
+            // The product was created either way; saying so plainly beats a bare success that
+            // leaves an owner wondering where their attachment went.
+            'message' => $fileWarning ? 'تم إنشاء المنتج، لكن ' . $fileWarning : 'تم إنشاء المنتج بنجاح',
+            'data' => ['id' => $productId, 'slug' => $slug, 'file_warning' => $fileWarning],
         ];
     }
 }
@@ -654,7 +810,8 @@ if (!function_exists('adminUpdateProduct')) {
             return ['status' => 'error', 'message' => 'id is required'];
         }
 
-        $currentRes = @mysqli_query($con, "SELECT price, sale_price FROM products WHERE id = {$id} LIMIT 1");
+        $currentCols = product_file_columns_ready($con) ? "price, sale_price, file_path" : "price, sale_price";
+        $currentRes = @mysqli_query($con, "SELECT {$currentCols} FROM products WHERE id = {$id} LIMIT 1");
         $current = $currentRes ? mysqli_fetch_assoc($currentRes) : null;
         if (!$current) {
             return ['status' => 'error', 'message' => 'المنتج غير موجود'];
@@ -765,7 +922,19 @@ if (!function_exists('adminUpdateProduct')) {
 
         product_save_translations($con, $id, $body);
 
-        return ['status' => 'success', 'message' => 'تم تعديل المنتج بنجاح'];
+        $fileWarning = null;
+        $fileFields = product_file_fields_from_body($con, $body, $current['file_path'] ?? null);
+        if (isset($fileFields['__error'])) {
+            $fileWarning = $fileFields['__error'];
+        } elseif ($fileFields || array_key_exists('file_is_public', $body)) {
+            product_apply_file_fields($con, $id, $fileFields, $body);
+        }
+
+        return [
+            'status' => 'success',
+            'message' => $fileWarning ? 'تم تعديل المنتج، لكن ' . $fileWarning : 'تم تعديل المنتج بنجاح',
+            'data' => ['file_warning' => $fileWarning],
+        ];
     }
 }
 

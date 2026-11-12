@@ -51,6 +51,18 @@ if (!function_exists('store_item_from_product')) {
             'slug' => $p['slug'],
             'sku' => $p['sku'],
             'gallery' => $p['gallery'],
+            // The attachment is described to a shopper, but its PATH is withheld unless the
+            // product says the file is public. A digital product's file is the thing being sold,
+            // and a shop front that hands out the download link has given the product away.
+            // Checkout does not exist yet, so there is no third state - and defaulting to the
+            // one that leaks would be the wrong way round.
+            'has_file' => $p['has_file'] ?? false,
+            'file_name' => ($p['has_file'] ?? false) ? $p['file_name'] : null,
+            'file_extension' => ($p['has_file'] ?? false) ? $p['file_extension'] : null,
+            'file_size' => ($p['has_file'] ?? false) ? $p['file_size'] : null,
+            'file_size_label' => ($p['has_file'] ?? false) ? $p['file_size_label'] : null,
+            'file_path' => !empty($p['file_is_public']) ? $p['file_path'] : null,
+            'file_is_public' => (bool)($p['file_is_public'] ?? false),
             'order_num' => $p['order_num'],
             'created_at' => $p['created_at'],
             // A book can already be owned by the student; a product is bought every time, so
@@ -85,6 +97,15 @@ if (!function_exists('store_item_from_book')) {
             'in_stock' => true,
             'stock' => null,
             'is_stock_tracked' => false,
+            // A book's own file has always been gated by the books endpoint (it is nulled unless
+            // the student owns the book), so it is not re-exposed here under a product's name.
+            'has_file' => !empty($b['file_path']),
+            'file_name' => null,
+            'file_extension' => $b['extension'] ?? null,
+            'file_size' => null,
+            'file_size_label' => null,
+            'file_path' => $b['file_path'] ?? null,
+            'file_is_public' => false,
             'category' => null,
             'product_category_id' => null,
             'slug' => null,

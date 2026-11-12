@@ -392,3 +392,218 @@ if (!function_exists('process_image_input')) {
         return $imageInput;
     }
 }
+
+if (!function_exists('upload_blocked_extensions')) {
+    /**
+     * The extensions that are refused no matter what, because the rest of this file is now an
+     * allow-list of one: anything.
+     *
+     * Every other uploader here names the extensions it accepts. A product file cannot - the
+     * whole point is that an owner may attach a CAD drawing, a font, an .apk or something nobody
+     * thought of. So the rule is inverted, and what is named is what must never land in
+     * `uploads/`: anything a web server might decide to RUN.
+     *
+     * This is the FIRST lock, not the only one. `uploads/.htaccess` already turns the PHP engine
+     * off, strips the handlers and refuses to serve these outright, which is what makes accepting
+     * arbitrary files defensible at all. A deny-list on its own would not be - deny-lists are
+     * beaten by the extension nobody listed - but a deny-list in front of a directory that cannot
+     * execute anything is a second lock on a closed door.
+     */
+    function upload_blocked_extensions(): array {
+        return [
+            // Server-side executables and anything a misconfigured handler may run.
+            'php', 'php2', 'php3', 'php4', 'php5', 'php6', 'php7', 'php8', 'phps', 'phtml', 'pht',
+            'phar', 'inc', 'shtml', 'shtm', 'cgi', 'pl', 'py', 'rb', 'jsp', 'jspx', 'asp', 'aspx',
+            'asa', 'asax', 'cfm', 'cfc',
+            // Windows and shell executables, in case a file is downloaded and opened.
+            'exe', 'com', 'bat', 'cmd', 'msi', 'scr', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh',
+            'ps1', 'psm1', 'sh', 'bash', 'jar', 'dll', 'so',
+            // Server configuration. An .htaccess in uploads/ could undo the protection above.
+            'htaccess', 'htpasswd', 'ini', 'conf',
+        ];
+    }
+}
+
+if (!function_exists('upload_extension_is_allowed')) {
+    /**
+     * A double extension is the classic way past a deny-list: `invoice.php.pdf` on one server,
+     * `invoice.pdf.php` on another, depending on how the handler is configured. So EVERY segment
+     * of the name is checked, not only the last one.
+     */
+    function upload_extension_is_allowed(string $fileName): bool {
+        $blocked = upload_blocked_extensions();
+        $segments = explode('.', strtolower($fileName));
+        array_shift($segments); // the base name itself is not an extension
+
+        foreach ($segments as $segment) {
+            if (in_array(trim($segment), $blocked, true)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('upload_safe_basename')) {
+    /**
+     * The original name, kept for display only - never used as a path.
+     *
+     * The file on disk is always given a generated name; this is what the download is called when
+     * somebody saves it, so an owner who uploaded "دليل المقاس.pdf" sees that rather than
+     * "file_6930ab.pdf". Stripped of anything that could traverse a directory, because it is
+     * stored and later echoed back.
+     */
+    function upload_safe_basename(string $fileName): string {
+        $name = basename(str_replace('\\', '/', $fileName));
+        $name = preg_replace('/[\x00-\x1F\x7F]/u', '', $name);
+        $name = str_replace(['..', '/', '\\'], '', (string)$name);
+        $name = trim((string)$name);
+
+        if ($name === '') {
+            return 'file';
+        }
+
+        return function_exists('mb_substr') ? mb_substr($name, 0, 180, 'UTF-8') : substr($name, 0, 180);
+    }
+}
+
+if (!function_exists('upload_any_file')) {
+    /**
+     * A file of any kind, for a product attachment.
+     *
+     * Returns null on refusal, or on success an array rather than a bare path - because what a
+     * product needs to show is not only where the file is but what it is called, how big it is
+     * and what kind it appears to be, and recomputing that from the path later means stat()ing a
+     * file on every list.
+     *
+     *   ['path' => 'uploads/products/file_x.ai', 'name' => 'المخطط.ai', 'extension' => 'ai',
+     *    'size' => 184320, 'mime' => 'application/postscript']
+     */
+    function upload_any_file(array $file, string $subfolder = 'products'): ?array {
+        if (empty($file['tmp_name']) || !file_exists($file['tmp_name'])) {
+            return null;
+        }
+        if (isset($file['error']) && (int)$file['error'] !== UPLOAD_ERR_OK) {
+            return null;
+        }
+
+        $originalName = upload_safe_basename((string)($file['name'] ?? 'file'));
+        if (!upload_extension_is_allowed($originalName)) {
+            return null;
+        }
+
+        $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+        // A file with no extension is kept as-is rather than guessed at: inventing ".pdf" for an
+        // unknown file is how upload_document_file() ends up writing a mislabelled download.
+        $ext = preg_replace('/[^a-z0-9]/', '', $ext) ?: '';
+
+        $storedName = uniqid('file_', true) . ($ext !== '' ? '.' . $ext : '');
+
+        $targetDir = __DIR__ . '/../uploads/' . $subfolder . '/';
+        if (!file_exists($targetDir)) {
+            mkdir($targetDir, 0777, true);
+        }
+
+        $targetFilePath = $targetDir . $storedName;
+        $size = (int)($file['size'] ?? 0);
+        $mime = (string)($file['type'] ?? '');
+
+        if (!save_moved_file($file, $targetFilePath)) {
+            return null;
+        }
+
+        if ($size <= 0 && file_exists($targetFilePath)) {
+            $size = (int)filesize($targetFilePath);
+        }
+
+        return [
+            'path' => 'uploads/' . $subfolder . '/' . $storedName,
+            'name' => $originalName,
+            'extension' => $ext,
+            'size' => $size,
+            'mime' => $mime,
+        ];
+    }
+}
+
+if (!function_exists('process_any_file_input')) {
+    /**
+     * The same three ways every other field here accepts a file - a multipart upload, a base64
+     * data URI, or a path/URL already on the server - resolved to the array upload_any_file()
+     * returns.
+     *
+     * The data URI branch exists because the dashboards post JSON, not multipart, for everything
+     * else; unlike process_image_input() it accepts ANY media type, and gets its extension from
+     * `name` when one is supplied rather than from the mime subtype. Taking the extension from
+     * the subtype is exactly the hole that let "data:image/php;base64,..." write a webshell, so
+     * the subtype is used only as a last resort and is run through the same deny-list.
+     */
+    function process_any_file_input($input, string $subfolder = 'products', ?array $fileInput = null, ?string $originalName = null): ?array {
+        if (is_array($fileInput) && !empty($fileInput['tmp_name'])) {
+            return upload_any_file($fileInput, $subfolder);
+        }
+
+        if (empty($input) || !is_string($input)) {
+            return null;
+        }
+
+        $input = trim($input);
+
+        if (preg_match('/^data:([^;,]*);base64,/i', $input, $matches)) {
+            $mime = strtolower(trim($matches[1]));
+            $data = base64_decode(substr($input, strpos($input, ',') + 1), true);
+            if ($data === false) {
+                return null;
+            }
+
+            // 25 MiB of decoded bytes. A data URI is ~4/3 the size of what it carries, and
+            // without a ceiling one request can fill the disk.
+            if (strlen($data) > 25 * 1024 * 1024) {
+                return null;
+            }
+
+            $name = upload_safe_basename((string)($originalName ?: 'file'));
+            $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+
+            if ($ext === '' && $mime !== '' && strpos($mime, '/') !== false) {
+                $ext = strtolower(preg_replace('/[^a-z0-9]/i', '', substr($mime, strpos($mime, '/') + 1)));
+                $name = $ext !== '' ? $name . '.' . $ext : $name;
+            }
+
+            if (!upload_extension_is_allowed($name)) {
+                return null;
+            }
+
+            $storedName = uniqid('file_', true) . ($ext !== '' ? '.' . $ext : '');
+            $targetDir = __DIR__ . '/../uploads/' . $subfolder . '/';
+            if (!file_exists($targetDir)) {
+                mkdir($targetDir, 0777, true);
+            }
+
+            if (file_put_contents($targetDir . $storedName, $data) === false) {
+                return null;
+            }
+
+            return [
+                'path' => 'uploads/' . $subfolder . '/' . $storedName,
+                'name' => $name,
+                'extension' => $ext,
+                'size' => strlen($data),
+                'mime' => $mime,
+            ];
+        }
+
+        // Already a stored path or an external URL - kept as given, which is how an admin
+        // re-saves a product without re-uploading its file.
+        $name = upload_safe_basename($originalName ?: basename(parse_url($input, PHP_URL_PATH) ?: $input));
+
+        return [
+            'path' => $input,
+            'name' => $name,
+            'extension' => strtolower(pathinfo($name, PATHINFO_EXTENSION)),
+            'size' => 0,
+            'mime' => '',
+        ];
+    }
+}
