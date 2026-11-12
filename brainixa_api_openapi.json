@@ -1987,7 +1987,7 @@
           "update-14 / Admin / Store Products (NEW - update-14)"
         ],
         "summary": "update-14 (NEW): create a product category",
-        "description": "update-14 (NEW): a product category. The `code` is generated from the name when not given, by the same generator the course slug uses - so an Arabic-only name produces a real code instead of collapsing to a single dash.\n\nPermission: `manage_products`.",
+        "description": "update-14 (NEW): a product category. The `code` is generated from the name when not given, by the same generator the course slug uses - so an Arabic-only name produces a real code instead of collapsing to a single dash.\n\nPermission: `manage_products`.\n\nTHIS ENDPOINT ACCEPTS multipart/form-data AS WELL AS JSON, and an upload must use it. Use multipart to send an actual file for `image` or `file`; use JSON when the value is a URL, a stored path or a base64 data URI.\n\nTwo things only JSON can say, because multipart cannot encode null: clearing a value (`\"image\": null`, `\"file\": null`, `\"sale_price\": null`, `\"stock\": null`) and the difference between \"leave it alone\" and \"clear it\". An absent field means leave it; an explicit null means clear it; an EMPTY multipart part means neither - it is simply nothing chosen, which is what lets a form-data save change a price without wiping the picture.\n\nPUT accepts multipart too. PHP parses multipart bodies for POST only, so this API parses a PUT body itself and fills $_FILES by hand - replacing an image is an ordinary update, not a separate endpoint.",
         "requestBody": {
           "required": true,
           "description": "Category fields.",
@@ -2024,6 +2024,41 @@
                   }
                 }
               }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name_ar": {
+                    "type": "string",
+                    "description": "اسم التصنيف بالعربية. مطلوب ما لم يُرسل name_en."
+                  },
+                  "name_en": {
+                    "type": "string"
+                  },
+                  "description_ar": {
+                    "type": "string"
+                  },
+                  "description_en": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Generated from the name when omitted."
+                  },
+                  "image": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The category picture, as a real file. Leave empty to keep the current one."
+                  },
+                  "order_num": {
+                    "type": "string"
+                  },
+                  "is_active": {
+                    "type": "string"
+                  }
+                }
+              }
             }
           }
         },
@@ -2050,7 +2085,7 @@
           "update-14 / Admin / Store Products (NEW - update-14)"
         ],
         "summary": "update-14 (NEW): update a product category",
-        "description": "update-14 (NEW): only the fields present in the body are written. Permission: `manage_products`.",
+        "description": "update-14 (NEW): only the fields present in the body are written. Permission: `manage_products`.\n\nTHIS ENDPOINT ACCEPTS multipart/form-data AS WELL AS JSON, and an upload must use it. Use multipart to send an actual file for `image` or `file`; use JSON when the value is a URL, a stored path or a base64 data URI.\n\nTwo things only JSON can say, because multipart cannot encode null: clearing a value (`\"image\": null`, `\"file\": null`, `\"sale_price\": null`, `\"stock\": null`) and the difference between \"leave it alone\" and \"clear it\". An absent field means leave it; an explicit null means clear it; an EMPTY multipart part means neither - it is simply nothing chosen, which is what lets a form-data save change a price without wiping the picture.\n\nPUT accepts multipart too. PHP parses multipart bodies for POST only, so this API parses a PUT body itself and fills $_FILES by hand - replacing an image is an ordinary update, not a separate endpoint.",
         "requestBody": {
           "required": true,
           "description": "`id` plus the fields to change.",
@@ -2087,6 +2122,47 @@
                   },
                   "is_active": {
                     "type": "integer"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name_ar": {
+                    "type": "string",
+                    "description": "اسم التصنيف بالعربية. مطلوب ما لم يُرسل name_en."
+                  },
+                  "name_en": {
+                    "type": "string"
+                  },
+                  "description_ar": {
+                    "type": "string"
+                  },
+                  "description_en": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Generated from the name when omitted."
+                  },
+                  "image": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The category picture, as a real file. Leave empty to keep the current one."
+                  },
+                  "order_num": {
+                    "type": "string"
+                  },
+                  "is_active": {
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -2293,7 +2369,7 @@
           "update-14 / Admin / Store Products (NEW - update-14)"
         ],
         "summary": "update-14 (NEW): create a product",
-        "description": "update-14 (NEW): a product.\n\nTwo fields say more than they look: `sale_price` null means \"not on sale\" while 0 means \"deliberately free\", and `stock` null means \"not tracked\" while 0 means \"out of stock\". Reading either missing value as zero would present every product as free and sold out, so the pairs are kept apart end to end - including in the response, which carries `is_stock_tracked` and `is_on_sale` so a card never has to guess.\n\n`effective_price` and `discount_percent` are computed server-side: a sale price that three screens each decide how to apply is a sale price three screens eventually disagree about.\n\nA sale price above the price is refused. Permission: `manage_products`.\n\nAn attachment of ANY type may be uploaded through `file`. Every other upload path on this platform names the extensions it accepts, which is right for an avatar and wrong for a product - an owner may attach a CAD drawing, a font, an installer, or something nobody listed in advance. So the rule is inverted: `upload_any_file()` accepts anything EXCEPT what a web server might run, and checks every segment of the name, so `invoice.pdf.php` is refused as well as `shell.php`. That is defensible because uploads/.htaccess already turns the PHP engine off, strips the handlers and refuses to serve executables - the deny-list is the first lock on a door that is already closed, not the only one.\n\n`file` accepts a multipart upload, a base64 data URI of any media type, or a path already on the server. Absent means keep the current file; an explicit null removes it. Send `file_name` alongside a data URI so the extension is not guessed from the mime subtype - guessing it from the subtype is the hole that once let \"data:image/php;base64,...\" write a webshell.\n\nThe stored name on disk is always generated and is never the uploaded one. The response carries has_file, file_name, file_extension, file_size, file_size_label and file_is_public.\n\n`file_is_public` decides who gets the path: 0 (the default) means only the admin does and the shop front merely says a file exists; 1 means the store serves it to anyone. A product whose file IS the thing being sold should stay 0 until checkout exists. Needs migration 128.",
+        "description": "update-14 (NEW): a product.\n\nTwo fields say more than they look: `sale_price` null means \"not on sale\" while 0 means \"deliberately free\", and `stock` null means \"not tracked\" while 0 means \"out of stock\". Reading either missing value as zero would present every product as free and sold out, so the pairs are kept apart end to end - including in the response, which carries `is_stock_tracked` and `is_on_sale` so a card never has to guess.\n\n`effective_price` and `discount_percent` are computed server-side: a sale price that three screens each decide how to apply is a sale price three screens eventually disagree about.\n\nA sale price above the price is refused. Permission: `manage_products`.\n\nAn attachment of ANY type may be uploaded through `file`. Every other upload path on this platform names the extensions it accepts, which is right for an avatar and wrong for a product - an owner may attach a CAD drawing, a font, an installer, or something nobody listed in advance. So the rule is inverted: `upload_any_file()` accepts anything EXCEPT what a web server might run, and checks every segment of the name, so `invoice.pdf.php` is refused as well as `shell.php`. That is defensible because uploads/.htaccess already turns the PHP engine off, strips the handlers and refuses to serve executables - the deny-list is the first lock on a door that is already closed, not the only one.\n\n`file` accepts a multipart upload, a base64 data URI of any media type, or a path already on the server. Absent means keep the current file; an explicit null removes it. Send `file_name` alongside a data URI so the extension is not guessed from the mime subtype - guessing it from the subtype is the hole that once let \"data:image/php;base64,...\" write a webshell.\n\nThe stored name on disk is always generated and is never the uploaded one. The response carries has_file, file_name, file_extension, file_size, file_size_label and file_is_public.\n\n`file_is_public` decides who gets the path: 0 (the default) means only the admin does and the shop front merely says a file exists; 1 means the store serves it to anyone. A product whose file IS the thing being sold should stay 0 until checkout exists. Needs migration 128.\n\nTHIS ENDPOINT ACCEPTS multipart/form-data AS WELL AS JSON, and an upload must use it. Use multipart to send an actual file for `image` or `file`; use JSON when the value is a URL, a stored path or a base64 data URI.\n\nTwo things only JSON can say, because multipart cannot encode null: clearing a value (`\"image\": null`, `\"file\": null`, `\"sale_price\": null`, `\"stock\": null`) and the difference between \"leave it alone\" and \"clear it\". An absent field means leave it; an explicit null means clear it; an EMPTY multipart part means neither - it is simply nothing chosen, which is what lets a form-data save change a price without wiping the picture.\n\nPUT accepts multipart too. PHP parses multipart bodies for POST only, so this API parses a PUT body itself and fills $_FILES by hand - replacing an image is an ordinary update, not a separate endpoint.",
         "requestBody": {
           "required": true,
           "description": "Product fields.",
@@ -2375,6 +2451,79 @@
                   }
                 }
               }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name_ar": {
+                    "type": "string",
+                    "description": "اسم المنتج بالعربية. مطلوب ما لم يُرسل name_en."
+                  },
+                  "name_en": {
+                    "type": "string"
+                  },
+                  "description_ar": {
+                    "type": "string"
+                  },
+                  "description_en": {
+                    "type": "string"
+                  },
+                  "product_category_id": {
+                    "type": "string",
+                    "description": "A product category, NOT a course category. null leaves it uncategorised."
+                  },
+                  "slug": {
+                    "type": "string",
+                    "description": "Generated from the name when omitted, including an Arabic one, and resolved to a free value on a clash."
+                  },
+                  "sku": {
+                    "type": "string"
+                  },
+                  "price": {
+                    "type": "string"
+                  },
+                  "sale_price": {
+                    "type": "string",
+                    "description": "null = not on sale. 0 = deliberately free. Must not exceed price."
+                  },
+                  "currency": {
+                    "type": "string",
+                    "description": "Default EGP."
+                  },
+                  "stock": {
+                    "type": "string",
+                    "description": "null = stock not tracked. 0 = out of stock. The two are different answers."
+                  },
+                  "image": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The product picture, as a real file. Leave the field empty to keep the current one - an empty part is \"nothing chosen\", never \"remove it\"."
+                  },
+                  "is_active": {
+                    "type": "string"
+                  },
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The attachment. ANY extension except what a web server might run (php, exe, sh, jar, htaccess...); every segment of the name is checked, so invoice.pdf.php is refused too. Leave empty to keep the current one."
+                  },
+                  "file_name": {
+                    "type": "string",
+                    "description": "The original name, for the download and the screen. Send it with a data URI so the extension is not guessed from the mime subtype."
+                  },
+                  "file_is_public": {
+                    "type": "string",
+                    "description": "0 (default) = only the admin gets file_path. 1 = the store serves it to anyone."
+                  },
+                  "show_on_website": {
+                    "type": "string"
+                  },
+                  "order_num": {
+                    "type": "string"
+                  }
+                }
+              }
             }
           }
         },
@@ -2401,7 +2550,7 @@
           "update-14 / Admin / Store Products (NEW - update-14)"
         ],
         "summary": "update-14 (NEW): update a product",
-        "description": "update-14 (NEW): only the fields present in the body are written.\n\nBoth prices are resolved to what they WILL be after the update and checked against each other once, rather than only the field that happens to be in the body. Checking only the body let `{\"price\": 300}` through on a product priced 450 with a 360 sale, leaving a discount that costs more than the product - and lowering a price is the ordinary way that happens, since it sends no sale_price at all.\n\nPermission: `manage_products`.\n\nAn attachment of ANY type may be uploaded through `file`. Every other upload path on this platform names the extensions it accepts, which is right for an avatar and wrong for a product - an owner may attach a CAD drawing, a font, an installer, or something nobody listed in advance. So the rule is inverted: `upload_any_file()` accepts anything EXCEPT what a web server might run, and checks every segment of the name, so `invoice.pdf.php` is refused as well as `shell.php`. That is defensible because uploads/.htaccess already turns the PHP engine off, strips the handlers and refuses to serve executables - the deny-list is the first lock on a door that is already closed, not the only one.\n\n`file` accepts a multipart upload, a base64 data URI of any media type, or a path already on the server. Absent means keep the current file; an explicit null removes it. Send `file_name` alongside a data URI so the extension is not guessed from the mime subtype - guessing it from the subtype is the hole that once let \"data:image/php;base64,...\" write a webshell.\n\nThe stored name on disk is always generated and is never the uploaded one. The response carries has_file, file_name, file_extension, file_size, file_size_label and file_is_public.\n\n`file_is_public` decides who gets the path: 0 (the default) means only the admin does and the shop front merely says a file exists; 1 means the store serves it to anyone. A product whose file IS the thing being sold should stay 0 until checkout exists. Needs migration 128.",
+        "description": "update-14 (NEW): only the fields present in the body are written.\n\nBoth prices are resolved to what they WILL be after the update and checked against each other once, rather than only the field that happens to be in the body. Checking only the body let `{\"price\": 300}` through on a product priced 450 with a 360 sale, leaving a discount that costs more than the product - and lowering a price is the ordinary way that happens, since it sends no sale_price at all.\n\nPermission: `manage_products`.\n\nAn attachment of ANY type may be uploaded through `file`. Every other upload path on this platform names the extensions it accepts, which is right for an avatar and wrong for a product - an owner may attach a CAD drawing, a font, an installer, or something nobody listed in advance. So the rule is inverted: `upload_any_file()` accepts anything EXCEPT what a web server might run, and checks every segment of the name, so `invoice.pdf.php` is refused as well as `shell.php`. That is defensible because uploads/.htaccess already turns the PHP engine off, strips the handlers and refuses to serve executables - the deny-list is the first lock on a door that is already closed, not the only one.\n\n`file` accepts a multipart upload, a base64 data URI of any media type, or a path already on the server. Absent means keep the current file; an explicit null removes it. Send `file_name` alongside a data URI so the extension is not guessed from the mime subtype - guessing it from the subtype is the hole that once let \"data:image/php;base64,...\" write a webshell.\n\nThe stored name on disk is always generated and is never the uploaded one. The response carries has_file, file_name, file_extension, file_size, file_size_label and file_is_public.\n\n`file_is_public` decides who gets the path: 0 (the default) means only the admin does and the shop front merely says a file exists; 1 means the store serves it to anyone. A product whose file IS the thing being sold should stay 0 until checkout exists. Needs migration 128.\n\nTHIS ENDPOINT ACCEPTS multipart/form-data AS WELL AS JSON, and an upload must use it. Use multipart to send an actual file for `image` or `file`; use JSON when the value is a URL, a stored path or a base64 data URI.\n\nTwo things only JSON can say, because multipart cannot encode null: clearing a value (`\"image\": null`, `\"file\": null`, `\"sale_price\": null`, `\"stock\": null`) and the difference between \"leave it alone\" and \"clear it\". An absent field means leave it; an explicit null means clear it; an EMPTY multipart part means neither - it is simply nothing chosen, which is what lets a form-data save change a price without wiping the picture.\n\nPUT accepts multipart too. PHP parses multipart bodies for POST only, so this API parses a PUT body itself and fills $_FILES by hand - replacing an image is an ordinary update, not a separate endpoint.",
         "requestBody": {
           "required": true,
           "description": "`id` plus the fields to change.",
@@ -2483,6 +2632,85 @@
                   },
                   "order_num": {
                     "type": "integer"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name_ar": {
+                    "type": "string",
+                    "description": "اسم المنتج بالعربية. مطلوب ما لم يُرسل name_en."
+                  },
+                  "name_en": {
+                    "type": "string"
+                  },
+                  "description_ar": {
+                    "type": "string"
+                  },
+                  "description_en": {
+                    "type": "string"
+                  },
+                  "product_category_id": {
+                    "type": "string",
+                    "description": "A product category, NOT a course category. null leaves it uncategorised."
+                  },
+                  "slug": {
+                    "type": "string",
+                    "description": "Generated from the name when omitted, including an Arabic one, and resolved to a free value on a clash."
+                  },
+                  "sku": {
+                    "type": "string"
+                  },
+                  "price": {
+                    "type": "string"
+                  },
+                  "sale_price": {
+                    "type": "string",
+                    "description": "null = not on sale. 0 = deliberately free. Must not exceed price."
+                  },
+                  "currency": {
+                    "type": "string",
+                    "description": "Default EGP."
+                  },
+                  "stock": {
+                    "type": "string",
+                    "description": "null = stock not tracked. 0 = out of stock. The two are different answers."
+                  },
+                  "image": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The product picture, as a real file. Leave the field empty to keep the current one - an empty part is \"nothing chosen\", never \"remove it\"."
+                  },
+                  "is_active": {
+                    "type": "string"
+                  },
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The attachment. ANY extension except what a web server might run (php, exe, sh, jar, htaccess...); every segment of the name is checked, so invoice.pdf.php is refused too. Leave empty to keep the current one."
+                  },
+                  "file_name": {
+                    "type": "string",
+                    "description": "The original name, for the download and the screen. Send it with a data URI so the extension is not guessed from the mime subtype."
+                  },
+                  "file_is_public": {
+                    "type": "string",
+                    "description": "0 (default) = only the admin gets file_path. 1 = the store serves it to anyone."
+                  },
+                  "show_on_website": {
+                    "type": "string"
+                  },
+                  "order_num": {
+                    "type": "string"
                   }
                 },
                 "required": [
