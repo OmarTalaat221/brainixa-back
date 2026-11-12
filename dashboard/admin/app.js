@@ -214,6 +214,8 @@ const titles = {
   units: "الوحدات الدراسية",
   videos: "الفيديوهات",
   books: "الكتب",
+  "product-categories": "تصنيفات المنتجات",
+  products: "المنتجات",
   exams: "الامتحانات",
   banners: "البانرات الإعلانية",
   certificates: "الشهادات",
@@ -253,6 +255,8 @@ function navigate(view) {
     units: () => renderCrudView(unitsCfg),
     videos: () => renderCrudView(videosCfg),
     books: () => renderCrudView(booksCfg),
+    "product-categories": () => renderCrudView(productCategoriesCfg),
+    products: () => renderCrudView(productsCfg),
     exams: () => renderCrudView(examsCfg),
     banners: () => renderCrudView(bannersCfg),
     certificates: () => renderCrudView(certificatesCfg),
@@ -3245,6 +3249,206 @@ function bindReportPagination(body, root) {
     };
   }
 }
+
+/* ================= منتجات المتجر وتصنيفاتها ================= */
+/**
+ * Products are their own table, separate from books, with their own categories - a school bag is
+ * not a course and "حقائب مدرسية" is not a course category. The store (/store) lists products and
+ * standalone books side by side; these two screens are what fills the product half of it.
+ *
+ * Both use the generic CRUD engine, so they follow the same path contract as every other screen:
+ * listPath serves GET/POST/PUT/DELETE and showPath serves the single row.
+ */
+
+/** Filled on first use by the product form, so opening the form twice does not refetch. */
+let productCategoriesCache = null;
+async function loadProductCategories(force) {
+  if (productCategoriesCache && !force) return productCategoriesCache;
+  try {
+    const res = await api.get(NS, "/admin/product-categories" + qs({ limit: 100 }));
+    productCategoriesCache = extractList(res).items.map((c) => ({
+      id: c.id,
+      label: c.name_ar || c.name || c.code || `#${c.id}`,
+    }));
+  } catch (e) {
+    productCategoriesCache = [];
+  }
+  return productCategoriesCache;
+}
+
+/* ---------- تصنيفات المنتجات ---------- */
+const productCategoriesCfg = {
+  key: "product-categories",
+  title: "تصنيفات المنتجات",
+  singular: "تصنيف",
+  listPath: "/admin/product-categories",
+  showPath: "/admin/product-categories/show",
+  columns: [
+    { label: "الصورة", render: (r) => `<img class="avatar-sm" src="${escapeHtml(r.image || "")}" onerror="this.style.visibility='hidden'">` },
+    { label: "الاسم", render: (r) => escapeHtml(r.name_ar || r.name || r.code) },
+    { label: "الاسم بالإنجليزية", render: (r) => escapeHtml(r.name_en || "-") },
+    { label: "الكود", render: (r) => escapeHtml(r.code || "-") },
+    { label: "عدد المنتجات", render: (r) => r.products_count ?? 0 },
+    { label: "الترتيب", render: (r) => r.order_num ?? "-" },
+    { label: "الحالة", render: (r) => statusBadge(r.is_active) },
+  ],
+  formHtml(row) {
+    return `
+      <div class="grid-2">
+        <div class="field"><label>الاسم بالعربية *</label><input type="text" id="f_name_ar" required value="${escapeHtml(row?.name_ar || "")}"></div>
+        <div class="field"><label>الاسم بالإنجليزية</label><input type="text" id="f_name_en" value="${escapeHtml(row?.name_en || "")}"></div>
+      </div>
+      <div class="grid-2">
+        <div class="field"><label>الوصف بالعربية</label><textarea id="f_desc_ar" rows="2">${escapeHtml(row?.description_ar || "")}</textarea></div>
+        <div class="field"><label>الوصف بالإنجليزية</label><textarea id="f_desc_en" rows="2">${escapeHtml(row?.description_en || "")}</textarea></div>
+      </div>
+      ${imageFieldHtml("f_image", row?.image || "", { kind: "image", label: "صورة التصنيف (اختياري)" })}
+      <div class="grid-2">
+        <div class="field"><label>الترتيب</label><input type="number" id="f_order_num" value="${row?.order_num ?? 1}"></div>
+        <div class="field"><label>مفعّل؟</label><select id="f_is_active"><option value="1" ${row?.is_active != 0 ? "selected" : ""}>نعم</option><option value="0" ${row?.is_active == 0 ? "selected" : ""}>لا</option></select></div>
+      </div>`;
+  },
+  async afterRender() {
+    wireImageField("f_image");
+  },
+  collect() {
+    // The cache is stale the moment a category is added or renamed, and the product form reads
+    // it - so it is dropped here rather than left to go out of date until a reload.
+    productCategoriesCache = null;
+    return {
+      name_ar: document.getElementById("f_name_ar").value.trim(),
+      name_en: document.getElementById("f_name_en").value.trim(),
+      description_ar: document.getElementById("f_desc_ar").value.trim(),
+      description_en: document.getElementById("f_desc_en").value.trim(),
+      image: readImageField("f_image") || undefined,
+      order_num: Number(document.getElementById("f_order_num").value) || 1,
+      is_active: Number(document.getElementById("f_is_active").value),
+    };
+  },
+};
+
+/* ---------- المنتجات ---------- */
+const productsCfg = {
+  key: "products",
+  title: "المنتجات",
+  singular: "منتج",
+  listPath: "/admin/products",
+  showPath: "/admin/products/show",
+  columns: [
+    { label: "الصورة", render: (r) => `<img class="avatar-sm" src="${escapeHtml(r.image || "")}" onerror="this.style.visibility='hidden'">` },
+    { label: "الاسم", render: (r) => escapeHtml(r.name_ar || r.name || r.slug) },
+    { label: "التصنيف", render: (r) => escapeHtml(r.category?.name || "—") },
+    {
+      label: "السعر",
+      render: (r) =>
+        r.is_on_sale
+          ? `<s style="opacity:.6">${r.price}</s> <strong>${r.sale_price}</strong> <span class="badge-new">-${r.discount_percent}%</span>`
+          : `${r.price} ${escapeHtml(r.currency || "")}`,
+    },
+    {
+      label: "المخزون",
+      // null stock is "not tracked", which must not be drawn the same as 0 = "sold out".
+      render: (r) =>
+        !r.is_stock_tracked
+          ? '<span style="color:var(--text-muted)">غير محدود</span>'
+          : r.stock > 0
+          ? r.stock
+          : '<span style="color:#e5484d">نفد</span>',
+    },
+    { label: "بالمتجر", render: (r) => (r.show_on_website ? "🌐 ظاهر" : "🙈 مخفي") },
+    { label: "الحالة", render: (r) => statusBadge(r.is_active) },
+  ],
+  extraActions: (row) => `
+    <button class="btn btn-outline btn-sm" data-act="toggle-site" data-id="${row.id}">${row.show_on_website ? "🙈 إخفاء" : "🌐 إظهار"}</button>`,
+  wireExtra(items) {
+    document.querySelectorAll(`#tbody_products [data-act=toggle-site]`).forEach((b) => {
+      b.onclick = async () => {
+        try {
+          await api.post(NS, "/admin/products/toggle-website-visibility", { id: Number(b.dataset.id) });
+          toast("تم تحديث حالة الظهور بالمتجر");
+          navigate("products");
+        } catch (err) {
+          toast(err.message || "تعذر تحديث الحالة", "error");
+        }
+      };
+    });
+  },
+  formHtml(row) {
+    return `
+      <div class="grid-2">
+        <div class="field"><label>اسم المنتج بالعربية *</label><input type="text" id="f_name_ar" required value="${escapeHtml(row?.name_ar || "")}"></div>
+        <div class="field"><label>الاسم بالإنجليزية</label><input type="text" id="f_name_en" value="${escapeHtml(row?.name_en || "")}"></div>
+      </div>
+      <div class="grid-2">
+        <div class="field"><label>الوصف بالعربية</label><textarea id="f_desc_ar" rows="3">${escapeHtml(row?.description_ar || "")}</textarea></div>
+        <div class="field"><label>الوصف بالإنجليزية</label><textarea id="f_desc_en" rows="3">${escapeHtml(row?.description_en || "")}</textarea></div>
+      </div>
+      <div class="grid-2">
+        <div class="field"><label>التصنيف</label><select id="f_category"><option value="">— بدون تصنيف —</option></select></div>
+        <div class="field"><label>كود المنتج SKU (اختياري)</label><input type="text" id="f_sku" value="${escapeHtml(row?.sku || "")}"></div>
+      </div>
+      <div class="grid-3">
+        <div class="field"><label>السعر *</label><input type="number" step="0.01" min="0" id="f_price" required value="${row?.price ?? 0}"></div>
+        <div class="field"><label>سعر العرض (اختياري)</label><input type="number" step="0.01" min="0" id="f_sale_price" value="${row?.sale_price ?? ""}" placeholder="اتركه فارغًا لو لا يوجد عرض"></div>
+        <div class="field"><label>العملة</label><input type="text" id="f_currency" value="${escapeHtml(row?.currency || "EGP")}"></div>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label>المخزون</label>
+          <input type="number" min="0" id="f_stock" value="${row?.is_stock_tracked ? row.stock : ""}" placeholder="اتركه فارغًا = غير محدود">
+          <small style="color:var(--text-muted)">فارغ = لا يُحسب المخزون. صفر = نفد من المخزن.</small>
+        </div>
+        <div class="field"><label>الترتيب</label><input type="number" id="f_order_num" value="${row?.order_num ?? 1}"></div>
+      </div>
+      ${imageFieldHtml("f_image", row?.image || "", { kind: "image", label: "صورة المنتج" })}
+      <div class="grid-2">
+        <div class="field"><label>مفعّل؟</label><select id="f_is_active"><option value="1" ${row?.is_active != 0 ? "selected" : ""}>نعم</option><option value="0" ${row?.is_active == 0 ? "selected" : ""}>لا</option></select></div>
+        <div class="field"><label>يظهر بالمتجر؟</label><select id="f_show_site"><option value="1" ${row?.show_on_website != 0 ? "selected" : ""}>نعم</option><option value="0" ${row?.show_on_website == 0 ? "selected" : ""}>لا</option></select></div>
+      </div>`;
+  },
+  async afterRender(row) {
+    wireImageField("f_image");
+
+    const sel = document.getElementById("f_category");
+    const cats = await loadProductCategories();
+    const current = row?.product_category_id ?? "";
+    cats.forEach((c) => {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = c.label;
+      if (String(c.id) === String(current)) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    if (!cats.length) {
+      sel.insertAdjacentHTML("afterend", `<small style="color:var(--text-muted)">لا توجد تصنيفات بعد — أضفها من شاشة «تصنيفات المنتجات».</small>`);
+    }
+  },
+  collect() {
+    const saleRaw = document.getElementById("f_sale_price").value.trim();
+    const stockRaw = document.getElementById("f_stock").value.trim();
+    const categoryRaw = document.getElementById("f_category").value;
+
+    return {
+      name_ar: document.getElementById("f_name_ar").value.trim(),
+      name_en: document.getElementById("f_name_en").value.trim(),
+      description_ar: document.getElementById("f_desc_ar").value.trim(),
+      description_en: document.getElementById("f_desc_en").value.trim(),
+      product_category_id: categoryRaw ? Number(categoryRaw) : null,
+      sku: document.getElementById("f_sku").value.trim(),
+      price: Number(document.getElementById("f_price").value) || 0,
+      // Empty stays empty rather than becoming 0: the API reads null as "no sale price" and
+      // "stock not tracked", and 0 as "free" and "sold out". Sending 0 for a blank box would
+      // mark every product free and out of stock.
+      sale_price: saleRaw === "" ? null : Number(saleRaw),
+      currency: document.getElementById("f_currency").value.trim() || "EGP",
+      stock: stockRaw === "" ? null : Number(stockRaw),
+      image: readImageField("f_image") || undefined,
+      order_num: Number(document.getElementById("f_order_num").value) || 1,
+      is_active: Number(document.getElementById("f_is_active").value),
+      show_on_website: Number(document.getElementById("f_show_site").value),
+    };
+  },
+};
 /* ---------- boot ---------- */
 (function init() {
   const savedLang = localStorage.getItem("najeh_lang") || "ar";

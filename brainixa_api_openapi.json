@@ -1,9 +1,9 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Brainixa Backend - Session Changelog API (update-13)",
-    "version": "13.0.0",
-    "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109.\n\n`update-7` is the live-class batch and the loose ends around it: Zoom played inside the platform for all three kinds of live meeting (the weekly class sessions, the dated package appointments and the 1:1 consultations), a manual-sales sheet for admin and teacher, a chat contact directory read from the real tables instead of Firebase's stale copy, and hero slides as a table of their own.\n\nupdate-7 also turns the books library into a STORE. No products table was added: `course_books.file_type` carries `physical` for an item with no file, so every existing book endpoint sells one unchanged. Clients branch on that field rather than assuming a file exists.\n\n`update-8` (FIX): GET /student/exams leaked unit-scoped exams into the general listing whenever the request carried no `course_id` at all - the documented \"whole-course exams only by default\" rule was only ever enforced when `course_id` was explicitly passed. A student's general exams tab (no filters) could show a unit exam mixed in with the whole-course/standalone ones. The same default - `unit_id IS NULL` unless `include_unit_exams`/`with_unit_exams` says otherwise - now applies regardless of whether `course_id` is present. No response shape change, no new field; strictly fewer rows come back from the general (no-filter) call than before. A unit's own exams remain fully visible from inside that unit's content (GET /student/courses .../units, unaffected - that endpoint always filtered by `unit_id` directly).\n\n`update-13` is the Report Center (مركز التقارير): the four reports an owner asked to be pulled automatically rather than compiled by hand - sales, live-class attendance for both students and teachers, payroll with its deductions, and the after-class ratings - each over a `date_from`/`date_to` range and each downloadable as .xlsx. No migration: every figure already existed in rows the platform writes, and each report delegates to the module that already owns its numbers, so none of them can drift from the Sales screen, the attendance report or the ratings summary. Payroll is the one report with queries of its own, because the wallet had a ledger and a balance but never a per-period payslip; it is gated on `manage_wallets` rather than `manage_reports`."
+    "title": "Brainixa Backend - Session Changelog API (update-14)",
+    "version": "14.0.0",
+    "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109.\n\n`update-7` is the live-class batch and the loose ends around it: Zoom played inside the platform for all three kinds of live meeting (the weekly class sessions, the dated package appointments and the 1:1 consultations), a manual-sales sheet for admin and teacher, a chat contact directory read from the real tables instead of Firebase's stale copy, and hero slides as a table of their own.\n\nupdate-7 also turns the books library into a STORE. No products table was added: `course_books.file_type` carries `physical` for an item with no file, so every existing book endpoint sells one unchanged. Clients branch on that field rather than assuming a file exists.\n\n`update-8` (FIX): GET /student/exams leaked unit-scoped exams into the general listing whenever the request carried no `course_id` at all - the documented \"whole-course exams only by default\" rule was only ever enforced when `course_id` was explicitly passed. A student's general exams tab (no filters) could show a unit exam mixed in with the whole-course/standalone ones. The same default - `unit_id IS NULL` unless `include_unit_exams`/`with_unit_exams` says otherwise - now applies regardless of whether `course_id` is present. No response shape change, no new field; strictly fewer rows come back from the general (no-filter) call than before. A unit's own exams remain fully visible from inside that unit's content (GET /student/courses .../units, unaffected - that endpoint always filtered by `unit_id` directly).\n\n`update-13` is the Report Center (مركز التقارير): the four reports an owner asked to be pulled automatically rather than compiled by hand - sales, live-class attendance for both students and teachers, payroll with its deductions, and the after-class ratings - each over a `date_from`/`date_to` range and each downloadable as .xlsx. No migration: every figure already existed in rows the platform writes, and each report delegates to the module that already owns its numbers, so none of them can drift from the Sales screen, the attendance report or the ratings summary. Payroll is the one report with queries of its own, because the wallet had a ledger and a balance but never a per-period payslip; it is gated on `manage_wallets` rather than `manage_reports`.\n\n`update-14` gives the store products of its own. Until now everything it sold was a `course_books` row with no file attached, which works for a printed book and for nothing else - a school bag has no subject, no course and no unit, and the only category on that table says whether a PDF is a summary or a past paper. `products` and `product_categories` are new tables, deliberately separate from books and from course categories, and `GET /store` is the one place the two are shown side by side, each entry carrying `item_type` because an id is unique only within its own type. Nothing existing changed: no column was added to `course_books` and `GET /books` lists them exactly as before. Migration 127. Buying a product is NOT part of this batch - the catalogue is."
   },
   "servers": [
     {
@@ -1920,6 +1920,874 @@
     }
   },
   "paths": {
+    "/admin/product-categories": {
+      "get": {
+        "tags": [
+          "update-14 / Admin / Store Products (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): list product categories",
+        "description": "update-14 (NEW): منتجات المتجر — products the store sells that are not books.\n\nThe store had no products of its own. What it sold were `course_books` rows whose `file_type` is 'physical' - a book with no file - which works for a printed book and for nothing else. A school bag has no subject, no course and no unit, and the nearest thing to a category on that table is `category enum('summary','exam')`, which says whether a PDF is a summary or a past paper.\n\nSo products are their own table (`products`), with their own categories (`product_categories`), because \"حقائب مدرسية\" is not a course category and does not belong in the same list as \"الكيمياء\". Nothing about books changed: `GET /books` still lists them exactly as it did, and no column was added to `course_books`. The two are brought together only at `GET /store`, the one place that has to show them side by side.\n\nNeeds migration 127.\n\nEach row carries `products_count`. Permission: `manage_products`.",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "is_active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "update-14 / Admin / Store Products (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): create a product category",
+        "description": "update-14 (NEW): a product category. The `code` is generated from the name when not given, by the same generator the course slug uses - so an Arabic-only name produces a real code instead of collapsing to a single dash.\n\nPermission: `manage_products`.",
+        "requestBody": {
+          "required": true,
+          "description": "Category fields.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name_ar": {
+                    "type": "string",
+                    "description": "اسم التصنيف بالعربية. مطلوب ما لم يُرسل name_en."
+                  },
+                  "name_en": {
+                    "type": "string"
+                  },
+                  "description_ar": {
+                    "type": "string"
+                  },
+                  "description_en": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Generated from the name when omitted."
+                  },
+                  "image": {
+                    "type": "string"
+                  },
+                  "order_num": {
+                    "type": "integer"
+                  },
+                  "is_active": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "update-14 / Admin / Store Products (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): update a product category",
+        "description": "update-14 (NEW): only the fields present in the body are written. Permission: `manage_products`.",
+        "requestBody": {
+          "required": true,
+          "description": "`id` plus the fields to change.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "name_ar": {
+                    "type": "string",
+                    "description": "اسم التصنيف بالعربية. مطلوب ما لم يُرسل name_en."
+                  },
+                  "name_en": {
+                    "type": "string"
+                  },
+                  "description_ar": {
+                    "type": "string"
+                  },
+                  "description_en": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Generated from the name when omitted."
+                  },
+                  "image": {
+                    "type": "string"
+                  },
+                  "order_num": {
+                    "type": "integer"
+                  },
+                  "is_active": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "update-14 / Admin / Store Products (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): delete a product category",
+        "description": "update-14 (NEW): the products SURVIVE. `product_category_id` is ON DELETE SET NULL, so deleting a category empties its shelf rather than destroying the stock on it, and the response says how many products were left uncategorised - because \"deleted\" on a screen listing 40 products should not leave the admin guessing whether the 40 went with it.\n\nPermission: `manage_products`.",
+        "requestBody": {
+          "required": true,
+          "description": "The category to delete.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/product-categories/show": {
+      "get": {
+        "tags": [
+          "update-14 / Admin / Store Products (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): one product category",
+        "description": "update-14 (NEW): one category with its translations. Permission: `manage_products`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products": {
+      "get": {
+        "tags": [
+          "update-14 / Admin / Store Products (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): list products",
+        "description": "update-14 (NEW): منتجات المتجر — products the store sells that are not books.\n\nThe store had no products of its own. What it sold were `course_books` rows whose `file_type` is 'physical' - a book with no file - which works for a printed book and for nothing else. A school bag has no subject, no course and no unit, and the nearest thing to a category on that table is `category enum('summary','exam')`, which says whether a PDF is a summary or a past paper.\n\nSo products are their own table (`products`), with their own categories (`product_categories`), because \"حقائب مدرسية\" is not a course category and does not belong in the same list as \"الكيمياء\". Nothing about books changed: `GET /books` still lists them exactly as it did, and no column was added to `course_books`. The two are brought together only at `GET /store`, the one place that has to show them side by side.\n\nNeeds migration 127.\n\nFilters: `category_id`, `search` (name, description, slug, sku), `min_price` / `max_price` (applied to the effective price, so a product on sale is filtered at what it actually costs), `in_stock`, `is_active`. `statistics` carries the active / inactive / out-of-stock counts.\n\nPermission: `manage_products`.",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "min_price",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "max_price",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "in_stock",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "is_active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "update-14 / Admin / Store Products (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): create a product",
+        "description": "update-14 (NEW): a product.\n\nTwo fields say more than they look: `sale_price` null means \"not on sale\" while 0 means \"deliberately free\", and `stock` null means \"not tracked\" while 0 means \"out of stock\". Reading either missing value as zero would present every product as free and sold out, so the pairs are kept apart end to end - including in the response, which carries `is_stock_tracked` and `is_on_sale` so a card never has to guess.\n\n`effective_price` and `discount_percent` are computed server-side: a sale price that three screens each decide how to apply is a sale price three screens eventually disagree about.\n\nA sale price above the price is refused. Permission: `manage_products`.",
+        "requestBody": {
+          "required": true,
+          "description": "Product fields.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name_ar": {
+                    "type": "string",
+                    "description": "اسم المنتج بالعربية. مطلوب ما لم يُرسل name_en."
+                  },
+                  "name_en": {
+                    "type": "string"
+                  },
+                  "description_ar": {
+                    "type": "string"
+                  },
+                  "description_en": {
+                    "type": "string"
+                  },
+                  "product_category_id": {
+                    "type": "integer",
+                    "description": "A product category, NOT a course category. null leaves it uncategorised."
+                  },
+                  "slug": {
+                    "type": "string",
+                    "description": "Generated from the name when omitted, including an Arabic one, and resolved to a free value on a clash."
+                  },
+                  "sku": {
+                    "type": "string"
+                  },
+                  "price": {
+                    "type": "number"
+                  },
+                  "sale_price": {
+                    "type": "number",
+                    "description": "null = not on sale. 0 = deliberately free. Must not exceed price."
+                  },
+                  "currency": {
+                    "type": "string",
+                    "description": "Default EGP."
+                  },
+                  "stock": {
+                    "type": "integer",
+                    "description": "null = stock not tracked. 0 = out of stock. The two are different answers."
+                  },
+                  "image": {
+                    "type": "string",
+                    "description": "URL, path or base64 data URI."
+                  },
+                  "gallery": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Extra image paths."
+                  },
+                  "is_active": {
+                    "type": "integer"
+                  },
+                  "show_on_website": {
+                    "type": "integer"
+                  },
+                  "order_num": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "update-14 / Admin / Store Products (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): update a product",
+        "description": "update-14 (NEW): only the fields present in the body are written.\n\nBoth prices are resolved to what they WILL be after the update and checked against each other once, rather than only the field that happens to be in the body. Checking only the body let `{\"price\": 300}` through on a product priced 450 with a 360 sale, leaving a discount that costs more than the product - and lowering a price is the ordinary way that happens, since it sends no sale_price at all.\n\nPermission: `manage_products`.",
+        "requestBody": {
+          "required": true,
+          "description": "`id` plus the fields to change.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "name_ar": {
+                    "type": "string",
+                    "description": "اسم المنتج بالعربية. مطلوب ما لم يُرسل name_en."
+                  },
+                  "name_en": {
+                    "type": "string"
+                  },
+                  "description_ar": {
+                    "type": "string"
+                  },
+                  "description_en": {
+                    "type": "string"
+                  },
+                  "product_category_id": {
+                    "type": "integer",
+                    "description": "A product category, NOT a course category. null leaves it uncategorised."
+                  },
+                  "slug": {
+                    "type": "string",
+                    "description": "Generated from the name when omitted, including an Arabic one, and resolved to a free value on a clash."
+                  },
+                  "sku": {
+                    "type": "string"
+                  },
+                  "price": {
+                    "type": "number"
+                  },
+                  "sale_price": {
+                    "type": "number",
+                    "description": "null = not on sale. 0 = deliberately free. Must not exceed price."
+                  },
+                  "currency": {
+                    "type": "string",
+                    "description": "Default EGP."
+                  },
+                  "stock": {
+                    "type": "integer",
+                    "description": "null = stock not tracked. 0 = out of stock. The two are different answers."
+                  },
+                  "image": {
+                    "type": "string",
+                    "description": "URL, path or base64 data URI."
+                  },
+                  "gallery": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Extra image paths."
+                  },
+                  "is_active": {
+                    "type": "integer"
+                  },
+                  "show_on_website": {
+                    "type": "integer"
+                  },
+                  "order_num": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "update-14 / Admin / Store Products (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): delete a product",
+        "description": "update-14 (NEW): permanent. Permission: `manage_products`.",
+        "requestBody": {
+          "required": true,
+          "description": "The product to delete.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/show": {
+      "get": {
+        "tags": [
+          "update-14 / Admin / Store Products (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): one product",
+        "description": "update-14 (NEW): one product with its translations and its category. Permission: `manage_products`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/toggle-website-visibility": {
+      "post": {
+        "tags": [
+          "update-14 / Admin / Store Products (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): show or hide a product in the store",
+        "description": "update-14 (NEW): the same one-click toggle courses and books have. Returns the resulting `show_on_website`. Permission: `manage_products`.",
+        "requestBody": {
+          "required": true,
+          "description": "The product to toggle.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/store": {
+      "get": {
+        "tags": [
+          "update-14 / Public / Store (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): the store — products and standalone books in one list",
+        "description": "update-14 (NEW): المتجر — one shelf, two kinds of thing on it.\n\nProducts and standalone books (those tied to no course and no unit) come back in ONE list, in one shape, under one sort. They are not merged in the database - a book has a file, a subject and a reader, and a product has stock and a sale price and none of the rest - so they are brought together here, at the one place that has to show them together.\n\nEvery entry carries `item_type` ('product' or 'book') and an `id` that is only unique WITHIN its own type. A client must key on the pair. That is stated rather than hidden behind a synthetic id, because an id that silently means two different things in two tables is how a cart buys the wrong row.\n\nAuth is optional: a visitor sees what is on sale, and a signed-in student additionally sees `own` / `is_locked` on the books they already hold.\n\n`type=product` or `type=book` narrows to one kind. `category_id` narrows to one PRODUCT category and therefore excludes books, which have none - said back in `applied_filters.books_excluded_reason` rather than left for somebody to work out from a suddenly shorter list. `sort`: newest (default), oldest, price_asc, price_desc, name.\n\nWithout migration 127 this returns the books it always returned rather than failing - a half-deployed server should still have a shop.",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "product",
+                "book"
+              ]
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "min_price",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "max_price",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "in_stock",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "newest",
+                "oldest",
+                "price_asc",
+                "price_desc",
+                "name"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/store/categories": {
+      "get": {
+        "tags": [
+          "update-14 / Public / Store (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): product categories a shopper may browse",
+        "description": "update-14 (NEW): the active product categories, each with `products_count` - how many live products it holds - so the shop front can hide an empty shelf instead of opening one. `hide_empty=1` does that server-side.\n\nNo auth.",
+        "parameters": [
+          {
+            "name": "hide_empty",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/store/products/show": {
+      "get": {
+        "tags": [
+          "update-14 / Public / Store (NEW - update-14)"
+        ],
+        "summary": "update-14 (NEW): one product",
+        "description": "update-14 (NEW): one product by `id` or by `slug`, in the same shape the store list uses. Only a live, visible one - this is the shopper's view, not the admin's.\n\nNo auth.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "slug",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/report-center": {
       "get": {
         "tags": [

@@ -6169,6 +6169,161 @@ $routes = [
                 return adminToggleBookWebsiteVisibility($con);
             },
         ],
+
+        // Admin Store Products & Categories -------------------------
+        // منتجات المتجر وتصنيفاتها. جداول مستقلة عن الكتب (مايجريشن 127)، والمتجر يعرض
+        // الاثنين معًا عبر /store. الصلاحية manage_products، منفصلة عن manage_books.
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/product-categories",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/products/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_products');
+                return adminListProductCategories($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/product-categories/show",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/products/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_products');
+                return adminGetProductCategory($con);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/product-categories",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/products/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_products');
+                return adminCreateProductCategory($con);
+            },
+        ],
+        [
+            "method" => "PUT",
+            "path" => "/brain-ixa/admin/product-categories",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/products/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_products');
+                return adminUpdateProductCategory($con);
+            },
+        ],
+        [
+            "method" => "DELETE",
+            "path" => "/brain-ixa/admin/product-categories",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/products/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_products');
+                return adminDeleteProductCategory($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/products",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/products/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_products');
+                return adminListProducts($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/products/show",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/products/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_products');
+                return adminGetProduct($con);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/products",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/products/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_products');
+                return adminCreateProduct($con, $adminData);
+            },
+        ],
+        [
+            "method" => "PUT",
+            "path" => "/brain-ixa/admin/products",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/products/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_products');
+                return adminUpdateProduct($con);
+            },
+        ],
+        [
+            "method" => "DELETE",
+            "path" => "/brain-ixa/admin/products",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/products/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_products');
+                return adminDeleteProduct($con);
+            },
+        ],
+        [
+            "method" => "POST",
+            "path" => "/brain-ixa/admin/products/toggle-website-visibility",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/products/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_products');
+                return adminToggleProductWebsiteVisibility($con);
+            },
+        ],
+
+        // Public / Student Store ------------------------------------
+        // المتجر: المنتجات والكتب المستقلّة في قائمة واحدة. الدخول اختياري - الزائر يرى
+        // المعروض، والطالب المسجَّل يرى كذلك ما يملكه من الكتب.
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/store",
+            "handler" => function ($con) {
+                include_once "./middlewares/studentauthmiddleware.php";
+                include_once "./app/store/manage.php";
+                $studentData = studentAuthMiddlewareOptional();
+                return storeList($con, $studentData);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/store/categories",
+            "handler" => function ($con) {
+                include_once "./app/store/manage.php";
+                return storeCategories($con);
+            },
+        ],
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/store/products/show",
+            "handler" => function ($con) {
+                include_once "./app/store/manage.php";
+                return storeShowProduct($con);
+            },
+        ],
         [
             "method" => "GET",
             "path" => "/brain-ixa/admin/academic-years",

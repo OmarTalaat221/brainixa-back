@@ -50,6 +50,9 @@ if (!function_exists('permissions_catalogue')) {
             'manage_exams'             => ['إدارة الامتحانات', 'Manage Exams', 'exams'],
             'manage_certificates'      => ['إدارة الشهادات', 'Manage Certificates', 'certificates'],
             'manage_books'             => ['إدارة الكتب وطلبات الشراء', 'Manage Books & Purchase Requests', 'books'],
+            // Separate from manage_books on purpose: whoever prices the school bags is not
+            // necessarily whoever uploads the PDFs, even though both end up on the same store.
+            'manage_products'          => ['إدارة منتجات المتجر', 'Manage Store Products', 'store'],
 
             // ---- money ----------------------------------------------------------------------
             'view_sales'           => ['المبيعات', 'Sales', 'sales'],
