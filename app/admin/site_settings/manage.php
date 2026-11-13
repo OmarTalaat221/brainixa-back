@@ -246,11 +246,41 @@ if (!function_exists('adminUpdateSiteSettings')) {
             if ($target !== '' && $target !== $current) {
                 // Before the setting is written: a failure here leaves the platform still
                 // describing its prices with the currency they were entered in.
-                $currencyMove = base_currency_adopt($con, $target);
+                $entered = $inputData['base_currency_prices'] ?? [];
+                if (is_string($entered)) {
+                    $decoded = json_decode($entered, true);
+                    $entered = is_array($decoded) ? $decoded : [];
+                }
+
+                $currencyMove = base_currency_adopt($con, $target, is_array($entered) ? $entered : []);
                 $currencyMove['from'] = $current;
                 $currencyMove['to'] = $target;
+
+                // Refused, and nothing written. Saving the setting now would do the exact thing
+                // this guard exists to prevent: leave old figures to be re-read as a currency
+                // nobody priced them in.
+                if (empty($currencyMove['ok'])) {
+                    $missing = $currencyMove['missing'];
+                    return [
+                        'status' => 'error',
+                        'message' => app_text(
+                            $con,
+                            'ما تمّ تغيير شيء. ' . count($missing) . ' عنصر ليس له سعر بـ ' . $target . '، ولا يمكن تحويل سعره تلقائيًا — لازم تُدخل سعر كل واحد منها بالعملة الجديدة أوّلًا.',
+                            'Nothing was changed. ' . count($missing) . ' item(s) have no price in ' . $target . ' and cannot be converted automatically - a price in the new currency must be entered for each of them first.'
+                        ),
+                        'base_currency_blocked' => [
+                            'from' => $current,
+                            'to' => $target,
+                            'missing_count' => count($missing),
+                            'missing' => $missing,
+                        ],
+                    ];
+                }
             }
         }
+
+        // Not a setting. It rides along with a base-currency change and is consumed above.
+        unset($inputData['base_currency_prices']);
 
         $stmt = mysqli_prepare($con, "INSERT INTO site_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
         if (!$stmt) {
@@ -267,28 +297,32 @@ if (!function_exists('adminUpdateSiteSettings')) {
         $response = adminGetSiteSettings($con);
 
         if ($currencyMove !== null) {
-            $missing = $currencyMove['missing'];
             $updated = $currencyMove['updated'];
 
-            // A warning on a successful save, not an error. The change was made and asked for; what
-            // the admin needs is to be told what it left unfinished, with the list to work from.
+            // Every item got a price in the new currency, or this code would not be running: the
+            // refusal above returns before the setting is written. So this is a plain success, and
+            // the breakdown is only there for the screen to report what it did.
+            $adoptedStored = 0;
+            $adoptedEntered = 0;
+            foreach ($updated as $row) {
+                if (($row['source'] ?? '') === 'entered') $adoptedEntered++;
+                else $adoptedStored++;
+            }
+
             $response['base_currency_change'] = [
                 'from' => $currencyMove['from'],
                 'to' => $currencyMove['to'],
                 'adopted_count' => count($updated),
+                'adopted_from_stored' => $adoptedStored,
+                'adopted_from_entered' => $adoptedEntered,
                 'adopted' => $updated,
-                'missing_count' => count($missing),
-                'missing' => $missing,
             ];
 
-            if ($missing) {
-                $response['severity'] = 'warning';
-                $response['message'] = app_text(
-                    $con,
-                    'تم تغيير العملة الأساسية إلى ' . $currencyMove['to'] . '. ' . count($updated) . ' عنصر أخذ سعره المحفوظ بهذه العملة، لكن ' . count($missing) . ' عنصر ملهوش سعر بيها — أرقامهم زي ما هي وبقت محسوبة بالعملة الجديدة، فمحتاجة تتراجع.',
-                    'Base currency changed to ' . $currencyMove['to'] . '. ' . count($updated) . ' item(s) took the price already entered in it, but ' . count($missing) . ' item(s) have no price in it - their figures are unchanged and now read as the new currency, so they need reviewing.'
-                );
-            }
+            $response['message'] = app_text(
+                $con,
+                'تم تغيير العملة الأساسية إلى ' . $currencyMove['to'] . '، و' . count($updated) . ' عنصر اتسعّر بها: ' . $adoptedStored . ' أخذ سعره المحفوظ و' . $adoptedEntered . ' بالسعر اللي كتبته.',
+                'Base currency changed to ' . $currencyMove['to'] . ', and ' . count($updated) . ' item(s) are now priced in it: ' . $adoptedStored . ' took a stored price and ' . $adoptedEntered . ' took the price you entered.'
+            );
         }
 
         return $response;

@@ -15,11 +15,18 @@
  *
  * What is left over is the point of all this: every item with NO price in the incoming currency
  * cannot be fixed automatically, because nobody has ever said what it costs in that currency.
- * Those are listed, counted and handed back so the admin is told exactly which items they now owe
- * a price - instead of finding out from a customer who paid the wrong amount.
  *
- * Products are deliberately absent. `products.currency` is a column on each row, so a product
- * already carries its own currency and the base setting never spoke for it.
+ * Those items are not allowed through. Letting the switch proceed and leaving their figures to be
+ * re-read as the new currency is the exact bug this file exists to stop - it is what turns 300 EGP
+ * into 300 SAR. So the change is REFUSED until a price in the incoming currency has been given for
+ * every one of them, and the refusal names them. Nothing here ever invents a conversion: an
+ * exchange rate picked by the server would put a number in front of a customer that nobody
+ * approved.
+ *
+ * Store products are deliberately absent. `products.currency` is a column on each row, so a
+ * product already carries its own currency and the base setting never spoke for it. (Note that
+ * `course_books` rows - labelled "منتج" in the dashboard - DO go through here, because their price
+ * is a bare number like a course's.)
  */
 
 require_once __DIR__ . '/functions.php';
@@ -183,23 +190,94 @@ if (!function_exists('base_currency_impact')) {
     }
 }
 
+if (!function_exists('base_currency_entered_prices')) {
+    /**
+     * The prices the admin typed for the items that had none, keyed "course-12" / "book-7".
+     *
+     * Accepts either that map or a list of {item_type, item_id, price}, because a form sends one
+     * and a script the other, and refusing the shape somebody happens to have is not a safety
+     * measure.
+     */
+    function base_currency_entered_prices($input): array {
+        $out = [];
+        if (!is_array($input)) return $out;
+
+        foreach ($input as $key => $value) {
+            $itemType = null;
+            $itemId = 0;
+            $price = null;
+
+            if (is_array($value) && isset($value['item_type'], $value['item_id'])) {
+                $itemType = (string)$value['item_type'];
+                $itemId = (int)$value['item_id'];
+                $price = $value['price'] ?? null;
+            } elseif (is_string($key) && strpos($key, '-') !== false) {
+                [$itemType, $rawId] = explode('-', $key, 2);
+                $itemId = (int)$rawId;
+                $price = $value;
+            }
+
+            if (!in_array($itemType, ['course', 'book'], true) || $itemId <= 0) continue;
+            if ($price === null || $price === '' || !is_numeric($price)) continue;
+
+            $price = (float)$price;
+            // Zero is allowed - an item deliberately given away - but a negative price is not a
+            // price, and it would be stored and charged.
+            if ($price < 0) continue;
+
+            $out[$itemType . '-' . $itemId] = $price;
+        }
+
+        return $out;
+    }
+}
+
 if (!function_exists('base_currency_adopt')) {
     /**
-     * Rewrites each item's base price to the price already entered in the incoming currency.
+     * Moves every item's base price into the incoming currency, or refuses outright.
      *
-     * Runs before the setting is written, so if this fails the platform is still describing its
+     * Two ways a price gets there, and no third:
+     *
+     *   - it was already entered for a country using that currency, so it is adopted;
+     *   - the admin typed it on the confirmation screen, so it is used.
+     *
+     * Anything still without one REFUSES THE WHOLE CHANGE and is named in `missing`. No partial
+     * write happens in that case: the caller must not save the setting either, or the platform
+     * ends up describing old figures with a new currency, which is the bug this guards against.
+     *
+     * Runs before the setting is written, so a failure leaves the platform still describing its
      * prices with the currency they were entered in.
-     *
-     * Items with no price in that currency are NOT touched. There is nothing to convert them with -
-     * guessing at an exchange rate would put a number in front of a customer that nobody approved -
-     * so they keep their figure and are reported as owing a price.
      */
-    function base_currency_adopt($con, string $targetCurrency): array {
+    function base_currency_adopt($con, string $targetCurrency, array $enteredPrices = []): array {
         $scan = base_currency_scan($con, $targetCurrency);
         $sources = base_currency_item_sources();
+        $entered = base_currency_entered_prices($enteredPrices);
+
+        // Everything that now has a number, from either source.
+        $toWrite = [];
+        foreach ($scan['adoptable'] as $row) {
+            $row['source'] = 'stored';
+            $toWrite[] = $row;
+        }
+
+        $stillMissing = [];
+        foreach ($scan['missing'] as $row) {
+            $key = $row['item_type'] . '-' . $row['item_id'];
+            if (array_key_exists($key, $entered)) {
+                $row['new_price'] = $entered[$key];
+                $row['source'] = 'entered';
+                $toWrite[] = $row;
+            } else {
+                $stillMissing[] = $row;
+            }
+        }
+
+        if ($stillMissing) {
+            return ['ok' => false, 'updated' => [], 'missing' => $stillMissing];
+        }
 
         $updated = [];
-        foreach ($scan['adoptable'] as $row) {
+        foreach ($toWrite as $row) {
             $source = $sources[$row['item_type']] ?? null;
             if (!$source) continue;
 
@@ -212,7 +290,7 @@ if (!function_exists('base_currency_adopt')) {
             if (@mysqli_stmt_execute($stmt)) $updated[] = $row;
         }
 
-        return ['updated' => $updated, 'missing' => $scan['missing']];
+        return ['ok' => true, 'updated' => $updated, 'missing' => []];
     }
 }
 
