@@ -4120,6 +4120,20 @@ $routes = [
             },
         ],
         [
+            // Clears a decided request off the queue. Approving one granted the book through
+            // student_book_subscriptions, which is a separate row this does not touch - removing
+            // the request is tidying, not undoing. A PENDING one is refused by the handler.
+            "method" => "DELETE",
+            "path" => "/brain-ixa/admin/books/purchase-requests",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./app/admin/books/manage.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_books');
+                return adminDeleteBookPurchaseRequest($con);
+            },
+        ],
+        [
             "method" => "POST",
             "path" => "/brain-ixa/admin/books/purchase-requests/review",
             "handler" => function ($con) {

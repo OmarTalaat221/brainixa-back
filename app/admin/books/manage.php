@@ -3,6 +3,9 @@ require_once __DIR__ . '/../../../helpers/functions.php';
 require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/upload.php';
 require_once __DIR__ . '/../../../helpers/entities.php';
+// app_text() lives here. Reaching it through whatever else the chain happens to pull in is how
+// session_ratings died with a PHP fatal that came back as HTML where the client expected JSON.
+require_once __DIR__ . '/../../../helpers/app_settings.php';
 require_once __DIR__ . '/../content/units.php';
 
 if (!function_exists('ensure_books_schema')) {
@@ -853,3 +856,74 @@ if (!function_exists('adminReviewBookRequest')) {
     }
 }
 
+
+if (!function_exists('adminDeleteBookPurchaseRequest')) {
+    /**
+     * Clears a purchase request off the list once it has been decided.
+     *
+     * The list is a QUEUE, not a ledger: an admin works through it, and approved and rejected rows
+     * pile up in front of the ones still waiting. Removing a decided row is tidying, not undoing -
+     * approving a request grants the book through `student_book_subscriptions`, and that row is a
+     * separate thing which this does not touch. A student who was granted a book keeps it.
+     *
+     * A PENDING request is refused. Deleting one would silently drop a student's request with no
+     * answer, and the student would never learn it had been seen at all - "reject it, then remove
+     * it" is one extra click and leaves them told.
+     */
+    function adminDeleteBookPurchaseRequest($con) {
+        $body = read_json_body();
+        // `id` is what the dashboard sends on a DELETE; `request_id` is what the review endpoint
+        // takes. Both are accepted so the two do not disagree about what to call the same number.
+        $requestId = (int)($body['id'] ?? $body['request_id'] ?? $_GET['id'] ?? $_GET['request_id'] ?? 0);
+
+        if ($requestId <= 0) {
+            return [
+                'status' => 'error',
+                'message' => app_text($con, 'رقم الطلب مطلوب.', 'The request id is required.'),
+            ];
+        }
+
+        $stmt = mysqli_prepare($con, "SELECT id, status FROM student_book_purchase_requests WHERE id = ? LIMIT 1");
+        if (!$stmt) {
+            return ['status' => 'error', 'message' => 'Database error: ' . mysqli_error($con)];
+        }
+
+        mysqli_stmt_bind_param($stmt, "i", $requestId);
+        mysqli_stmt_execute($stmt);
+        $row = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+
+        if (!$row) {
+            return [
+                'status' => 'error',
+                'message' => app_text($con, 'الطلب غير موجود.', 'That request does not exist.'),
+            ];
+        }
+
+        if (($row['status'] ?? '') === 'pending') {
+            return [
+                'status' => 'error',
+                'message' => app_text(
+                    $con,
+                    'الطلب ده لسه مستني رد. اقبله أو ارفضه الأول، وبعدين امسحه — عشان الطالب يعرف نتيجته.',
+                    'This request is still awaiting an answer. Approve or reject it first, then remove it, so the student is told the outcome.'
+                ),
+            ];
+        }
+
+        $del = mysqli_prepare($con, "DELETE FROM student_book_purchase_requests WHERE id = ?");
+        if (!$del) {
+            return ['status' => 'error', 'message' => 'Database error: ' . mysqli_error($con)];
+        }
+
+        mysqli_stmt_bind_param($del, "i", $requestId);
+        if (!mysqli_stmt_execute($del)) {
+            return ['status' => 'error', 'message' => 'Failed to delete the request: ' . mysqli_error($con)];
+        }
+
+        return [
+            'status' => 'success',
+            'message' => app_text($con, 'تم حذف الطلب.', 'The request has been removed.'),
+            'data' => ['id' => $requestId],
+        ];
+    }
+}
