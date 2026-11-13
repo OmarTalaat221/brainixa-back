@@ -12,6 +12,7 @@ And one hand-written collection, for the part a generated one documents poorly:
 | File | What it is |
 |---|---|
 | `brainixa_store_postman_collection.json` | The store — products and their categories, split into `admin/` and `user/`. Written by hand because the interesting part is not the field list but which values mean what: a null sale price is not a free product, a null stock is not a sold-out one, and `file_is_public` decides whether the shop front is handed the download link at all. A collection generated from the spec cannot say that in the place you read it. |
+| `brainixa_reports_pricing_postman_collection.json` | **update-11 … update-15**: the attendance reports, the per-class ratings, homework aimed at particular students, pricing by country, and moving the base currency. Hand-written for the same reason — the field list is the easy half. Which rule decided a price, why a rating needs an attendance row behind it, and why a currency change can be refused outright are not things a generated collection says. |
 
 ## Setup, once
 
@@ -55,8 +56,35 @@ if (token) {
 - **`slot_id` and `session_id` are different things.** A slot is a dated availability slot or a
   consultation; a session is a weekly recurring class. Their Zoom endpoints are separate too.
 - **The spec is a changelog, not a full reference.** Tags read `<batch> / <Role> / <Feature>`,
-  and an endpoint untouched since the base version is deliberately absent. Filter by `update-7`
+  and an endpoint untouched since the base version is deliberately absent. Filter by `update-15`
   to see only what the latest batch added or changed.
+- **A third outcome exists beside success and error.** `severity: "warning"` means the write
+  SUCCEEDED but could not do everything asked of it — a homework saved for students one of whom
+  has no subscription, say. Treating it as a failure hides a change that did happen.
+
+## Two places where the order of requests matters
+
+**Base currency.** Send *Preview* → *Try it with no prices* → *Do it*. The first two change
+nothing; the third is destructive and **cannot be undone by setting the currency back**, because
+the figures themselves are rewritten. The preview tells you which items the third request will
+refuse to proceed without.
+
+**Class ratings.** A student can only rate a class the attendance register says they attended, and
+the server checks it rather than trusting the request. So `GET /student/sessions/ratable` is where
+a usable `session_id` and `occurrence_date` come from — inventing a pair gets a refusal, correctly.
+
+## Testing the country pricing without a VPN
+
+`GET /pricing/context` is the first thing to check whenever a price looks wrong. Its `source`
+field names the rule that answered: `client` (an explicit `country=`), `edge` (a CDN header),
+`geoip`, `student` (the country saved on the account) or `base`.
+
+To pretend to be somewhere else, send `CF-IPCountry: DE` — the header Cloudflare sends, which the
+code reads along with the Vercel, App Engine and Fastly equivalents. Or force it outright with
+`?country=DE`, which outranks everything.
+
+A price that falls back shows `is_country_price: false` and is quoted in the **base** currency —
+never the base number relabelled with the local one.
 
 ## The store collection
 
