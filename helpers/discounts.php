@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/app_settings.php';
+require_once __DIR__ . '/teacher_ownership.php';
 require_once __DIR__ . '/entities.php';
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/upload.php';
@@ -71,12 +73,13 @@ if (!function_exists('discount_teacher_book_ids')) {
     function discount_teacher_book_ids($con, int $teacherId): array {
         if ($teacherId <= 0) return [];
 
+        // The same rule the teacher's store screen uses. This used to be a two-route version of
+        // its own, so a product the teacher saw on their store screen was refused here as "not
+        // yours".
         $ids = [];
         $res = @mysqli_query($con, "
-            SELECT DISTINCT b.id FROM course_books b
-            LEFT JOIN book_teachers bt ON bt.book_id = b.id
-            WHERE (b.created_by_type = 'teacher' AND b.created_by_id = " . (int)$teacherId . ")
-               OR bt.teacher_id = " . (int)$teacherId . "
+            SELECT DISTINCT cb.id FROM course_books cb
+            WHERE " . teacher_book_ownership_clause((int)$teacherId) . "
         ");
         if ($res) {
             while ($row = mysqli_fetch_assoc($res)) $ids[] = (int)$row['id'];

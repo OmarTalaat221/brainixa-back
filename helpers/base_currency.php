@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/app_settings.php';
 /**
  * Changing the platform's base currency, without silently repricing everything.
  *

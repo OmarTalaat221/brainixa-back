@@ -3,33 +3,10 @@ require_once __DIR__ . '/../../../helpers/functions.php';
 require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/upload.php';
 require_once __DIR__ . '/../../../helpers/entities.php';
+require_once __DIR__ . '/../../../helpers/app_settings.php';
+require_once __DIR__ . '/../../../helpers/teacher_ownership.php';
 
-if (!function_exists('teacher_book_ownership_clause')) {
-    /**
-     * The one definition of "this teacher's book", as a SQL condition over the alias `cb`
-     * (course_books).
-     *
-     * It exists because the listing and the review check used to disagree: the list matched eight
-     * ownership routes, the review only three, so a teacher saw purchase requests with a working
-     * Approve button that always came back "You are not authorized to review this book request".
-     * Both now call this, so what is shown is exactly what can be acted on.
-     *
-     * Note the `created_by_type = 'teacher'` guard on the creator test. Without it the condition
-     * is `created_by_id = <teacher id>` alone, which also matches books created by the *admin*
-     * whose id happens to equal this teacher's — ids are only unique within their own table.
-     */
-    function teacher_book_ownership_clause(int $teacherId): string {
-        return "(
-            (cb.created_by_type = 'teacher' AND cb.created_by_id = {$teacherId})
-            OR cb.id IN (SELECT book_id FROM book_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
-            OR cb.course_id IN (SELECT id FROM courses WHERE teacher_id = {$teacherId} OR (created_by_type = 'teacher' AND created_by_id = {$teacherId}))
-            OR cb.course_id IN (SELECT course_id FROM course_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
-            OR cb.unit_id IN (SELECT id FROM units WHERE (created_by_type = 'teacher' AND created_by_id = {$teacherId}))
-            OR cb.unit_id IN (SELECT unit_id FROM unit_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
-            OR cb.subject_id IN (SELECT subject_id FROM teacher_subjects WHERE teacher_id = {$teacherId})
-        )";
-    }
-}
+// teacher_book_ownership_clause() now lives in helpers/teacher_ownership.php.
 
 if (!function_exists('teacherGrantBookAccessToStudent')) {
     function teacherGrantBookAccessToStudent($con, $teacherData = null) {

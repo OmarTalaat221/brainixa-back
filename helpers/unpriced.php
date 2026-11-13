@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/app_settings.php';
 
 /**
  * "No price" - the third state of a price, beside free (0) and a figure.
