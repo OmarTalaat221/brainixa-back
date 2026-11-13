@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../../../helpers/unpriced.php';
 require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/entities.php';
 require_once __DIR__ . '/../../../helpers/functions.php';
@@ -379,7 +380,8 @@ if (!function_exists('adminListCourses')) {
                         'image' => $row['image'] ?? null,
                         'type' => $row['type'] ?? 'english',
                         'kind' => $row['kind'] ?? 'normal',
-                        'price' => (float)($row['price'] ?? 0),
+                        'price' => price_out($row['price'] ?? null),
+                        'is_priced' => ($row['price'] ?? null) !== null,
                         'lessons_count' => (int)($row['lessons_count'] ?? 0),
                         'order_num' => (int)($row['order_num'] ?? 0),
                         'is_active' => (int)($row['is_active'] ?? 0),
@@ -403,7 +405,9 @@ if (!function_exists('adminListCourses')) {
                 $row['subject_id'] = $sId;
                 $row['category_id'] = $catId;
                 $row['academic_year_id'] = $ayId;
-                $row['price'] = (float)$row['price'];
+                // null is "no price" and stays null for the dashboard; 0 is free.
+                $row['is_priced'] = $row['price'] !== null;
+                $row['price'] = price_out($row['price']);
                 $row['lessons_count'] = (int)$row['lessons_count'];
                 $row['is_active'] = (int)$row['is_active'];
                 $row['created_by_type'] = $row['created_by_type'] ?? 'admin';
@@ -510,7 +514,8 @@ if (!function_exists('adminGetCourse')) {
         $row['subject_id'] = $sId;
         $row['category_id'] = $catId;
         $row['academic_year_id'] = $ayId;
-        $row['price'] = (float)$row['price'];
+        $row['is_priced'] = $row['price'] !== null;
+        $row['price'] = price_out($row['price']);
         $row['lessons_count'] = (int)$row['lessons_count'];
         $row['is_active'] = (int)$row['is_active'];
         $row['created_by_type'] = $row['created_by_type'] ?? 'admin';
@@ -561,7 +566,10 @@ if (!function_exists('adminCreateCourse')) {
         $categoryId = isset($body['category_id']) ? (int)$body['category_id'] : null;
         $academicYearId = isset($body['academic_year_id']) ? (int)$body['academic_year_id'] : null;
         $teacherIds = $body['teacher_ids'] ?? $body['teachers'] ?? $body['teacher_id'] ?? null;
-        $price = isset($body['price']) ? (float)$body['price'] : 0.00;
+        // Empty means "no price", 0 means free. A body that does not mention the price at all
+        // keeps the 0 it always got, so an older client creates exactly what it did before.
+        $priceInput = price_from_body($con, $body, 'courses');
+        $price = $priceInput['present'] ? $priceInput['price'] : 0.00;
         $isActive = isset($body['is_active']) ? (int)$body['is_active'] : 1;
         $slug = strtolower(trim($body['slug'] ?? ''));
         $type = isset($body['type']) && trim($body['type']) !== '' ? strtolower(trim($body['type'])) : 'recorded';
@@ -674,7 +682,9 @@ if (!function_exists('adminUpdateCourse')) {
         $categoryId = isset($body['category_id']) ? (int)$body['category_id'] : null;
         $academicYearId = isset($body['academic_year_id']) ? (int)$body['academic_year_id'] : null;
         $teacherIds = $body['teacher_ids'] ?? $body['teachers'] ?? $body['teacher_id'] ?? null;
-        $price = isset($body['price']) ? (float)$body['price'] : null;
+        // `isset()` read a sent null as "not sent", which is why a price could never be cleared
+        // once set. Absent still means "leave it"; sent empty now means "no price".
+        $priceInput = price_from_body($con, $body, 'courses');
         $isActive = isset($body['is_active']) ? (int)$body['is_active'] : null;
         $slug = isset($body['slug']) ? strtolower(trim($body['slug'])) : null;
         $type = isset($body['type']) && trim($body['type']) !== '' ? strtolower(trim($body['type'])) : null;
@@ -735,9 +745,11 @@ if (!function_exists('adminUpdateCourse')) {
                 mysqli_stmt_execute($stmt);
             }
         }
-        if ($price !== null) {
+        if ($priceInput['present']) {
+            $price = $priceInput['price'];
             $stmt = mysqli_prepare($con, "UPDATE courses SET price = ? WHERE id = ?");
             if ($stmt) {
+                // A null bound to "d" is written as SQL NULL.
                 mysqli_stmt_bind_param($stmt, "di", $price, $id);
                 mysqli_stmt_execute($stmt);
             }

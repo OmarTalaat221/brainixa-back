@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../../../helpers/unpriced.php';
 require_once __DIR__ . '/../../../helpers/functions.php';
 require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/upload.php';
@@ -28,7 +29,9 @@ if (!function_exists('adminGetBookDetails')) {
         $row['subject_id'] = !empty($row['subject_id']) ? (int)$row['subject_id'] : null;
         $row['course_id'] = !empty($row['course_id']) ? (int)$row['course_id'] : null;
         $row['category'] = $row['category'] ?: 'summary';
-        $row['price'] = (float)($row['price'] ?? 0.00);
+        // null is "no price" and stays null for the dashboard; 0 is free.
+        $row['is_priced'] = $row['price'] !== null;
+        $row['price'] = price_out($row['price']);
         $row['allow_download'] = (int)($row['allow_download'] ?? 1);
         $row['is_active'] = (int)$row['is_active'];
         $rawLink = $row['link'];
@@ -263,7 +266,12 @@ if (!function_exists('adminCreateBook')) {
         // must never carry their own separate price — only standalone
         // (external) books, with no course_id/unit_id, are individually priced.
         $isCourseLinked = ($courseId !== null || $unitId !== null);
-        $price = $isCourseLinked ? 0.00 : (float)($body['price'] ?? 0.00);
+        // Empty is "no price", 0 is free. A lesson file is never sold on its own, so it is
+        // always 0 whatever was sent.
+        $priceInput = price_from_body($con, $body, 'course_books');
+        $price = $isCourseLinked ? 0.00 : ($priceInput['present'] ? $priceInput['price'] : 0.00);
+        // Interpolated below, so a "no price" has to become the SQL keyword, not an empty string.
+        $priceSql = $price === null ? 'NULL' : (string)(float)$price;
         // Every book is view-only on the platform, whatever the request body says. Handing a
         // student a downloadable file hands it to whoever they pass it on to, and the column is
         // what the student endpoints read to decide whether to expose the file's real address at
@@ -274,7 +282,7 @@ if (!function_exists('adminCreateBook')) {
         $cbCourse = $courseId ? $courseId : 'NULL';
         $cbUnit = $unitId ? $unitId : 'NULL';
 
-        $cbSql = "INSERT INTO course_books (subject_id, course_id, unit_id, file_type, category, extension, link, file_path, cover_image, price, allow_download, is_active, created_by_type, created_by_id) VALUES ({$cbSub}, {$cbCourse}, {$cbUnit}, '" . mysqli_real_escape_string($con, $fileType) . "', '" . mysqli_real_escape_string($con, $category) . "', '" . mysqli_real_escape_string($con, $extension) . "', '" . mysqli_real_escape_string($con, $link) . "', '" . mysqli_real_escape_string($con, $filePath) . "', '" . mysqli_real_escape_string($con, $coverImage) . "', {$price}, {$allowDownload}, {$isActive}, '{$creatorType}', {$creatorId})";
+        $cbSql = "INSERT INTO course_books (subject_id, course_id, unit_id, file_type, category, extension, link, file_path, cover_image, price, allow_download, is_active, created_by_type, created_by_id) VALUES ({$cbSub}, {$cbCourse}, {$cbUnit}, '" . mysqli_real_escape_string($con, $fileType) . "', '" . mysqli_real_escape_string($con, $category) . "', '" . mysqli_real_escape_string($con, $extension) . "', '" . mysqli_real_escape_string($con, $link) . "', '" . mysqli_real_escape_string($con, $filePath) . "', '" . mysqli_real_escape_string($con, $coverImage) . "', {$priceSql}, {$allowDownload}, {$isActive}, '{$creatorType}', {$creatorId})";
         if (!mysqli_query($con, $cbSql)) {
             return ['status' => 'error', 'message' => 'Failed to create book: ' . mysqli_error($con)];
         }
@@ -341,9 +349,15 @@ if (!function_exists('adminUpdateBook')) {
 
         if ($isCourseLinked) {
             $updateFields[] = "price = 0";
-        } elseif (isset($body['price'])) {
-            $price = (float)$body['price'];
-            $updateFields[] = "price = {$price}";
+        } else {
+            // `isset()` read a sent null as "not sent", so a price could never be cleared. Absent
+            // still means "leave it"; sent empty means "no price".
+            $priceInput = price_from_body($con, $body, 'course_books');
+            if ($priceInput['present']) {
+                $updateFields[] = $priceInput['price'] === null
+                    ? "price = NULL"
+                    : "price = " . (float)$priceInput['price'];
+            }
         }
         // read_json_body() already uploads a raw $_FILES entry itself and rewrites $body[key] into a
         // hosted URL - 'cover_image'/'image' already relied on that below. The PDF upload never

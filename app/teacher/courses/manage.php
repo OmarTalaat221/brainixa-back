@@ -59,7 +59,10 @@ if (!function_exists('teacherCreateCourse')) {
         $descEn = trim($body['description_en'] ?? $descAr);
         $categoryId = isset($body['category_id']) ? (int)$body['category_id'] : null;
         $academicYearId = isset($body['academic_year_id']) ? (int)$body['academic_year_id'] : null;
-        $price = isset($body['price']) ? (float)$body['price'] : 0.00;
+        // Same three states as the admin's form: empty is "no price", 0 is free. No price key at
+        // all keeps the old 0.
+        $priceInput = price_from_body($con, $body, 'courses');
+        $price = $priceInput['present'] ? $priceInput['price'] : 0.00;
         $isActive = isset($body['is_active']) ? (int)$body['is_active'] : 1;
         $slug = strtolower(trim($body['slug'] ?? ''));
         $type = isset($body['type']) && trim($body['type']) !== '' ? strtolower(trim($body['type'])) : 'recorded';

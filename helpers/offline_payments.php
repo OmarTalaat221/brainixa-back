@@ -139,6 +139,10 @@ if (!function_exists('offline_payment_quote')) {
         $context = pricing_context($con, $studentId);
         $currency = $priced['currency'];
 
+        if (isset($priced['is_priced']) && !$priced['is_priced']) {
+            return ['ok' => false, 'message' => price_not_for_sale_message($con)];
+        }
+
         $price = (float)$priced['price'];
         if ($price <= 0) {
             return ['ok' => false, 'message' => app_offline_text(

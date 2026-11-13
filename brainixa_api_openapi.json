@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Brainixa Backend - Session Changelog API (update-16)",
-    "version": "17.0.0",
+    "version": "18.0.0",
     "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109.\n\n`update-7` is the live-class batch and the loose ends around it: Zoom played inside the platform for all three kinds of live meeting (the weekly class sessions, the dated package appointments and the 1:1 consultations), a manual-sales sheet for admin and teacher, a chat contact directory read from the real tables instead of Firebase's stale copy, and hero slides as a table of their own.\n\nupdate-7 also turns the books library into a STORE. No products table was added: `course_books.file_type` carries `physical` for an item with no file, so every existing book endpoint sells one unchanged. Clients branch on that field rather than assuming a file exists.\n\n`update-8` (FIX): GET /student/exams leaked unit-scoped exams into the general listing whenever the request carried no `course_id` at all - the documented \"whole-course exams only by default\" rule was only ever enforced when `course_id` was explicitly passed. A student's general exams tab (no filters) could show a unit exam mixed in with the whole-course/standalone ones. The same default - `unit_id IS NULL` unless `include_unit_exams`/`with_unit_exams` says otherwise - now applies regardless of whether `course_id` is present. No response shape change, no new field; strictly fewer rows come back from the general (no-filter) call than before. A unit's own exams remain fully visible from inside that unit's content (GET /student/courses .../units, unaffected - that endpoint always filtered by `unit_id` directly).\n\n`update-13` is the Report Center (مركز التقارير): the four reports an owner asked to be pulled automatically rather than compiled by hand - sales, live-class attendance for both students and teachers, payroll with its deductions, and the after-class ratings - each over a `date_from`/`date_to` range and each downloadable as .xlsx. No migration: every figure already existed in rows the platform writes, and each report delegates to the module that already owns its numbers, so none of them can drift from the Sales screen, the attendance report or the ratings summary. Payroll is the one report with queries of its own, because the wallet had a ledger and a balance but never a per-period payslip; it is gated on `manage_wallets` rather than `manage_reports`.\n\n`update-14` gives the store products of its own. Until now everything it sold was a `course_books` row with no file attached, which works for a printed book and for nothing else - a school bag has no subject, no course and no unit, and the only category on that table says whether a PDF is a summary or a past paper. `products` and `product_categories` are new tables, deliberately separate from books and from course categories, and `GET /store` is the one place the two are shown side by side, each entry carrying `item_type` because an id is unique only within its own type. Nothing existing changed: no column was added to `course_books` and `GET /books` lists them exactly as before. Migration 127. Buying a product is NOT part of this batch - the catalogue is.\n\n`update-14` also lets a product carry a file of any type (migration 128). `upload_any_file()` inverts the usual allow-list and refuses only what a web server might execute, checking every segment of the name so a double extension does not slip past; `uploads/.htaccess` already disables execution in that directory, so the deny-list is the first lock rather than the only one. `file_is_public` decides whether the shop front is given the path at all, and defaults to withholding it."
   },
   "servers": [
@@ -2276,7 +2276,7 @@
           "update-14 / Admin / Store Products (NEW - update-14)"
         ],
         "summary": "update-14 (NEW): list products",
-        "description": "update-14 (NEW): منتجات المتجر — products the store sells that are not books.\n\nThe store had no products of its own. What it sold were `course_books` rows whose `file_type` is 'physical' - a book with no file - which works for a printed book and for nothing else. A school bag has no subject, no course and no unit, and the nearest thing to a category on that table is `category enum('summary','exam')`, which says whether a PDF is a summary or a past paper.\n\nSo products are their own table (`products`), with their own categories (`product_categories`), because \"حقائب مدرسية\" is not a course category and does not belong in the same list as \"الكيمياء\". Nothing about books changed: `GET /books` still lists them exactly as it did, and no column was added to `course_books`. The two are brought together only at `GET /store`, the one place that has to show them side by side.\n\nNeeds migration 127.\n\nFilters: `category_id`, `search` (name, description, slug, sku), `min_price` / `max_price` (applied to the effective price, so a product on sale is filtered at what it actually costs), `in_stock`, `is_active`. `statistics` carries the active / inactive / out-of-stock counts.\n\nPermission: `manage_products`.",
+        "description": "update-14 (NEW): منتجات المتجر — products the store sells that are not books.\n\nThe store had no products of its own. What it sold were `course_books` rows whose `file_type` is 'physical' - a book with no file - which works for a printed book and for nothing else. A school bag has no subject, no course and no unit, and the nearest thing to a category on that table is `category enum('summary','exam')`, which says whether a PDF is a summary or a past paper.\n\nSo products are their own table (`products`), with their own categories (`product_categories`), because \"حقائب مدرسية\" is not a course category and does not belong in the same list as \"الكيمياء\". Nothing about books changed: `GET /books` still lists them exactly as it did, and no column was added to `course_books`. The two are brought together only at `GET /store`, the one place that has to show them side by side.\n\nNeeds migration 127.\n\nFilters: `category_id`, `search` (name, description, slug, sku), `min_price` / `max_price` (applied to the effective price, so a product on sale is filtered at what it actually costs), `in_stock`, `is_active`. `statistics` carries the active / inactive / out-of-stock counts.\n\nPermission: `manage_products`.\n\nupdate-18: rows now carry `is_priced` (boolean). false = the item has no price - not for sale, not free. On student-facing endpoints `price` stays a NUMBER (0) for such an item, so no existing client breaks, and `price_formatted` reads \"بدون سعر\" / \"No price\". On admin and teacher endpoints `price` is null for it. Every purchase path refuses an unpriced item with error_code `not_for_sale`; a price for the student's country still makes it buyable there.",
         "parameters": [
           {
             "name": "page",
@@ -2366,7 +2366,8 @@
       },
       "post": {
         "tags": [
-          "update-14 / Admin / Store Products (NEW - update-14)"
+          "update-14 / Admin / Store Products (NEW - update-14)",
+          "update-18 / Pricing / No price"
         ],
         "summary": "update-14 (NEW): create a product",
         "description": "update-14 (NEW): a product.\n\nTwo fields say more than they look: `sale_price` null means \"not on sale\" while 0 means \"deliberately free\", and `stock` null means \"not tracked\" while 0 means \"out of stock\". Reading either missing value as zero would present every product as free and sold out, so the pairs are kept apart end to end - including in the response, which carries `is_stock_tracked` and `is_on_sale` so a card never has to guess.\n\n`effective_price` and `discount_percent` are computed server-side: a sale price that three screens each decide how to apply is a sale price three screens eventually disagree about.\n\nA sale price above the price is refused. Permission: `manage_products`.\n\nAn attachment of ANY type may be uploaded through `file`. Every other upload path on this platform names the extensions it accepts, which is right for an avatar and wrong for a product - an owner may attach a CAD drawing, a font, an installer, or something nobody listed in advance. So the rule is inverted: `upload_any_file()` accepts anything EXCEPT what a web server might run, and checks every segment of the name, so `invoice.pdf.php` is refused as well as `shell.php`. That is defensible because uploads/.htaccess already turns the PHP engine off, strips the handlers and refuses to serve executables - the deny-list is the first lock on a door that is already closed, not the only one.\n\n`file` accepts a multipart upload, a base64 data URI of any media type, or a path already on the server. Absent means keep the current file; an explicit null removes it. Send `file_name` alongside a data URI so the extension is not guessed from the mime subtype - guessing it from the subtype is the hole that once let \"data:image/php;base64,...\" write a webshell.\n\nThe stored name on disk is always generated and is never the uploaded one. The response carries has_file, file_name, file_extension, file_size, file_size_label and file_is_public.\n\n`file_is_public` decides who gets the path: 0 (the default) means only the admin does and the shop front merely says a file exists; 1 means the store serves it to anyone. A product whose file IS the thing being sold should stay 0 until checkout exists. Needs migration 128.\n\nTHIS ENDPOINT ACCEPTS multipart/form-data AS WELL AS JSON, and an upload must use it. Use multipart to send an actual file for `image` or `file`; use JSON when the value is a URL, a stored path or a base64 data URI.\n\nTwo things only JSON can say, because multipart cannot encode null: clearing a value (`\"image\": null`, `\"file\": null`, `\"sale_price\": null`, `\"stock\": null`) and the difference between \"leave it alone\" and \"clear it\". An absent field means leave it; an explicit null means clear it; an EMPTY multipart part means neither - it is simply nothing chosen, which is what lets a form-data save change a price without wiping the picture.\n\nPUT accepts multipart too. PHP parses multipart bodies for POST only, so this API parses a PUT body itself and fills $_FILES by hand - replacing an image is an ordinary update, not a separate endpoint.",
@@ -2403,7 +2404,9 @@
                     "type": "string"
                   },
                   "price": {
-                    "type": "number"
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Three states. Sent EMPTY (null, or \"\" in multipart) = no price: the item is not for sale yet, and is NOT free. 0 = free. A number = that price. Not sent at all = unchanged on update, and 0 on create, as before. Needs migration 130; until it runs, an empty price is stored as 0 exactly as it always was."
                   },
                   "sale_price": {
                     "type": "number",
@@ -2481,7 +2484,9 @@
                     "type": "string"
                   },
                   "price": {
-                    "type": "string"
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Three states. Sent EMPTY (null, or \"\" in multipart) = no price: the item is not for sale yet, and is NOT free. 0 = free. A number = that price. Not sent at all = unchanged on update, and 0 on create, as before. Needs migration 130; until it runs, an empty price is stored as 0 exactly as it always was."
                   },
                   "sale_price": {
                     "type": "string",
@@ -2547,7 +2552,8 @@
       },
       "put": {
         "tags": [
-          "update-14 / Admin / Store Products (NEW - update-14)"
+          "update-14 / Admin / Store Products (NEW - update-14)",
+          "update-18 / Pricing / No price"
         ],
         "summary": "update-14 (NEW): update a product",
         "description": "update-14 (NEW): only the fields present in the body are written.\n\nBoth prices are resolved to what they WILL be after the update and checked against each other once, rather than only the field that happens to be in the body. Checking only the body let `{\"price\": 300}` through on a product priced 450 with a 360 sale, leaving a discount that costs more than the product - and lowering a price is the ordinary way that happens, since it sends no sale_price at all.\n\nPermission: `manage_products`.\n\nAn attachment of ANY type may be uploaded through `file`. Every other upload path on this platform names the extensions it accepts, which is right for an avatar and wrong for a product - an owner may attach a CAD drawing, a font, an installer, or something nobody listed in advance. So the rule is inverted: `upload_any_file()` accepts anything EXCEPT what a web server might run, and checks every segment of the name, so `invoice.pdf.php` is refused as well as `shell.php`. That is defensible because uploads/.htaccess already turns the PHP engine off, strips the handlers and refuses to serve executables - the deny-list is the first lock on a door that is already closed, not the only one.\n\n`file` accepts a multipart upload, a base64 data URI of any media type, or a path already on the server. Absent means keep the current file; an explicit null removes it. Send `file_name` alongside a data URI so the extension is not guessed from the mime subtype - guessing it from the subtype is the hole that once let \"data:image/php;base64,...\" write a webshell.\n\nThe stored name on disk is always generated and is never the uploaded one. The response carries has_file, file_name, file_extension, file_size, file_size_label and file_is_public.\n\n`file_is_public` decides who gets the path: 0 (the default) means only the admin does and the shop front merely says a file exists; 1 means the store serves it to anyone. A product whose file IS the thing being sold should stay 0 until checkout exists. Needs migration 128.\n\nTHIS ENDPOINT ACCEPTS multipart/form-data AS WELL AS JSON, and an upload must use it. Use multipart to send an actual file for `image` or `file`; use JSON when the value is a URL, a stored path or a base64 data URI.\n\nTwo things only JSON can say, because multipart cannot encode null: clearing a value (`\"image\": null`, `\"file\": null`, `\"sale_price\": null`, `\"stock\": null`) and the difference between \"leave it alone\" and \"clear it\". An absent field means leave it; an explicit null means clear it; an EMPTY multipart part means neither - it is simply nothing chosen, which is what lets a form-data save change a price without wiping the picture.\n\nPUT accepts multipart too. PHP parses multipart bodies for POST only, so this API parses a PUT body itself and fills $_FILES by hand - replacing an image is an ordinary update, not a separate endpoint.",
@@ -2587,7 +2593,9 @@
                     "type": "string"
                   },
                   "price": {
-                    "type": "number"
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Three states. Sent EMPTY (null, or \"\" in multipart) = no price: the item is not for sale yet, and is NOT free. 0 = free. A number = that price. Not sent at all = unchanged on update, and 0 on create, as before. Needs migration 130; until it runs, an empty price is stored as 0 exactly as it always was."
                   },
                   "sale_price": {
                     "type": "number",
@@ -2671,7 +2679,9 @@
                     "type": "string"
                   },
                   "price": {
-                    "type": "string"
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Three states. Sent EMPTY (null, or \"\" in multipart) = no price: the item is not for sale yet, and is NOT free. 0 = free. A number = that price. Not sent at all = unchanged on update, and 0 on create, as before. Needs migration 130; until it runs, an empty price is stored as 0 exactly as it always was."
                   },
                   "sale_price": {
                     "type": "string",
@@ -5255,7 +5265,8 @@
     "/admin/books": {
       "post": {
         "tags": [
-          "update-7 / Admin / Books"
+          "update-7 / Admin / Books",
+          "update-18 / Pricing / No price"
         ],
         "summary": "MOVED FROM `old / Admin / Books`. update-4 (CHANGED): Create book - the uploaded PDF is finally stored, and order_num is settable. update-7: `file_type: \"physical\"` makes it a physical product",
         "description": "CASE (course_id/unit_id set vs both null):\n- course_id and/or unit_id SET -> this is a course/unit-bundled book: price is FORCED to 0.00 server-side no matter what you send, and students can ONLY access it via their course/unit subscription (POST /student/books/subscribe will actively REJECT a standalone purchase attempt on it).\n- course_id and unit_id BOTH null -> standalone book: submitted price is honored as-is, and students buy it individually via /student/books/subscribe.\nCASE (allow_download): 1 (default) = student gets a direct downloadable link; 0 = file_path/link are hidden from the student response entirely and they must use GET /student/books/stream instead.\n\nupdate-4 (FIXED): THE UPLOADED FILE NEVER PERSISTED. Send the PDF as multipart under the field name `file`. The request pipeline uploads every `$_FILES` entry itself and rewrites the body key into a hosted URL string before the handler runs - so by the time this handler executes there is no temp file left to move, only `body['file']` holding a URL. The handler only ever read `file_path`, which the form never sends, so the upload silently vanished on both create and update. It now reads `file_path` OR `file`.\n\nupdate-4 (FIXED): `course_id` and `subject_id` are backfilled from the unit when a book is created or moved under a unit. They used to be stored as NULL, which left unit-scoped books invisible to every course- and subject-filtered query.\n\nupdate-4 (NEW): `order_num` - the manual position inside the unit+category list. Defaults to the end; POST /admin/books/reorder rewrites the whole sequence.\n\n=== update-7: THE STORE ===\n\nWhat used to be \"books\" is now the store, and it sells two kinds of thing. The split is carried by `course_books.file_type`, which already existed:\n\n- `pdf` (or any other extension) - a DIGITAL product. A file, read inside the platform, exactly as a book always was.\n- `physical` - a PHYSICAL item: a bag, headphones, a stationery set. It has NO file at all. The student buys it and it is handed over off the platform.\n\nThere is no products table and no new endpoint. A physical item is a product row whose file type is not a file, so every existing book call - list, show, buy, grant, review - works on it unchanged.\n\nA client MUST branch on `file_type === 'physical'` before offering to open a file: there is nothing to open, and an \"Open\" button on one reads as a broken purchase. The same row's `extension` is NOT a safe substitute - it defaults to 'pdf' on every row, whether or not a file was ever uploaded.",
@@ -5314,7 +5325,8 @@
                   },
                   "price": {
                     "type": "number",
-                    "description": "SERVER FORCES to 0.00 when course_id or unit_id is set"
+                    "description": "Three states. Sent EMPTY (null, or \"\" in multipart) = no price: the item is not for sale yet, and is NOT free. 0 = free. A number = that price. Not sent at all = unchanged on update, and 0 on create, as before. Needs migration 130; until it runs, an empty price is stored as 0 exactly as it always was.",
+                    "nullable": true
                   },
                   "allow_download": {
                     "type": "integer",
@@ -5362,7 +5374,8 @@
       },
       "put": {
         "tags": [
-          "update-7 / Admin / Books"
+          "update-7 / Admin / Books",
+          "update-18 / Pricing / No price"
         ],
         "summary": "MOVED FROM `old / Admin / Books`. update-4 (CHANGED): Update book - the uploaded PDF is finally stored, and order_num is settable. update-7: `file_type: \"physical\"` makes it a physical product",
         "security": [
@@ -5381,7 +5394,8 @@
                   },
                   "price": {
                     "type": "number",
-                    "description": "forced to 0 if book is course/unit-linked"
+                    "description": "Three states. Sent EMPTY (null, or \"\" in multipart) = no price: the item is not for sale yet, and is NOT free. 0 = free. A number = that price. Not sent at all = unchanged on update, and 0 on create, as before. Needs migration 130; until it runs, an empty price is stored as 0 exactly as it always was.",
+                    "nullable": true
                   },
                   "category": {
                     "type": "string",
@@ -5447,7 +5461,7 @@
           "update-7 / Admin / Books"
         ],
         "summary": "MOVED FROM `old / Admin / Books`. update-4 (CHANGED): List books - every filter now runs server-side, with aggregate stats. update-7: `scope=general` means tied to nothing at all",
-        "description": "The admin library page used to fetch EVERY book in the table, a hundred rows at a time in a loop, and then filter and count in the browser. On a real library that is dozens of requests before the first keystroke produces a result. All of it is now parameters on this one call.\n\n`scope` is the one that did not exist before: 'general' means a standalone library book (no unit), 'unit' means one tied to a lesson - the two tabs on the library page.\n\n`statistics` on the response carries `total_count`, `active_count`, `inactive_count`, `general_count` and `unit_count`, computed in a single aggregate query over the WHOLE table rather than over the current page, so the stat cards no longer disagree with the filter.\n\nRows are ordered by `order_num ASC, id ASC` - the order the content team dragged them into (see POST /admin/books/reorder).\n\n=== update-7: THE STORE ===\n\nWhat used to be \"books\" is now the store, and it sells two kinds of thing. The split is carried by `course_books.file_type`, which already existed:\n\n- `pdf` (or any other extension) - a DIGITAL product. A file, read inside the platform, exactly as a book always was.\n- `physical` - a PHYSICAL item: a bag, headphones, a stationery set. It has NO file at all. The student buys it and it is handed over off the platform.\n\nThere is no products table and no new endpoint. A physical item is a product row whose file type is not a file, so every existing book call - list, show, buy, grant, review - works on it unchanged.\n\nA client MUST branch on `file_type === 'physical'` before offering to open a file: there is nothing to open, and an \"Open\" button on one reads as a broken purchase. The same row's `extension` is NOT a safe substitute - it defaults to 'pdf' on every row, whether or not a file was ever uploaded.",
+        "description": "The admin library page used to fetch EVERY book in the table, a hundred rows at a time in a loop, and then filter and count in the browser. On a real library that is dozens of requests before the first keystroke produces a result. All of it is now parameters on this one call.\n\n`scope` is the one that did not exist before: 'general' means a standalone library book (no unit), 'unit' means one tied to a lesson - the two tabs on the library page.\n\n`statistics` on the response carries `total_count`, `active_count`, `inactive_count`, `general_count` and `unit_count`, computed in a single aggregate query over the WHOLE table rather than over the current page, so the stat cards no longer disagree with the filter.\n\nRows are ordered by `order_num ASC, id ASC` - the order the content team dragged them into (see POST /admin/books/reorder).\n\n=== update-7: THE STORE ===\n\nWhat used to be \"books\" is now the store, and it sells two kinds of thing. The split is carried by `course_books.file_type`, which already existed:\n\n- `pdf` (or any other extension) - a DIGITAL product. A file, read inside the platform, exactly as a book always was.\n- `physical` - a PHYSICAL item: a bag, headphones, a stationery set. It has NO file at all. The student buys it and it is handed over off the platform.\n\nThere is no products table and no new endpoint. A physical item is a product row whose file type is not a file, so every existing book call - list, show, buy, grant, review - works on it unchanged.\n\nA client MUST branch on `file_type === 'physical'` before offering to open a file: there is nothing to open, and an \"Open\" button on one reads as a broken purchase. The same row's `extension` is NOT a safe substitute - it defaults to 'pdf' on every row, whether or not a file was ever uploaded.\n\nupdate-18: rows now carry `is_priced` (boolean). false = the item has no price - not for sale, not free. On student-facing endpoints `price` stays a NUMBER (0) for such an item, so no existing client breaks, and `price_formatted` reads \"بدون سعر\" / \"No price\". On admin and teacher endpoints `price` is null for it. Every purchase path refuses an unpriced item with error_code `not_for_sale`; a price for the student's country still makes it buyable there.",
         "security": [
           {
             "AdminAuth": []
@@ -8831,7 +8845,7 @@
             }
           }
         },
-        "description": "update-4 (FIXED): THE LIST WAS COMING BACK IN THE WRONG ORDER, and the fix was not where it looked. `app/user/student/content/books.php` requires `subscriptions/manage.php` on its line 7, and that file carries its own older copy of this handler behind the same `function_exists` guard - so the older copy won, and every fix made to the maintained one since the files were split had been dead code. The list kept answering with `ORDER BY id DESC` no matter what. The shadow copies are gone; rows now come back in the content team's order (`order_num ASC, id ASC`), matching the dashboard.\n\nSame fix applied to the unit content payloads, where videos, books and exams were each listed by id and ignored `order_num` entirely."
+        "description": "update-4 (FIXED): THE LIST WAS COMING BACK IN THE WRONG ORDER, and the fix was not where it looked. `app/user/student/content/books.php` requires `subscriptions/manage.php` on its line 7, and that file carries its own older copy of this handler behind the same `function_exists` guard - so the older copy won, and every fix made to the maintained one since the files were split had been dead code. The list kept answering with `ORDER BY id DESC` no matter what. The shadow copies are gone; rows now come back in the content team's order (`order_num ASC, id ASC`), matching the dashboard.\n\nSame fix applied to the unit content payloads, where videos, books and exams were each listed by id and ignored `order_num` entirely.\n\nupdate-18: rows now carry `is_priced` (boolean). false = the item has no price - not for sale, not free. On student-facing endpoints `price` stays a NUMBER (0) for such an item, so no existing client breaks, and `price_formatted` reads \"بدون سعر\" / \"No price\". On admin and teacher endpoints `price` is null for it. Every purchase path refuses an unpriced item with error_code `not_for_sale`; a price for the student's country still makes it buyable there."
       }
     },
     "/student/my-subscribed-books": {
@@ -8887,7 +8901,7 @@
             }
           }
         },
-        "description": "update-7: a PHYSICAL product (`file_type: \"physical\"`) is bought exactly like a digital one - this opens a purchase request an admin or the owning teacher reviews, and approval grants it. What differs is only what happens afterwards: there is no file to open, so the client shows a \"we will contact you to arrange delivery\" state instead of a Read button.\n\nA FREE product (price 0) still skips review and is granted immediately - there is no payment to confirm.\n\nA row tied to a course or a unit is refused here (\"bundled with its course\"), which is why the storefront should ask for `standalone=1`."
+        "description": "update-7: a PHYSICAL product (`file_type: \"physical\"`) is bought exactly like a digital one - this opens a purchase request an admin or the owning teacher reviews, and approval grants it. What differs is only what happens afterwards: there is no file to open, so the client shows a \"we will contact you to arrange delivery\" state instead of a Read button.\n\nA FREE product (price 0) still skips review and is granted immediately - there is no payment to confirm.\n\nA row tied to a course or a unit is refused here (\"bundled with its course\"), which is why the storefront should ask for `standalone=1`.\n\nupdate-18: refuses an item with no price, with error_code `not_for_sale`."
       }
     },
     "/student/books/buy": {
@@ -11187,7 +11201,7 @@
           "update-4 / Admin / Courses (NEW - update-2)"
         ],
         "summary": "update-4 (CHANGED): List courses - manual ordering, a 1000-row cap, and a trimmed row shape",
-        "description": "update-2 (Admin): this endpoint and its filters (subject_ids, teacher_ids, category_ids, academic_year_ids, price range, min/max lessons, search, sort, pagination, etc.) already existed and are unchanged — the only genuinely NEW thing is the `kind` filter/field below, added for the packages feature. Every course row in the response now also carries `kind` ('normal' | 'package'), defaulting to 'normal' for any pre-existing row. A 'package' course is just a course row with no units/videos/exams attached — it is organized around a weekly `class_sessions` schedule (see GET /admin/sessions and GET /teacher/sessions, both course_id-filterable, update-1) plus the existing course-files feature, instead of curriculum content.\n\nupdate-4: every course row now also carries `duration_months` (the package's subscription length in months, null for a normal course).\n\nupdate-4 (CHANGED): with no sort requested, rows come back in the admin's manual order (`order_num ASC, id DESC`) - see POST /admin/courses/reorder. Any named sort (`price_asc`, `name`, `newest`, ...) still wins, and `sort_by=order_num` asks for the manual order explicitly.\n\nupdate-4 (CHANGED): `limit` now caps at 1000 rather than 100, because drag-ordering has to hold the whole list - you cannot drag a course from page 1 to page 3.\n\nupdate-4 (NEW): `light=1`. The full row shape runs six or seven extra queries PER COURSE (subject, category, academic year, creator, translations, teachers). At ten rows a page that is invisible; at a thousand it is thousands of round trips for data the ordering table never draws. `light=1` returns only `id`, `slug`, `name`, `name_ar`, `name_en`, `image`, `type`, `kind`, `price`, `lessons_count`, `order_num`, `is_active`, and fetches every name in one query instead of one per row.\n\nGET /teacher/courses delegates to this handler, so it takes the same parameters.",
+        "description": "update-2 (Admin): this endpoint and its filters (subject_ids, teacher_ids, category_ids, academic_year_ids, price range, min/max lessons, search, sort, pagination, etc.) already existed and are unchanged — the only genuinely NEW thing is the `kind` filter/field below, added for the packages feature. Every course row in the response now also carries `kind` ('normal' | 'package'), defaulting to 'normal' for any pre-existing row. A 'package' course is just a course row with no units/videos/exams attached — it is organized around a weekly `class_sessions` schedule (see GET /admin/sessions and GET /teacher/sessions, both course_id-filterable, update-1) plus the existing course-files feature, instead of curriculum content.\n\nupdate-4: every course row now also carries `duration_months` (the package's subscription length in months, null for a normal course).\n\nupdate-4 (CHANGED): with no sort requested, rows come back in the admin's manual order (`order_num ASC, id DESC`) - see POST /admin/courses/reorder. Any named sort (`price_asc`, `name`, `newest`, ...) still wins, and `sort_by=order_num` asks for the manual order explicitly.\n\nupdate-4 (CHANGED): `limit` now caps at 1000 rather than 100, because drag-ordering has to hold the whole list - you cannot drag a course from page 1 to page 3.\n\nupdate-4 (NEW): `light=1`. The full row shape runs six or seven extra queries PER COURSE (subject, category, academic year, creator, translations, teachers). At ten rows a page that is invisible; at a thousand it is thousands of round trips for data the ordering table never draws. `light=1` returns only `id`, `slug`, `name`, `name_ar`, `name_en`, `image`, `type`, `kind`, `price`, `lessons_count`, `order_num`, `is_active`, and fetches every name in one query instead of one per row.\n\nGET /teacher/courses delegates to this handler, so it takes the same parameters.\n\nupdate-18: rows now carry `is_priced` (boolean). false = the item has no price - not for sale, not free. On student-facing endpoints `price` stays a NUMBER (0) for such an item, so no existing client breaks, and `price_formatted` reads \"بدون سعر\" / \"No price\". On admin and teacher endpoints `price` is null for it. Every purchase path refuses an unpriced item with error_code `not_for_sale`; a price for the student's country still makes it buyable there.",
         "security": [
           {
             "AdminAuth": []
@@ -11325,7 +11339,8 @@
       },
       "post": {
         "tags": [
-          "update-2 / Admin / Courses (NEW - update-2)"
+          "update-2 / Admin / Courses (NEW - update-2)",
+          "update-18 / Pricing / No price"
         ],
         "summary": "update-2 (NEW doc): Create a course or package",
         "description": "update-2 (Admin): request shape unchanged except for the new optional `kind` field. Everything else (name_ar/name_en, subject_id, category_id, academic_year_id, teacher_ids, price, image, slug, type, is_active) already existed and works exactly as before regardless of kind.",
@@ -11374,7 +11389,9 @@
                     }
                   },
                   "price": {
-                    "type": "number"
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Three states. Sent EMPTY (null, or \"\" in multipart) = no price: the item is not for sale yet, and is NOT free. 0 = free. A number = that price. Not sent at all = unchanged on update, and 0 on create, as before. Needs migration 130; until it runs, an empty price is stored as 0 exactly as it always was."
                   },
                   "is_active": {
                     "type": "integer",
@@ -11434,7 +11451,8 @@
       },
       "put": {
         "tags": [
-          "update-2 / Admin / Courses (NEW - update-2)"
+          "update-2 / Admin / Courses (NEW - update-2)",
+          "update-18 / Pricing / No price"
         ],
         "summary": "update-2 (NEW doc): Update a course or package, including switching its kind",
         "description": "update-2 (Admin): only `kind`, when present in the body, is new; every other field is pre-existing and updates only when present (partial update semantics), unchanged.",
@@ -11473,6 +11491,11 @@
                     ],
                     "nullable": true,
                     "description": "update-4 (NEW): how many months a subscription to this PACKAGE lasts (1, 3, 6 or 12). Only meaningful when `kind` = 'package'; an ordinary course leaves it null. Any other value (including 0 or an empty string) is stored as null.\nThis is what finally gives a package subscription an end date: when a student is granted or buys a package and the caller did not spell out `end_date`/`duration_days`, the subscription's `end_date` becomes start + duration_months. Before update-4 nothing on a package said how long it lasted, so package access was stored open ended and never expired.\nIt also bounds scheduling - a dated appointment cannot be booked for a student after their subscription ends."
+                  },
+                  "price": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Three states. Sent EMPTY (null, or \"\" in multipart) = no price: the item is not for sale yet, and is NOT free. 0 = free. A number = that price. Not sent at all = unchanged on update, and 0 on create, as before. Needs migration 130; until it runs, an empty price is stored as 0 exactly as it always was."
                   }
                 }
               },
@@ -11597,7 +11620,8 @@
       },
       "post": {
         "tags": [
-          "update-7 / Teacher / Courses"
+          "update-7 / Teacher / Courses",
+          "update-18 / Pricing / No price"
         ],
         "summary": "MOVED FROM `update-2 / Teacher / Courses (NEW - update-2)`. update-2 (NEW doc): Create a course or package as a teacher (own subject only). update-7: only the Arabic name is required now",
         "description": "update-2 (Teacher): same new `kind` field as POST /admin/courses; unlike admin, subject_id is required and must already be assigned to this teacher. The created course is auto-linked to this teacher.\n\nupdate-7 (VALIDATION RELAXED): `subject_id`, `category_id`, `name_en` and both descriptions are optional. Only `name_ar` is still required.\n\nA package in particular may not belong to any one subject, and demanding one made it impossible to create. Subject ownership is still checked - but only when a subject is actually given.",
@@ -11625,7 +11649,9 @@
                     "type": "string"
                   },
                   "price": {
-                    "type": "number"
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Three states. Sent EMPTY (null, or \"\" in multipart) = no price: the item is not for sale yet, and is NOT free. 0 = free. A number = that price. Not sent at all = unchanged on update, and 0 on create, as before. Needs migration 130; until it runs, an empty price is stored as 0 exactly as it always was."
                   },
                   "kind": {
                     "type": "string",
@@ -11667,7 +11693,8 @@
       },
       "put": {
         "tags": [
-          "update-2 / Teacher / Courses (NEW - update-2)"
+          "update-2 / Teacher / Courses (NEW - update-2)",
+          "update-18 / Pricing / No price"
         ],
         "summary": "update-2 (NEW doc): Update own course/package (including kind)",
         "description": "update-2 (Teacher): thin wrapper around PUT /admin/courses after an ownership check; same new `kind` field.",
@@ -11694,6 +11721,11 @@
                       "normal",
                       "package"
                     ]
+                  },
+                  "price": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Three states. Sent EMPTY (null, or \"\" in multipart) = no price: the item is not for sale yet, and is NOT free. 0 = free. A number = that price. Not sent at all = unchanged on update, and 0 on create, as before. Needs migration 130; until it runs, an empty price is stored as 0 exactly as it always was."
                   }
                 }
               },
@@ -11811,7 +11843,7 @@
           "update-2 / Student / Courses (update-2)"
         ],
         "summary": "update-2: Alias of GET /courses (identical handler, params and response)",
-        "description": "update-2: kept as a separate path only because both existed already; not a different implementation. See GET /courses for the full description of the kind filter/field and the shadowing bugfix.",
+        "description": "update-2: kept as a separate path only because both existed already; not a different implementation. See GET /courses for the full description of the kind filter/field and the shadowing bugfix.\n\nupdate-18: rows now carry `is_priced` (boolean). false = the item has no price - not for sale, not free. On student-facing endpoints `price` stays a NUMBER (0) for such an item, so no existing client breaks, and `price_formatted` reads \"بدون سعر\" / \"No price\". On admin and teacher endpoints `price` is null for it. Every purchase path refuses an unpriced item with error_code `not_for_sale`; a price for the student's country still makes it buyable there.",
         "security": [
           {
             "StudentAuth": []
@@ -11918,7 +11950,7 @@
           "update-3 / Student / Courses (update-2)"
         ],
         "summary": "update-2: Alias of GET /courses/show (identical handler, params and response)",
-        "description": "update-2: kept as a separate path only because both existed already; not a different implementation. See GET /courses/show for the full description of the kind field and package integration guidance.\n\nupdate-3 (CHANGED): the response now also carries `is_frozen` (boolean) and `freeze_reason` (string|null). `is_frozen` is true when the student is NOT currently subscribed to this course but the only reason is that a subscription which used to grant it has been frozen by the attendance policy. Use it to show a 'مجمد' (Frozen) banner plus a contact-support action instead of the normal 'subscribe' call to action - the student already paid, they are not a new prospect.\n\nupdate-3 (SECURITY FIX, same area): redeemed subscription CODES used to grant access forever. The access resolver read `code_redemptions_log` without ever joining back to the subscription that the redemption created, so a student whose subscription was later frozen or expired still passed the access check for every course, exam and homework that code covered. The log query is now joined to `student_subscriptions` and filtered on its `is_active` / `end_date`. CONSEQUENCE: a frozen or expired code-based student now correctly loses content access - if a client previously relied on that leak to keep showing content, it will now correctly get the locked/preview state.",
+        "description": "update-2: kept as a separate path only because both existed already; not a different implementation. See GET /courses/show for the full description of the kind field and package integration guidance.\n\nupdate-3 (CHANGED): the response now also carries `is_frozen` (boolean) and `freeze_reason` (string|null). `is_frozen` is true when the student is NOT currently subscribed to this course but the only reason is that a subscription which used to grant it has been frozen by the attendance policy. Use it to show a 'مجمد' (Frozen) banner plus a contact-support action instead of the normal 'subscribe' call to action - the student already paid, they are not a new prospect.\n\nupdate-3 (SECURITY FIX, same area): redeemed subscription CODES used to grant access forever. The access resolver read `code_redemptions_log` without ever joining back to the subscription that the redemption created, so a student whose subscription was later frozen or expired still passed the access check for every course, exam and homework that code covered. The log query is now joined to `student_subscriptions` and filtered on its `is_active` / `end_date`. CONSEQUENCE: a frozen or expired code-based student now correctly loses content access - if a client previously relied on that leak to keep showing content, it will now correctly get the locked/preview state.\n\nupdate-18: rows now carry `is_priced` (boolean). false = the item has no price - not for sale, not free. On student-facing endpoints `price` stays a NUMBER (0) for such an item, so no existing client breaks, and `price_formatted` reads \"بدون سعر\" / \"No price\". On admin and teacher endpoints `price` is null for it. Every purchase path refuses an unpriced item with error_code `not_for_sale`; a price for the student's country still makes it buyable there.",
         "security": [
           {
             "StudentAuth": []
@@ -18550,7 +18582,7 @@
           "update-5 / Student - Payments"
         ],
         "summary": "MOVED FROM `update-4 / Student - Payments`. Changed again in update-5: Quotes from the same discount and points calculation the gateway now uses. update-4 (NEW): What this costs, before paying",
-        "description": "update-4 (NEW). Prices a course or book for this student, optionally with a discount code, and returns the payment accounts alongside it.\n\nRead-only. Checking a code here does NOT spend it - a code is consumed only when a request is approved, so a student can preview as often as they like and a request that is never approved costs them nothing.\n\nBody: `item_type` ('course' or 'book'), `item_id`, optional `discount_code`. Returns `original_amount`, `discount_amount`, `amount_due` and `accounts`. Discount codes apply to courses only. Refused when the student already has access.\n\n=== update-5 ===\n\nThe quote and the charge are computed by one shared helper, so the figure shown before paying and the figure actually taken cannot drift apart.\n\nWhat this purchase would cost after a code and points, WITHOUT filing anything. Every field is also accepted in the query string.",
+        "description": "update-4 (NEW). Prices a course or book for this student, optionally with a discount code, and returns the payment accounts alongside it.\n\nRead-only. Checking a code here does NOT spend it - a code is consumed only when a request is approved, so a student can preview as often as they like and a request that is never approved costs them nothing.\n\nBody: `item_type` ('course' or 'book'), `item_id`, optional `discount_code`. Returns `original_amount`, `discount_amount`, `amount_due` and `accounts`. Discount codes apply to courses only. Refused when the student already has access.\n\n=== update-5 ===\n\nThe quote and the charge are computed by one shared helper, so the figure shown before paying and the figure actually taken cannot drift apart.\n\nWhat this purchase would cost after a code and points, WITHOUT filing anything. Every field is also accepted in the query string.\n\nupdate-18: refuses an item with no price, with error_code `not_for_sale`.",
         "security": [
           {
             "StudentAuth": []
@@ -18640,7 +18672,7 @@
           "update-5 / Student - Payments"
         ],
         "summary": "MOVED FROM `update-4 / Student - Payments`. Changed again in update-5: A discount code is now held to its usage limit, and the amount is no longer taken from the client. update-4 (NEW): File a payment request",
-        "description": "update-4 (NEW). The student has already transferred the money; this files the receipt for review.\n\nFILING GRANTS NOTHING. The request enters a queue as `pending` and access is opened only when a reviewer approves it. The `amount` the student types is never treated as proof - it is stored next to the price and the discount so a person can compare all three.\n\nBody: `item_type`, `item_id`, `receipt_image` (REQUIRED - base64 data URI or an uploaded path; there is nothing to review without it), `amount`, and optionally `payment_account_id`, `sender_name`, `sender_reference`, `transferred_at`, `student_note`, `discount_code`.\n\nRefused when the student already has access, or already has an open request for the same item - otherwise a student who cannot see their first request files four more and someone approves the same payment twice.\n\n=== update-5 ===\n\nThe code's use is claimed BEFORE the request is created, with a conditional update (`used_count < max_uses`), and released if the request fails. A code good for ten uses still gives ten - the defect was the eleventh, which slipped through when two requests arrived together.\n\nSECURITY: the payable amount is recomputed on the server. It used to be read from the request body, so a client could name its own price.\n\nFiles a transfer for review. Nothing is granted until an admin or the owning teacher approves it.",
+        "description": "update-4 (NEW). The student has already transferred the money; this files the receipt for review.\n\nFILING GRANTS NOTHING. The request enters a queue as `pending` and access is opened only when a reviewer approves it. The `amount` the student types is never treated as proof - it is stored next to the price and the discount so a person can compare all three.\n\nBody: `item_type`, `item_id`, `receipt_image` (REQUIRED - base64 data URI or an uploaded path; there is nothing to review without it), `amount`, and optionally `payment_account_id`, `sender_name`, `sender_reference`, `transferred_at`, `student_note`, `discount_code`.\n\nRefused when the student already has access, or already has an open request for the same item - otherwise a student who cannot see their first request files four more and someone approves the same payment twice.\n\n=== update-5 ===\n\nThe code's use is claimed BEFORE the request is created, with a conditional update (`used_count < max_uses`), and released if the request fails. A code good for ten uses still gives ten - the defect was the eleventh, which slipped through when two requests arrived together.\n\nSECURITY: the payable amount is recomputed on the server. It used to be read from the request body, so a client could name its own price.\n\nFiles a transfer for review. Nothing is granted until an admin or the owning teacher approves it.\n\nupdate-18: refuses an item with no price, with error_code `not_for_sale`.",
         "security": [
           {
             "StudentAuth": []
@@ -22107,7 +22139,7 @@
           "update-5 / Student / Payments"
         ],
         "summary": "update-5 (NEW): Start a card payment with the gateway and get the redirect url",
-        "description": "Opens a payment at EasyKash for a course, a package or a book and returns the url to send the buyer to.\n\nThree things this does that the earlier flow did not:\n\n1. It charges the price of the BUYER'S country, the same figure the catalogue showed them, instead of the base price.\n\n2. Every attempt gets its own reference, `BX<id>-<8 hex>`, stored in `payment_transactions.gateway_reference` (migration 098). EasyKash consumes a reference permanently per merchant account, and the row id was being reused - which made EVERY checkout fail with `customerReference is already used`.\n\n   CLIENT ACTION: the reference is a STRING. Passing it through `Number()` yields NaN.\n\n3. A discount code and a points balance are applied here too (migration 100). They used to work for bank-transfer payments only and were silently ignored for card payments. The payable amount is computed on the server; an amount sent by the client is not trusted.\n\nWhen the gateway refuses, its own reason is returned rather than a generic failure - the reason used to be discarded, which left every failure looking identical.",
+        "description": "Opens a payment at EasyKash for a course, a package or a book and returns the url to send the buyer to.\n\nThree things this does that the earlier flow did not:\n\n1. It charges the price of the BUYER'S country, the same figure the catalogue showed them, instead of the base price.\n\n2. Every attempt gets its own reference, `BX<id>-<8 hex>`, stored in `payment_transactions.gateway_reference` (migration 098). EasyKash consumes a reference permanently per merchant account, and the row id was being reused - which made EVERY checkout fail with `customerReference is already used`.\n\n   CLIENT ACTION: the reference is a STRING. Passing it through `Number()` yields NaN.\n\n3. A discount code and a points balance are applied here too (migration 100). They used to work for bank-transfer payments only and were silently ignored for card payments. The payable amount is computed on the server; an amount sent by the client is not trusted.\n\nWhen the gateway refuses, its own reason is returned rather than a generic failure - the reason used to be discarded, which left every failure looking identical.\n\nupdate-18: refuses an item with no price, with error_code `not_for_sale`.",
         "security": [
           {
             "StudentAuth": []

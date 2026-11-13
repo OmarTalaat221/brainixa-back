@@ -555,7 +555,16 @@ if (!function_exists('studentSubscribeBook')) {
         // pure friction: there is no payment to confirm and no reason to refuse.
         $priceRes = mysqli_query($con, "SELECT price FROM course_books WHERE id = {$bookId} LIMIT 1");
         $priceRow = $priceRes ? mysqli_fetch_assoc($priceRes) : null;
-        if ($priceRow !== null && (float)$priceRow['price'] <= 0) {
+
+        // NULL is "no price": not for sale yet. It must be refused HERE, before the free check
+        // below - `(float)null` is 0, and 0 grants the book outright with no one reviewing it.
+        // A price for the student's country still makes it buyable.
+        if ($priceRow !== null && $priceRow['price'] === null) {
+            $priced = function_exists('pricing_for_item') ? pricing_for_item($con, 'book', $bookId, 0.0, $stId) : ['is_priced' => false];
+            if (empty($priced['is_priced'])) {
+                return ['status' => 'error', 'error_code' => 'not_for_sale', 'message' => price_not_for_sale_message($con)];
+            }
+        } elseif ($priceRow !== null && (float)$priceRow['price'] <= 0) {
             mysqli_query($con, "INSERT INTO student_book_purchase_requests (student_id, book_id, status, review_notes) VALUES ({$stId}, {$bookId}, 'approved', 'كتاب مجاني — مُنح تلقائيًا')");
             mysqli_query($con, "INSERT INTO student_book_subscriptions (student_id, book_id, granted_by_type, granted_by_id, price, is_active) VALUES ({$stId}, {$bookId}, 'student', {$stId}, 0.00, 1)");
 

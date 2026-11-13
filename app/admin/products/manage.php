@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../../../helpers/unpriced.php';
 /**
  * منتجات المتجر وتصنيفاتها — admin CRUD.
  *
@@ -474,8 +475,11 @@ if (!function_exists('product_row')) {
     function product_row($con, array $row, ?int $langId = null): array {
         $id = (int)$row['id'];
 
-        $price = (float)$row['price'];
-        $salePrice = $row['sale_price'] !== null ? (float)$row['sale_price'] : null;
+        // NULL is "no price": not for sale yet, and not free. `price` stays a number in this
+        // shape because the public store reads it too; `is_priced` is what tells the two apart.
+        $isPriced = $row['price'] !== null;
+        $price = (float)($row['price'] ?? 0);
+        $salePrice = $isPriced && $row['sale_price'] !== null ? (float)$row['sale_price'] : null;
         $onSale = $salePrice !== null && $salePrice < $price;
 
         $stock = $row['stock'] !== null ? (int)$row['stock'] : null;
@@ -486,6 +490,7 @@ if (!function_exists('product_row')) {
             'slug' => $row['slug'],
             'sku' => $row['sku'] ?? null,
             'price' => round($price, 2),
+            'is_priced' => $isPriced,
             'sale_price' => $salePrice !== null ? round($salePrice, 2) : null,
             'effective_price' => round($onSale ? $salePrice : $price, 2),
             'is_on_sale' => $onSale,
@@ -756,11 +761,18 @@ if (!function_exists('adminCreateProduct')) {
         if ($price === false) {
             return ['status' => 'error', 'message' => 'السعر غير صالح'];
         }
-        $price = $price ?? 0.00;
+        // Sent empty is "no price"; not sent at all keeps the 0 it always got.
+        $unpriced = $price === null
+            && array_key_exists('price', $body)
+            && price_column_nullable($con, 'products');
+        $price = $unpriced ? null : ($price ?? 0.00);
 
         $salePrice = product_price_input($body, 'sale_price');
         if ($salePrice === false) {
             return ['status' => 'error', 'message' => 'سعر العرض غير صالح'];
+        }
+        if ($unpriced && $salePrice !== null) {
+            return ['status' => 'error', 'message' => 'لا يمكن وضع سعر عرض لمنتج بدون سعر'];
         }
         if ($salePrice !== null && $salePrice > $price) {
             return ['status' => 'error', 'message' => 'سعر العرض لا يمكن أن يتجاوز السعر الأصلي'];
@@ -863,7 +875,19 @@ if (!function_exists('adminUpdateProduct')) {
         if ($price === false) {
             return ['status' => 'error', 'message' => 'السعر غير صالح'];
         }
-        if ($price !== null) {
+        // A price sent EMPTY clears it to "no price" - which also takes any sale price with it,
+        // since a discount off no price is meaningless. Not sent at all still means "leave it".
+        $clearPrice = $price === null
+            && array_key_exists('price', $body)
+            && price_column_nullable($con, 'products');
+        if ($clearPrice) {
+            $salePriceSent = product_price_input($body, 'sale_price');
+            if ($salePriceSent !== null && $salePriceSent !== false) {
+                return ['status' => 'error', 'message' => 'لا يمكن وضع سعر عرض لمنتج بدون سعر'];
+            }
+            $fields[] = 'price = NULL';
+            $fields[] = 'sale_price = NULL';
+        } elseif ($price !== null) {
             $fields[] = 'price = ?'; $params[] = $price; $types .= 'd';
         }
 
@@ -885,8 +909,15 @@ if (!function_exists('adminUpdateProduct')) {
             $salePrice = (float)$current['sale_price'];
         }
 
-        $finalPrice = $price !== null ? $price : (float)$current['price'];
-        if ($salePrice !== null && $salePrice > $finalPrice) {
+        $finalPrice = $price !== null ? $price : ($current['price'] !== null ? (float)$current['price'] : null);
+        if ($salePrice !== null && !$clearPrice && $finalPrice === null) {
+            return ['status' => 'error', 'message' => 'لا يمكن وضع سعر عرض لمنتج بدون سعر'];
+        }
+        if ($clearPrice) {
+            // The sale price was already cleared above, whatever the stored one was.
+            $salePrice = null;
+        }
+        if ($salePrice !== null && $finalPrice !== null && $salePrice > $finalPrice) {
             return [
                 'status' => 'error',
                 'message' => $salePriceGiven
@@ -895,7 +926,7 @@ if (!function_exists('adminUpdateProduct')) {
             ];
         }
 
-        if ($salePriceGiven) {
+        if ($salePriceGiven && !$clearPrice) {
             $fields[] = 'sale_price = ?'; $params[] = $salePrice; $types .= 'd';
         }
 

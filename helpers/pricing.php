@@ -2,6 +2,7 @@
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/language.php';
 require_once __DIR__ . '/app_settings.php';
+require_once __DIR__ . '/unpriced.php';
 
 /**
  * What a given student, in a given country, pays for a given thing.
@@ -729,6 +730,48 @@ if (!function_exists('pricing_apply')) {
     }
 }
 
+if (!function_exists('pricing_unpriced_ids')) {
+    /**
+     * Which of these items have NO price - a NULL in the price column, which is "not for sale
+     * yet" and must never be read as free.
+     *
+     * Read from the table rather than the rows, because most listings cast `price` to a float
+     * before the rows reach the engine, and `(float)null` is 0. Returns [] before migration 130,
+     * when no price can be NULL.
+     */
+    function pricing_unpriced_ids($con, string $itemType, array $itemIds): array {
+        $tables = ['course' => 'courses', 'book' => 'course_books'];
+        $table = $tables[$itemType] ?? null;
+        $ids = array_values(array_unique(array_filter(array_map('intval', $itemIds))));
+        if (!$table || !$ids) return [];
+        if (!price_column_nullable($con, $table)) return [];
+
+        $res = @mysqli_query($con, "SELECT id FROM `{$table}` WHERE price IS NULL AND id IN (" . implode(',', $ids) . ")");
+        $out = [];
+        while ($res && ($row = mysqli_fetch_assoc($res))) {
+            $out[(int)$row['id']] = true;
+        }
+        return $out;
+    }
+}
+
+if (!function_exists('pricing_mark_unpriced')) {
+    /**
+     * Turns a priced block into an unpriced one - unless a country price applied, in which case
+     * the item IS priced for this student and the block is left alone.
+     */
+    function pricing_mark_unpriced($con, array $block, bool $baseUnpriced): array {
+        $isPriced = !$baseUnpriced || !empty($block['is_country_price']);
+        $block['is_priced'] = $isPriced;
+        if (!$isPriced) {
+            $block['price'] = 0;
+            $block['base_price'] = 0;
+            $block['price_formatted'] = price_unpriced_label($con);
+        }
+        return $block;
+    }
+}
+
 if (!function_exists('pricing_decorate_rows')) {
     /**
      * Rewrites `price` on every row of a listing to the price for this request's country, and
@@ -748,6 +791,7 @@ if (!function_exists('pricing_decorate_rows')) {
         }
 
         $countryPrices = pricing_country_prices($con, $itemType, $ids, (int)($context['country_id'] ?? 0));
+        $unpriced = pricing_unpriced_ids($con, $itemType, $ids);
 
         foreach ($rows as &$row) {
             if (!isset($row[$idKey])) continue;
@@ -757,8 +801,10 @@ if (!function_exists('pricing_decorate_rows')) {
             if (array_key_exists('is_country_price', $row)) continue;
             $basePrice = isset($row[$priceKey]) ? (float)$row[$priceKey] : 0.0;
             $block = pricing_apply($con, $context, $basePrice, $countryPrices[(int)$row[$idKey]] ?? null);
+            $block = pricing_mark_unpriced($con, $block, isset($unpriced[(int)$row[$idKey]]));
 
             $row[$priceKey] = $block['price'];
+            $row['is_priced'] = $block['is_priced'];
             $row['base_price'] = $block['base_price'];
             $row['currency'] = $block['currency'];
             $row['price_formatted'] = $block['price_formatted'];
@@ -785,7 +831,11 @@ if (!function_exists('pricing_for_item')) {
     function pricing_for_item($con, string $itemType, int $itemId, float $basePrice, int $studentId = 0): array {
         $context = pricing_context($con, $studentId);
         $countryPrices = pricing_country_prices($con, $itemType, [$itemId], (int)($context['country_id'] ?? 0));
-        return pricing_apply($con, $context, $basePrice, $countryPrices[$itemId] ?? null);
+        $block = pricing_apply($con, $context, $basePrice, $countryPrices[$itemId] ?? null);
+        // The money paths read `is_priced` to refuse an item that is not for sale, rather than
+        // reading its 0 as "free".
+        $unpriced = pricing_unpriced_ids($con, $itemType, [$itemId]);
+        return pricing_mark_unpriced($con, $block, isset($unpriced[$itemId]));
     }
 }
 

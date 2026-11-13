@@ -25,6 +25,9 @@ if (!function_exists('payments_resolve_purchasable_item')) {
         $row = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
         if (!$row) return null;
         $row['id'] = (int)$row['id'];
+        // Read before the cast: NULL is "no price" (not for sale), and (float)null is 0, which
+        // every caller would otherwise take for "free".
+        $row['is_priced'] = $row['price'] !== null;
         $row['price'] = (float)$row['price'];
         $row['is_active'] = (int)$row['is_active'];
         return $row;

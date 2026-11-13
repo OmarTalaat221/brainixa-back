@@ -100,7 +100,14 @@ if (!function_exists('studentInitiatePayment')) {
         if (!$item || (int)$item['is_active'] !== 1) {
             return ['status' => 'error', 'message' => trans('item_not_found_or_unavailable')];
         }
-        if ($item['price'] <= 0) {
+        // "No price" is not "free": an item with no price is not for sale at all. A country
+        // price can still make it buyable for this student, which is the quote's call below.
+        if (empty($item['is_priced'])) {
+            $priced = pricing_for_item($con, $itemType, $itemId, 0.0, $stId);
+            if (empty($priced['is_priced'])) {
+                return ['status' => 'error', 'error_code' => 'not_for_sale', 'message' => price_not_for_sale_message($con)];
+            }
+        } elseif ($item['price'] <= 0) {
             return ['status' => 'error', 'message' => trans('item_is_free')];
         }
         if (payments_student_already_has_access($con, $stId, $itemType, $itemId)) {
