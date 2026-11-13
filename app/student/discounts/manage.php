@@ -43,11 +43,17 @@ if (!function_exists('studentCheckDiscountCode')) {
         $code = (string)($body['code'] ?? $_GET['code'] ?? '');
         $courseIds = student_discount_request_course_ids($body);
 
-        if (!$courseIds) {
-            return ['status' => 'error', 'message' => 'course_id is required'];
+        // A store item is checked the same way, so one field on one form serves both.
+        $bookIds = $body['book_ids'] ?? $body['book_id'] ?? $_GET['book_id'] ?? [];
+        if (!is_array($bookIds)) {
+            $bookIds = array_filter(array_map('trim', explode(',', (string)$bookIds)));
         }
 
-        $result = discount_validate_code($con, $code, $studentId ?: null, $courseIds);
+        if (!$courseIds && !$bookIds) {
+            return ['status' => 'error', 'message' => 'course_id or book_id is required'];
+        }
+
+        $result = discount_validate_code($con, $code, $studentId ?: null, $courseIds, $bookIds);
 
         return [
             'status' => !empty($result['valid']) ? 'success' : 'error',

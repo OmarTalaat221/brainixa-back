@@ -16,6 +16,75 @@ require_once __DIR__ . '/pricing.php';
  * is the moment it is actually spent.
  */
 
+if (!function_exists('discount_code_books_table_exists')) {
+    /**
+     * Migration 129 is applied by hand on the server, so every read of the book scope is guarded.
+     * Until it runs a code simply has no books, which is exactly what every code had before - the
+     * feature is absent rather than broken.
+     */
+    function discount_code_books_table_exists($con): bool {
+        static $exists = null;
+        if ($exists === null) {
+            $res = @mysqli_query($con, "SHOW TABLES LIKE 'discount_code_books'");
+            $exists = $res && mysqli_num_rows($res) > 0;
+        }
+        return $exists;
+    }
+}
+
+if (!function_exists('discount_book_details')) {
+    /**
+     * Just enough of a book to name and price it on a quote. Deliberately not get_book_details():
+     * that pulls the file, the unit and the access rules, none of which a discount cares about,
+     * and it is one query per book on a listing.
+     */
+    function discount_book_details($con, int $bookId): ?array {
+        if ($bookId <= 0) return null;
+
+        $langId = (int)(get_language_info($con)['id'] ?? 1);
+        $stmt = @mysqli_prepare($con, "
+            SELECT b.id, b.price,
+                   COALESCE(
+                     (SELECT t.title FROM course_books_translations t
+                       WHERE t.book_id = b.id AND t.language_id = ? LIMIT 1),
+                     (SELECT t.title FROM course_books_translations t WHERE t.book_id = b.id LIMIT 1)
+                   ) AS name
+            FROM course_books b WHERE b.id = ? LIMIT 1
+        ");
+        if (!$stmt) return null;
+
+        mysqli_stmt_bind_param($stmt, "ii", $langId, $bookId);
+        mysqli_stmt_execute($stmt);
+        $row = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+        if (!$row) return null;
+
+        return [
+            'id' => (int)$row['id'],
+            'name' => $row['name'] ?: ('#' . (int)$row['id']),
+            'price' => (float)$row['price'],
+        ];
+    }
+}
+
+if (!function_exists('discount_teacher_book_ids')) {
+    /** The books a teacher owns, for the same rule that stops a teacher's code reaching other people's work. */
+    function discount_teacher_book_ids($con, int $teacherId): array {
+        if ($teacherId <= 0) return [];
+
+        $ids = [];
+        $res = @mysqli_query($con, "
+            SELECT DISTINCT b.id FROM course_books b
+            LEFT JOIN book_teachers bt ON bt.book_id = b.id
+            WHERE (b.created_by_type = 'teacher' AND b.created_by_id = " . (int)$teacherId . ")
+               OR bt.teacher_id = " . (int)$teacherId . "
+        ");
+        if ($res) {
+            while ($row = mysqli_fetch_assoc($res)) $ids[] = (int)$row['id'];
+        }
+        return $ids;
+    }
+}
+
 if (!function_exists('get_discount_code_details')) {
     function get_discount_code_details($con, int $codeId): ?array {
         $stmt = mysqli_prepare($con, "SELECT * FROM discount_codes WHERE id = ? LIMIT 1");
@@ -62,6 +131,28 @@ if (!function_exists('discount_format_row')) {
             }
         }
 
+        // The store half of a code's scope, read the same way. Guarded on the table existing
+        // because migration 129 is applied by hand: before it runs a code simply has no books,
+        // which is exactly what every code had before this feature.
+        $row['book_ids'] = [];
+        $row['books'] = [];
+        if (discount_code_books_table_exists($con)) {
+            $bookStmt = mysqli_prepare($con, "SELECT book_id FROM discount_code_books WHERE discount_code_id = ?");
+            if ($bookStmt) {
+                mysqli_stmt_bind_param($bookStmt, "i", $row['id']);
+                mysqli_stmt_execute($bookStmt);
+                $bookRes = mysqli_stmt_get_result($bookStmt);
+                while ($link = mysqli_fetch_assoc($bookRes)) {
+                    $bookId = (int)$link['book_id'];
+                    $row['book_ids'][] = $bookId;
+                    $details = discount_book_details($con, $bookId);
+                    if ($details) {
+                        $row['books'][] = $details;
+                    }
+                }
+            }
+        }
+
         return format_response_images($row);
     }
 }
@@ -81,6 +172,31 @@ if (!function_exists('discount_sync_courses')) {
         $ins = mysqli_prepare($con, "INSERT IGNORE INTO discount_code_courses (discount_code_id, course_id) VALUES (?, ?)");
         foreach ($unique as $courseId) {
             mysqli_stmt_bind_param($ins, "ii", $codeId, $courseId);
+            mysqli_stmt_execute($ins);
+        }
+    }
+}
+
+if (!function_exists('discount_sync_books')) {
+    /** The book half of a code's scope. Mirrors discount_sync_courses, including its no-op shape. */
+    function discount_sync_books($con, int $codeId, $bookIds): void {
+        if (!discount_code_books_table_exists($con)) return;
+
+        $del = @mysqli_prepare($con, "DELETE FROM discount_code_books WHERE discount_code_id = ?");
+        if (!$del) return;
+        mysqli_stmt_bind_param($del, "i", $codeId);
+        mysqli_stmt_execute($del);
+
+        if (!is_array($bookIds)) {
+            $bookIds = $bookIds !== null && $bookIds !== '' ? [$bookIds] : [];
+        }
+        $unique = array_values(array_unique(array_filter(array_map('intval', $bookIds))));
+        if (!$unique) return;
+
+        $ins = @mysqli_prepare($con, "INSERT IGNORE INTO discount_code_books (discount_code_id, book_id) VALUES (?, ?)");
+        if (!$ins) return;
+        foreach ($unique as $bookId) {
+            mysqli_stmt_bind_param($ins, "ii", $codeId, $bookId);
             mysqli_stmt_execute($ins);
         }
     }
@@ -150,7 +266,7 @@ if (!function_exists('discount_teacher_course_ids')) {
  * Read-only: nothing is consumed, so a student may check as often as they like.
  */
 if (!function_exists('discount_validate_code')) {
-    function discount_validate_code($con, string $rawCode, ?int $studentId, array $courseIds): array {
+    function discount_validate_code($con, string $rawCode, ?int $studentId, array $courseIds, array $bookIds = []): array {
         $codeStr = strtoupper(trim($rawCode));
         if ($codeStr === '') {
             return ['valid' => false, 'message' => 'كود الخصم مطلوب'];
@@ -180,35 +296,43 @@ if (!function_exists('discount_validate_code')) {
         }
 
         $courseIds = array_values(array_unique(array_filter(array_map('intval', $courseIds))));
+        $bookIds = discount_code_books_table_exists($con)
+            ? array_values(array_unique(array_filter(array_map('intval', $bookIds))))
+            : [];
 
-        // A discount only ever exists as a reduction on a price, and only a course or a package
-        // carries a price. Without one there is nothing to reduce, so validating must fail here
-        // rather than quietly succeed with a zero: a zero used to still be recorded as a real
-        // redemption, which burnt a use of the code (and, with once_per_student, burnt it for
+        // A discount only ever exists as a reduction on a price, and only a course, a package or
+        // a book carries one. Without any of them there is nothing to reduce, so validating must
+        // fail here rather than quietly succeed with a zero: a zero used to still be recorded as a
+        // real redemption, which burnt a use of the code (and, with once_per_student, burnt it for
         // that student permanently) in exchange for no discount at all. Subject-wide and
-        // teacher-wide grants reach this path with no courses, which is exactly how that happened.
-        if (!$courseIds) {
-            return ['valid' => false, 'message' => 'كود الخصم يحتاج كورس أو باقة - الاشتراك بمادة أو بمدرس ليس له سعر يُخصم منه'];
+        // teacher-wide grants reach this path with neither, which is exactly how that happened.
+        if (!$courseIds && !$bookIds) {
+            return ['valid' => false, 'message' => 'كود الخصم يحتاج كورس أو باقة أو منتج - الاشتراك بمادة أو بمدرس ليس له سعر يُخصم منه'];
         }
 
         if ($code['applies_to'] === 'selected') {
-            $allowed = array_intersect($courseIds, $code['course_ids']);
-            if (!$allowed) {
-                return ['valid' => false, 'message' => 'كود الخصم لا ينطبق على هذا الكورس'];
+            // Each side is narrowed against its own list, then they are judged together: a code
+            // that names books only is a valid code, and it must not be refused because it names
+            // no courses.
+            $courseIds = array_values(array_intersect($courseIds, $code['course_ids'] ?? []));
+            $bookIds = array_values(array_intersect($bookIds, $code['book_ids'] ?? []));
+            if (!$courseIds && !$bookIds) {
+                return ['valid' => false, 'message' => 'كود الخصم لا ينطبق على هذا المنتج'];
             }
-            $courseIds = array_values($allowed);
         }
 
         // A teacher's code may only ever touch that teacher's own courses. Without this, a code
         // created by one teacher with applies_to = 'all' would discount the whole platform,
         // including other teachers' work.
         if ($code['created_by_type'] === 'teacher' && $code['created_by_id']) {
-            $ownerCourseIds = discount_teacher_course_ids($con, (int)$code['created_by_id']);
-            $allowed = array_values(array_intersect($courseIds, $ownerCourseIds));
-            if (!$allowed) {
-                return ['valid' => false, 'message' => 'كود الخصم ده خاص بكورسات المدرس صاحب الكود فقط'];
+            $ownerId = (int)$code['created_by_id'];
+            $courseIds = array_values(array_intersect($courseIds, discount_teacher_course_ids($con, $ownerId)));
+            $bookIds = $bookIds
+                ? array_values(array_intersect($bookIds, discount_teacher_book_ids($con, $ownerId)))
+                : [];
+            if (!$courseIds && !$bookIds) {
+                return ['valid' => false, 'message' => 'كود الخصم ده خاص بكورسات ومنتجات المدرس صاحب الكود فقط'];
             }
-            $courseIds = $allowed;
         }
 
         // Only a discount that was actually given counts against the student. A `pending` row is
@@ -242,6 +366,24 @@ if (!function_exists('discount_validate_code')) {
             ];
         }
 
+        // Books priced through the same country-aware path. `course_id` stays null on these rows
+        // rather than being dropped: every caller reading this list already expects that key, and
+        // a row that answers "not a course" is kinder than a row with a missing key.
+        foreach ($bookIds as $bookId) {
+            $book = discount_book_details($con, $bookId);
+            if (!$book) continue;
+            $priced = pricing_for_item($con, 'book', $bookId, (float)($book['price'] ?? 0), (int)$studentId);
+            $original += $priced['price'];
+            $currencies[$priced['currency']['code']] = true;
+            $items[] = [
+                'course_id' => null,
+                'book_id' => $bookId,
+                'name' => $book['name'],
+                'price' => $priced['price'],
+                'currency_code' => $priced['currency']['code'],
+            ];
+        }
+
         // Several courses at once, priced in different currencies, cannot be added up - one has a
         // price entered for this country and another falls back to the base. Rather than print a
         // total that is the sum of pounds and dollars, everything reverts to the base currency and
@@ -250,8 +392,16 @@ if (!function_exists('discount_validate_code')) {
         if (count($currencies) > 1) {
             $original = 0.0;
             foreach ($items as $index => $item) {
-                $course = get_course_details($con, $item['course_id']);
-                $basePrice = (float)($course['price'] ?? 0);
+                // Each row goes back to ITS OWN base price. Reading a course for a book row would
+                // hand back nothing and silently price that book at zero - which is how a mixed
+                // basket would have quietly become a bigger discount than anyone granted.
+                if (!empty($item['book_id'])) {
+                    $book = discount_book_details($con, (int)$item['book_id']);
+                    $basePrice = (float)($book['price'] ?? 0);
+                } else {
+                    $course = get_course_details($con, (int)$item['course_id']);
+                    $basePrice = (float)($course['price'] ?? 0);
+                }
                 $items[$index]['price'] = $basePrice;
                 $items[$index]['currency_code'] = $quoteCurrency;
                 $original += $basePrice;
@@ -447,8 +597,10 @@ if (!function_exists('discount_cancel_claim')) {
  * duplicated - otherwise the student's claim would linger forever next to the real discount.
  */
 if (!function_exists('discount_apply_code')) {
-    function discount_apply_code($con, string $rawCode, int $studentId, array $courseIds, string $byType, ?int $byId, ?int $subscriptionId = null): array {
-        $check = discount_validate_code($con, $rawCode, $studentId, $courseIds);
+    function discount_apply_code($con, string $rawCode, int $studentId, array $courseIds, string $byType, ?int $byId, ?int $subscriptionId = null, array $bookIds = []): array {
+        // $bookIds is last and optional so every existing call keeps its meaning untouched - this
+        // is the path that actually spends a code, and it is not one to re-order.
+        $check = discount_validate_code($con, $rawCode, $studentId, $courseIds, $bookIds);
         if (empty($check['valid'])) {
             return $check;
         }

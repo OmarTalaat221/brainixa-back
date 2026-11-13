@@ -168,6 +168,8 @@ if (!function_exists('adminCreateDiscountCode')) {
 
         $newId = mysqli_insert_id($con);
         discount_sync_courses($con, $newId, $courseIds);
+        // The store half of the scope. Absent key = no books, which is what every code had before.
+        discount_sync_books($con, $newId, $body['book_ids'] ?? []);
 
         return [
             'status' => 'success',
@@ -254,12 +256,31 @@ if (!function_exists('adminUpdateDiscountCode')) {
             $types .= 'i';
         }
 
-        // The scope follows the course list: sending courses makes it selected, clearing them
+        // The scope follows the lists: naming anything makes it selected, clearing everything
         // makes it global, so the two can never contradict each other.
+        //
+        // Each list is synced only when its key is SENT, so an older client editing a title
+        // cannot wipe the other half of a code's scope by omission.
+        $scopeTouched = false;
+
         if (array_key_exists('course_ids', $body)) {
             discount_sync_courses($con, $id, $body['course_ids']);
+            $scopeTouched = true;
+        }
+        if (array_key_exists('book_ids', $body)) {
+            discount_sync_books($con, $id, $body['book_ids']);
+            $scopeTouched = true;
+        }
+
+        if ($scopeTouched) {
+            // Read back rather than guessed from this request: a request that sends only books
+            // must not decide `applies_to` on the strength of courses it never mentioned.
+            $existing = get_discount_code_details($con, $id) ?: [];
+            $hasCourses = !empty($existing['course_ids']);
+            $hasBooks = !empty($existing['book_ids']);
+
             $fields[] = 'applies_to = ?';
-            $params[] = !empty($body['course_ids']) ? 'selected' : 'all';
+            $params[] = ($hasCourses || $hasBooks) ? 'selected' : 'all';
             $types .= 's';
         }
 
@@ -290,6 +311,7 @@ if (!function_exists('adminDeleteDiscountCode')) {
         }
 
         mysqli_query($con, "DELETE FROM discount_code_courses WHERE discount_code_id = {$id}");
+        @mysqli_query($con, "DELETE FROM discount_code_books WHERE discount_code_id = {$id}");
 
         $stmt = mysqli_prepare($con, "DELETE FROM discount_codes WHERE id = ?");
         mysqli_stmt_bind_param($stmt, "i", $id);
@@ -315,7 +337,12 @@ if (!function_exists('adminCheckDiscountCode')) {
             $courseIds = array_filter(array_map('trim', explode(',', (string)$courseIds)));
         }
 
-        $result = discount_validate_code($con, $code, $studentId ?: null, $courseIds);
+        $bookIds = $body['book_ids'] ?? $_GET['book_ids'] ?? [];
+        if (!is_array($bookIds)) {
+            $bookIds = array_filter(array_map('trim', explode(',', (string)$bookIds)));
+        }
+
+        $result = discount_validate_code($con, $code, $studentId ?: null, $courseIds, $bookIds);
 
         return [
             'status' => !empty($result['valid']) ? 'success' : 'error',

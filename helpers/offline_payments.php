@@ -152,12 +152,16 @@ if (!function_exists('offline_payment_quote')) {
         $discountCodeId = null;
         $discountMessage = '';
 
-        // Discount codes only ever reduce a course price - a book is not something they apply to.
+        // A discount code reduces a course, a package or a book. Books used to be refused here
+        // outright, which is why the manual-sale form hid the field for them: the server would
+        // have ignored whatever was typed. Migration 129 added the book half of a code's scope.
         $code = trim($code);
-        if ($code !== '' && $itemType === 'course') {
-            // It reads the price off the course itself, so the figure a reviewer later compares
+        if ($code !== '' && in_array($itemType, ['course', 'book'], true)) {
+            // It reads the price off the item itself, so the figure a reviewer later compares
             // against is the one the discount engine actually used.
-            $check = discount_validate_code($con, $code, $studentId, [$itemId]);
+            $check = $itemType === 'book'
+                ? discount_validate_code($con, $code, $studentId, [], [$itemId])
+                : discount_validate_code($con, $code, $studentId, [$itemId]);
             if (!empty($check['valid'])) {
                 $discountAmount = (float)($check['discount_amount'] ?? 0);
                 $discountCodeId = (int)($check['code']['id'] ?? 0) ?: null;
@@ -441,17 +445,21 @@ if (!function_exists('offline_payment_approve')) {
         // The code is spent here, not when the request was filed: a request that is never
         // approved must not cost the student one of their uses.
         $codeId = $request['discount_code_id'] ? (int)$request['discount_code_id'] : 0;
-        if ($codeId > 0 && $itemType === 'course' && function_exists('discount_apply_code')) {
+        if ($codeId > 0 && in_array($itemType, ['course', 'book'], true) && function_exists('discount_apply_code')) {
             $codeRow = get_discount_code_details($con, $codeId);
             if ($codeRow) {
+                // A book redemption records course_id as NULL, which the column already allows -
+                // the row still names the code, the student and the amounts, which is what a
+                // redemption is for.
                 discount_apply_code(
                     $con,
                     (string)$codeRow['code'],
                     $studentId,
-                    [$itemId],
+                    $itemType === 'book' ? [] : [$itemId],
                     $reviewerType,
                     $reviewerId,
-                    $grantedId
+                    $grantedId,
+                    $itemType === 'book' ? [$itemId] : []
                 );
             }
         }
