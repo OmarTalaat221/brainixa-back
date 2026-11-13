@@ -6114,6 +6114,21 @@ $routes = [
                 return adminGetSiteSettings($con);
             },
         ],
+        // What moving the base currency would do, before any of it is done. Read-only: the screen
+        // asks for this and shows it as a confirmation, so the admin decides with the numbers in
+        // front of them rather than discovering afterwards that every unpriced item changed
+        // meaning. See helpers/base_currency.php.
+        [
+            "method" => "GET",
+            "path" => "/brain-ixa/admin/base-currency/impact",
+            "handler" => function ($con) {
+                include_once "./middlewares/adminauthmiddleware.php";
+                include_once "./helpers/base_currency.php";
+                $adminData = adminAuthMiddleware();
+                requirePermission($con, $adminData, 'manage_settings');
+                return adminBaseCurrencyImpact($con);
+            },
+        ],
         [
             "method" => "POST",
             "path" => "/brain-ixa/admin/site-settings",

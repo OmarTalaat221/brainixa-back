@@ -231,6 +231,27 @@ if (!function_exists('adminUpdateSiteSettings')) {
             ];
         }
 
+        // Moving the base currency reprices the whole platform, because `courses.price` and
+        // `course_books.price` are bare numbers whose currency is whatever this setting says. The
+        // adoption runs here rather than behind its own endpoint so it cannot be stepped around by
+        // posting the key straight to this one - which is exactly how it would be stepped around.
+        // See helpers/base_currency.php.
+        require_once __DIR__ . '/../../../helpers/base_currency.php';
+
+        $currencyMove = null;
+        if (array_key_exists('base_currency', $inputData)) {
+            $target = strtoupper(trim((string)$inputData['base_currency']));
+            $current = pricing_base_currency($con);
+
+            if ($target !== '' && $target !== $current) {
+                // Before the setting is written: a failure here leaves the platform still
+                // describing its prices with the currency they were entered in.
+                $currencyMove = base_currency_adopt($con, $target);
+                $currencyMove['from'] = $current;
+                $currencyMove['to'] = $target;
+            }
+        }
+
         $stmt = mysqli_prepare($con, "INSERT INTO site_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
         if (!$stmt) {
             return ['status' => 'error', 'message' => 'Database error preparing settings update'];
@@ -243,7 +264,34 @@ if (!function_exists('adminUpdateSiteSettings')) {
             mysqli_stmt_execute($stmt);
         }
 
-        return adminGetSiteSettings($con);
+        $response = adminGetSiteSettings($con);
+
+        if ($currencyMove !== null) {
+            $missing = $currencyMove['missing'];
+            $updated = $currencyMove['updated'];
+
+            // A warning on a successful save, not an error. The change was made and asked for; what
+            // the admin needs is to be told what it left unfinished, with the list to work from.
+            $response['base_currency_change'] = [
+                'from' => $currencyMove['from'],
+                'to' => $currencyMove['to'],
+                'adopted_count' => count($updated),
+                'adopted' => $updated,
+                'missing_count' => count($missing),
+                'missing' => $missing,
+            ];
+
+            if ($missing) {
+                $response['severity'] = 'warning';
+                $response['message'] = app_text(
+                    $con,
+                    'تم تغيير العملة الأساسية إلى ' . $currencyMove['to'] . '. ' . count($updated) . ' عنصر أخذ سعره المحفوظ بهذه العملة، لكن ' . count($missing) . ' عنصر ملهوش سعر بيها — أرقامهم زي ما هي وبقت محسوبة بالعملة الجديدة، فمحتاجة تتراجع.',
+                    'Base currency changed to ' . $currencyMove['to'] . '. ' . count($updated) . ' item(s) took the price already entered in it, but ' . count($missing) . ' item(s) have no price in it - their figures are unchanged and now read as the new currency, so they need reviewing.'
+                );
+            }
+        }
+
+        return $response;
     }
 }
 
