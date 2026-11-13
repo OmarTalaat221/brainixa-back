@@ -294,9 +294,31 @@ if (!function_exists('adminCreateUnit')) {
             $createdById = isset($body['created_by_id']) && $body['created_by_id'] ? (int)$body['created_by_id'] : null;
         }
 
-        if ($courseId <= 0 || $subjectId <= 0) {
-            return ['status' => 'error', 'message' => 'Both course_id and subject_id are required for creating a unit'];
+        if ($courseId <= 0) {
+            return ['status' => 'error', 'message' => 'course_id is required for creating a unit'];
         }
+
+        // The subject is READ OFF THE COURSE rather than demanded from the caller. A unit belongs
+        // to a course, and the course already knows its subject - asking for it again only gave
+        // the two a way to disagree.
+        //
+        // And a course need not have one. `units.subject_id` has always been nullable, but this
+        // refused anything below 1, so a course with no subject could not be given a single
+        // lesson: 4 of the 9 courses live are in exactly that state, two of them ordinary courses
+        // rather than packages. A unit with no subject is now stored as NULL, which is what the
+        // column was built for.
+        if ($subjectId <= 0) {
+            $courseRow = @mysqli_query($con, "SELECT subject_id FROM courses WHERE id = " . (int)$courseId . " LIMIT 1");
+            $courseSubject = $courseRow ? mysqli_fetch_assoc($courseRow) : null;
+            if (!$courseSubject) {
+                return ['status' => 'error', 'message' => 'That course does not exist'];
+            }
+            $subjectId = (int)($courseSubject['subject_id'] ?? 0);
+        }
+
+        // Bound as NULL, not as 0: a zero would be a foreign key pointing at a subject that does
+        // not exist, and the column accepts NULL for precisely this case.
+        $subjectIdForInsert = $subjectId > 0 ? $subjectId : null;
         if (empty($nameAr)) {
             return ['status' => 'error', 'message' => 'Unit name/title is required'];
         }
@@ -312,7 +334,7 @@ if (!function_exists('adminCreateUnit')) {
         if (!$stmt) {
             return ['status' => 'error', 'message' => 'Failed to prepare unit insert: ' . mysqli_error($con)];
         }
-        mysqli_stmt_bind_param($stmt, "iisiiisi", $courseId, $subjectId, $code, $orderNum, $dripEnabled, $isActive, $createdByType, $createdById);
+        mysqli_stmt_bind_param($stmt, "iisiiisi", $courseId, $subjectIdForInsert, $code, $orderNum, $dripEnabled, $isActive, $createdByType, $createdById);
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => 'Failed to create unit: ' . mysqli_error($con)];
         }
@@ -363,8 +385,17 @@ if (!function_exists('adminUpdateUnit')) {
         $subjectId = isset($body['subject_id']) ? (int)$body['subject_id'] : (int)$existing['subject_id'];
         $isActive = isset($body['is_active']) ? (int)$body['is_active'] : null;
 
+        // The same rule as on create. `(int)` turned an existing NULL into 0, so merely renaming a
+        // unit on a course with no subject rewrote its subject to a row that does not exist.
+        if ($subjectId <= 0) {
+            $courseRow = @mysqli_query($con, "SELECT subject_id FROM courses WHERE id = " . (int)$courseId . " LIMIT 1");
+            $courseSubject = $courseRow ? mysqli_fetch_assoc($courseRow) : null;
+            $subjectId = (int)($courseSubject['subject_id'] ?? 0);
+        }
+        $subjectIdForUpdate = $subjectId > 0 ? $subjectId : null;
+
         $updateFields = ["course_id = ?", "subject_id = ?"];
-        $params = [$courseId, $subjectId];
+        $params = [$courseId, $subjectIdForUpdate];
         $types = "ii";
 
         if (isset($body['code']) && !empty(trim($body['code']))) {
