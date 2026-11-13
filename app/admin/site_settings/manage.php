@@ -579,6 +579,10 @@ if (!function_exists('getPublicLandingConfig')) {
         if ($coursesRes) {
             while ($cRow = mysqli_fetch_assoc($coursesRes)) {
                 $cRow['id'] = (int)$cRow['id'];
+                // NULL is "no price" (migration 130): not for sale yet, which is not the same as
+                // free. `price` stays a number for every existing reader; `is_priced` is added
+                // beside it so the landing page can tell the two apart, as the books already can.
+                $cRow['is_priced'] = $cRow['price'] !== null;
                 $cRow['price'] = (float)$cRow['price'];
                 $cRow['teacher_rating'] = $cRow['teacher_rating'] !== null ? (float)$cRow['teacher_rating'] : 5.0;
                 $websiteCourses[] = format_response_images($cRow);
