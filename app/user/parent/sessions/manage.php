@@ -5,6 +5,9 @@ require_once __DIR__ . '/../../../../helpers/entities.php';
 require_once __DIR__ . '/../../../teacher/sessions/manage.php';
 require_once __DIR__ . '/../../../teacher/sessions/files.php';
 require_once __DIR__ . '/../../student/subscriptions/manage.php';
+// get_student_subscribed_subject_ids() / _course_ids() live here and nowhere else; without it
+// a parent opening their child's sessions got a PHP fatal instead of a schedule.
+require_once __DIR__ . '/../../../student/homework/manage.php';
 
 if (!function_exists('parent_get_linked_student_ids')) {
     function parent_get_linked_student_ids($con, int $parentId): array {

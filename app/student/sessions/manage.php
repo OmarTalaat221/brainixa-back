@@ -137,7 +137,12 @@ if (!function_exists('studentTodaySessions')) {
             $stmt = mysqli_prepare($con, $sql);
             $rows = [];
             if ($stmt) {
-                mysqli_stmt_bind_param($stmt, $types, ...$params);
+                // An upcoming request carries no day filter, so there is often nothing to bind -
+                // and on PHP 8 binding an EMPTY type string is a fatal error, returned to the
+                // student as an HTML page ("Unexpected token '<'"). Only bind what exists.
+                if ($types !== '') {
+                    mysqli_stmt_bind_param($stmt, $types, ...$params);
+                }
                 mysqli_stmt_execute($stmt);
                 $res = mysqli_stmt_get_result($stmt);
                 if ($res) {
@@ -204,7 +209,10 @@ if (!function_exists('studentTodaySessions')) {
         $countSql = "SELECT COUNT(*) AS total FROM class_sessions WHERE {$whereSql}";
         $countStmt = mysqli_prepare($con, $countSql);
         if ($countStmt) {
-            mysqli_stmt_bind_param($countStmt, $types, ...$params);
+            // Same as above: "all days" leaves nothing to bind.
+            if ($types !== '') {
+                mysqli_stmt_bind_param($countStmt, $types, ...$params);
+            }
             mysqli_stmt_execute($countStmt);
             $cRes = mysqli_stmt_get_result($countStmt);
             if ($cRes && ($cRow = mysqli_fetch_assoc($cRes))) {
