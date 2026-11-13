@@ -1223,6 +1223,74 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Upload",
+      "description": "The general file upload, and the token it now requires.",
+      "item": [
+        {
+          "name": "Upload a file (multipart)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "{{admin_token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Pick a file in Postman. Any role's token works."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/upload",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upload"
+              ]
+            },
+            "description": "**BREAKING in update-16: this now needs a token.**\n\nIt used to take a file from anybody at all - no token, no role - write it to the server's disk and hand back the URL it is served from. That is free hosting on this domain for whatever a stranger wants to put there, and it was the only unguarded write on the API.\n\nIt is guarded by `anyAuthMiddleware`, the same guard `/upload/audio` already used, which accepts ANY of the four roles. Every signed-in caller keeps working unchanged; only anonymous requests are refused.\n\nReturns `file_path` (what to store on a row) and `file_url` (the absolute URL). Send the file as a multipart part, or as a base64 data URI in the body."
+          },
+          "response": []
+        },
+        {
+          "name": "Without a token - now REFUSED",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"file\": \"data:text/plain;base64,aGVsbG8=\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/upload",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upload"
+              ]
+            },
+            "description": "What the change actually does. Before update-16 this wrote the file and returned its URL; now it is refused.\n\nIf it still succeeds, the server has not pulled the guard yet."
+          },
+          "response": []
+        }
+      ]
     }
   ],
   "variable": [

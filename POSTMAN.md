@@ -56,8 +56,10 @@ if (token) {
 - **`slot_id` and `session_id` are different things.** A slot is a dated availability slot or a
   consultation; a session is a weekly recurring class. Their Zoom endpoints are separate too.
 - **The spec is a changelog, not a full reference.** Tags read `<batch> / <Role> / <Feature>`,
-  and an endpoint untouched since the base version is deliberately absent. Filter by `update-15`
+  and an endpoint untouched since the base version is deliberately absent. Filter by `update-16`
   to see only what the latest batch added or changed.
+- **`POST /upload` now needs a token** (update-16). It used to accept a file from anyone at all.
+  Any of the four roles works, so a signed-in caller is unaffected; an anonymous one is refused.
 - **A third outcome exists beside success and error.** `severity: "warning"` means the write
   SUCCEEDED but could not do everything asked of it — a homework saved for students one of whom
   has no subscription, say. Treating it as a failure hides a change that did happen.

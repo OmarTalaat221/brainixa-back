@@ -1,8 +1,8 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Brainixa Backend - Session Changelog API (update-15)",
-    "version": "15.0.0",
+    "title": "Brainixa Backend - Session Changelog API (update-16)",
+    "version": "16.0.0",
     "description": "A CHANGELOG, not a full reference: it documents what each update batch added or changed, so endpoints untouched since the base version are deliberately absent.\n\nEvery tag reads `<batch> / <Role> / <Feature>`, and the batch is the one that LAST touched that operation - an endpoint added in update-2 and changed in update-5 is tagged update-5, with its history kept in the summary. Filter by `update-5` to see this batch alone.\n\n`old` through `update-4` are inherited from the Najeh codebase this platform was built from. `update-5` is Brainixa's own first batch: the payment gateway, the question bank, and the fixes around them. The prose summary of that batch is `updates-for-project/API_UPDATE_5_SUMMARY.md`.\n\nBusiness-logic errors come back with HTTP 200 and `status: \"error\"` in the body. Branch on `status`, not on the HTTP code.\n\n`update-6` ports the consultation and package-session cycle from the Najeh codebase, WITHOUT its platform-owner idea: Brainixa has no owner who gives sessions without being a teacher, so every slot here belongs to a real teacher and there is no teacher_id = 0 anywhere. It adds a meeting link to consultations, start and end as a stored state for both consultations and package sessions, an admin way to approve or refuse a booking, and scopes a student's calendar to the packages they actually hold. Migrations 107 to 109.\n\n`update-7` is the live-class batch and the loose ends around it: Zoom played inside the platform for all three kinds of live meeting (the weekly class sessions, the dated package appointments and the 1:1 consultations), a manual-sales sheet for admin and teacher, a chat contact directory read from the real tables instead of Firebase's stale copy, and hero slides as a table of their own.\n\nupdate-7 also turns the books library into a STORE. No products table was added: `course_books.file_type` carries `physical` for an item with no file, so every existing book endpoint sells one unchanged. Clients branch on that field rather than assuming a file exists.\n\n`update-8` (FIX): GET /student/exams leaked unit-scoped exams into the general listing whenever the request carried no `course_id` at all - the documented \"whole-course exams only by default\" rule was only ever enforced when `course_id` was explicitly passed. A student's general exams tab (no filters) could show a unit exam mixed in with the whole-course/standalone ones. The same default - `unit_id IS NULL` unless `include_unit_exams`/`with_unit_exams` says otherwise - now applies regardless of whether `course_id` is present. No response shape change, no new field; strictly fewer rows come back from the general (no-filter) call than before. A unit's own exams remain fully visible from inside that unit's content (GET /student/courses .../units, unaffected - that endpoint always filtered by `unit_id` directly).\n\n`update-13` is the Report Center (مركز التقارير): the four reports an owner asked to be pulled automatically rather than compiled by hand - sales, live-class attendance for both students and teachers, payroll with its deductions, and the after-class ratings - each over a `date_from`/`date_to` range and each downloadable as .xlsx. No migration: every figure already existed in rows the platform writes, and each report delegates to the module that already owns its numbers, so none of them can drift from the Sales screen, the attendance report or the ratings summary. Payroll is the one report with queries of its own, because the wallet had a ledger and a balance but never a per-period payslip; it is gated on `manage_wallets` rather than `manage_reports`.\n\n`update-14` gives the store products of its own. Until now everything it sold was a `course_books` row with no file attached, which works for a printed book and for nothing else - a school bag has no subject, no course and no unit, and the only category on that table says whether a PDF is a summary or a past paper. `products` and `product_categories` are new tables, deliberately separate from books and from course categories, and `GET /store` is the one place the two are shown side by side, each entry carrying `item_type` because an id is unique only within its own type. Nothing existing changed: no column was added to `course_books` and `GET /books` lists them exactly as before. Migration 127. Buying a product is NOT part of this batch - the catalogue is.\n\n`update-14` also lets a product carry a file of any type (migration 128). `upload_any_file()` inverts the usual allow-list and refuses only what a web server might execute, checking every segment of the name so a double extension does not slip past; `uploads/.htaccess` already disables execution in that directory, so the deny-list is the first lock rather than the only one. `file_is_public` decides whether the shop front is given the path at all, and defaults to withholding it."
   },
   "servers": [
@@ -29443,6 +29443,647 @@
           }
         }
       }
+    },
+    "/teacher/homework": {
+      "get": {
+        "tags": [
+          "update-12 / Teacher / Homework"
+        ],
+        "summary": "update-12: list homework (teacher)",
+        "description": "update-12 (CHANGED): homework can be aimed at particular students.\n\nA homework row carried a subject and nothing else, so publishing one handed it to every student subscribed to that subject. A teacher wanting to set extra practice for the three students who are behind had no way to say so.\n\n  * NO students chosen -> the homework is for everyone subscribed to the subject. This is exactly the old behaviour, and what every homework that already exists still does.\n  * students chosen -> only they see it, and only they may submit to it.\n\nTargeting NARROWS an audience and never widens one: a student still has to be subscribed to the subject, so no row here hands anyone access they did not already have.\n\nWire-level: `student_ids`, `students` and `is_targeted` are ADDED to the homework object. Nothing was removed or renamed, and a client that ignores all three behaves exactly as it does today.\n\nNeeds migration 126, which is applied. Before it ran, targeting did not exist and homework stayed visible to the whole subject rather than anything breaking.\n\nScoped to the signed-in teacher: they may only ever touch their own rows.\n\nEach row carries `student_ids`, `students` (id and name) and `is_targeted`.",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "1-based.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows per page, capped at 100.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "update-12 / Teacher / Homework"
+        ],
+        "summary": "update-12: create homework, optionally for particular students (teacher)",
+        "description": "update-12 (CHANGED): homework can be aimed at particular students.\n\nA homework row carried a subject and nothing else, so publishing one handed it to every student subscribed to that subject. A teacher wanting to set extra practice for the three students who are behind had no way to say so.\n\n  * NO students chosen -> the homework is for everyone subscribed to the subject. This is exactly the old behaviour, and what every homework that already exists still does.\n  * students chosen -> only they see it, and only they may submit to it.\n\nTargeting NARROWS an audience and never widens one: a student still has to be subscribed to the subject, so no row here hands anyone access they did not already have.\n\nWire-level: `student_ids`, `students` and `is_targeted` are ADDED to the homework object. Nothing was removed or renamed, and a client that ignores all three behaves exactly as it does today.\n\nNeeds migration 126, which is applied. Before it ran, targeting did not exist and homework stayed visible to the whole subject rather than anything breaking.\n\nScoped to the signed-in teacher: they may only ever touch their own rows.\n\nA chosen student who turns out not to be subscribed to the subject comes back as `severity: \"warning\"` on an otherwise SUCCESSFUL save, with `not_eligible` naming them - the homework was saved, and failing the whole request over one lapsed subscription would throw away work that was just typed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "subject_id",
+                  "title"
+                ],
+                "properties": {
+                  "subject_id": {
+                    "type": "integer"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "due_date": {
+                    "type": "string",
+                    "example": "2026-11-30"
+                  },
+                  "file": {
+                    "type": "string",
+                    "description": "A URL, a base64 data URI, or a multipart file."
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  },
+                  "student_ids": {
+                    "oneOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "integer"
+                        }
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ],
+                    "description": "Optional. Absent = leave the audience alone. Empty = hand it back to the whole subject. A multipart request (one carrying a file) cannot send an empty array at all, so a string is accepted too: \"\" to clear, or \"3,7,12\"."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "update-12 / Teacher / Homework"
+        ],
+        "summary": "update-12: edit homework, and its audience (teacher)",
+        "description": "update-12 (CHANGED): homework can be aimed at particular students.\n\nA homework row carried a subject and nothing else, so publishing one handed it to every student subscribed to that subject. A teacher wanting to set extra practice for the three students who are behind had no way to say so.\n\n  * NO students chosen -> the homework is for everyone subscribed to the subject. This is exactly the old behaviour, and what every homework that already exists still does.\n  * students chosen -> only they see it, and only they may submit to it.\n\nTargeting NARROWS an audience and never widens one: a student still has to be subscribed to the subject, so no row here hands anyone access they did not already have.\n\nWire-level: `student_ids`, `students` and `is_targeted` are ADDED to the homework object. Nothing was removed or renamed, and a client that ignores all three behaves exactly as it does today.\n\nNeeds migration 126, which is applied. Before it ran, targeting did not exist and homework stayed visible to the whole subject rather than anything breaking.\n\n`student_ids` is acted on ONLY when the key is present. That is what stops an older client editing a title from silently republishing a targeted homework to the whole subject.\n\nA chosen student who turns out not to be subscribed to the subject comes back as `severity: \"warning\"` on an otherwise SUCCESSFUL save, with `not_eligible` naming them - the homework was saved, and failing the whole request over one lapsed subscription would throw away work that was just typed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "subject_id": {
+                    "type": "integer"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "due_date": {
+                    "type": "string",
+                    "example": "2026-11-30"
+                  },
+                  "file": {
+                    "type": "string",
+                    "description": "A URL, a base64 data URI, or a multipart file."
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  },
+                  "student_ids": {
+                    "oneOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "integer"
+                        }
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ],
+                    "description": "Optional. Absent = leave the audience alone. Empty = hand it back to the whole subject. A multipart request (one carrying a file) cannot send an empty array at all, so a string is accepted too: \"\" to clear, or \"3,7,12\"."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "update-12 / Teacher / Homework"
+        ],
+        "summary": "update-12: delete homework (teacher)",
+        "description": "update-12 (CHANGED): homework can be aimed at particular students.\n\nA homework row carried a subject and nothing else, so publishing one handed it to every student subscribed to that subject. A teacher wanting to set extra practice for the three students who are behind had no way to say so.\n\n  * NO students chosen -> the homework is for everyone subscribed to the subject. This is exactly the old behaviour, and what every homework that already exists still does.\n  * students chosen -> only they see it, and only they may submit to it.\n\nTargeting NARROWS an audience and never widens one: a student still has to be subscribed to the subject, so no row here hands anyone access they did not already have.\n\nWire-level: `student_ids`, `students` and `is_targeted` are ADDED to the homework object. Nothing was removed or renamed, and a client that ignores all three behaves exactly as it does today.\n\nNeeds migration 126, which is applied. Before it ran, targeting did not exist and homework stayed visible to the whole subject rather than anything breaking.\n\nScoped to the signed-in teacher: they may only ever touch their own rows.\n\nThe targeting rows go with it - the link table cascades on the homework.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "TeacherAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/homework": {
+      "get": {
+        "tags": [
+          "update-12 / Admin / Homework"
+        ],
+        "summary": "update-12: list homework (admin)",
+        "description": "update-12 (CHANGED): homework can be aimed at particular students.\n\nA homework row carried a subject and nothing else, so publishing one handed it to every student subscribed to that subject. A teacher wanting to set extra practice for the three students who are behind had no way to say so.\n\n  * NO students chosen -> the homework is for everyone subscribed to the subject. This is exactly the old behaviour, and what every homework that already exists still does.\n  * students chosen -> only they see it, and only they may submit to it.\n\nTargeting NARROWS an audience and never widens one: a student still has to be subscribed to the subject, so no row here hands anyone access they did not already have.\n\nWire-level: `student_ids`, `students` and `is_targeted` are ADDED to the homework object. Nothing was removed or renamed, and a client that ignores all three behaves exactly as it does today.\n\nNeeds migration 126, which is applied. Before it ran, targeting did not exist and homework stayed visible to the whole subject rather than anything breaking.\n\nNo ownership filter - an admin works across everyone, so `teacher_id` is a field they choose and it is REQUIRED on create, because `homework.teacher_id` is NOT NULL and it is the name every student sees against the assignment.\n\nEach row carries `student_ids`, `students` (id and name) and `is_targeted`.",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "1-based.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows per page, capped at 100.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "update-12 / Admin / Homework"
+        ],
+        "summary": "update-12: create homework, optionally for particular students (admin)",
+        "description": "update-12 (CHANGED): homework can be aimed at particular students.\n\nA homework row carried a subject and nothing else, so publishing one handed it to every student subscribed to that subject. A teacher wanting to set extra practice for the three students who are behind had no way to say so.\n\n  * NO students chosen -> the homework is for everyone subscribed to the subject. This is exactly the old behaviour, and what every homework that already exists still does.\n  * students chosen -> only they see it, and only they may submit to it.\n\nTargeting NARROWS an audience and never widens one: a student still has to be subscribed to the subject, so no row here hands anyone access they did not already have.\n\nWire-level: `student_ids`, `students` and `is_targeted` are ADDED to the homework object. Nothing was removed or renamed, and a client that ignores all three behaves exactly as it does today.\n\nNeeds migration 126, which is applied. Before it ran, targeting did not exist and homework stayed visible to the whole subject rather than anything breaking.\n\nNo ownership filter - an admin works across everyone, so `teacher_id` is a field they choose and it is REQUIRED on create, because `homework.teacher_id` is NOT NULL and it is the name every student sees against the assignment.\n\nA chosen student who turns out not to be subscribed to the subject comes back as `severity: \"warning\"` on an otherwise SUCCESSFUL save, with `not_eligible` naming them - the homework was saved, and failing the whole request over one lapsed subscription would throw away work that was just typed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "teacher_id",
+                  "subject_id",
+                  "title"
+                ],
+                "properties": {
+                  "teacher_id": {
+                    "type": "integer",
+                    "description": "Required on create."
+                  },
+                  "subject_id": {
+                    "type": "integer"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "due_date": {
+                    "type": "string",
+                    "example": "2026-11-30"
+                  },
+                  "file": {
+                    "type": "string",
+                    "description": "A URL, a base64 data URI, or a multipart file."
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  },
+                  "student_ids": {
+                    "oneOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "integer"
+                        }
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ],
+                    "description": "Optional. Absent = leave the audience alone. Empty = hand it back to the whole subject. A multipart request (one carrying a file) cannot send an empty array at all, so a string is accepted too: \"\" to clear, or \"3,7,12\"."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "update-12 / Admin / Homework"
+        ],
+        "summary": "update-12: edit homework, and its audience (admin)",
+        "description": "update-12 (CHANGED): homework can be aimed at particular students.\n\nA homework row carried a subject and nothing else, so publishing one handed it to every student subscribed to that subject. A teacher wanting to set extra practice for the three students who are behind had no way to say so.\n\n  * NO students chosen -> the homework is for everyone subscribed to the subject. This is exactly the old behaviour, and what every homework that already exists still does.\n  * students chosen -> only they see it, and only they may submit to it.\n\nTargeting NARROWS an audience and never widens one: a student still has to be subscribed to the subject, so no row here hands anyone access they did not already have.\n\nWire-level: `student_ids`, `students` and `is_targeted` are ADDED to the homework object. Nothing was removed or renamed, and a client that ignores all three behaves exactly as it does today.\n\nNeeds migration 126, which is applied. Before it ran, targeting did not exist and homework stayed visible to the whole subject rather than anything breaking.\n\n`student_ids` is acted on ONLY when the key is present. That is what stops an older client editing a title from silently republishing a targeted homework to the whole subject.\n\nA chosen student who turns out not to be subscribed to the subject comes back as `severity: \"warning\"` on an otherwise SUCCESSFUL save, with `not_eligible` naming them - the homework was saved, and failing the whole request over one lapsed subscription would throw away work that was just typed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "teacher_id": {
+                    "type": "integer",
+                    "description": "Required on create."
+                  },
+                  "subject_id": {
+                    "type": "integer"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "due_date": {
+                    "type": "string",
+                    "example": "2026-11-30"
+                  },
+                  "file": {
+                    "type": "string",
+                    "description": "A URL, a base64 data URI, or a multipart file."
+                  },
+                  "is_active": {
+                    "type": "integer",
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  },
+                  "student_ids": {
+                    "oneOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "integer"
+                        }
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ],
+                    "description": "Optional. Absent = leave the audience alone. Empty = hand it back to the whole subject. A multipart request (one carrying a file) cannot send an empty array at all, so a string is accepted too: \"\" to clear, or \"3,7,12\"."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "update-12 / Admin / Homework"
+        ],
+        "summary": "update-12: delete homework (admin)",
+        "description": "update-12 (CHANGED): homework can be aimed at particular students.\n\nA homework row carried a subject and nothing else, so publishing one handed it to every student subscribed to that subject. A teacher wanting to set extra practice for the three students who are behind had no way to say so.\n\n  * NO students chosen -> the homework is for everyone subscribed to the subject. This is exactly the old behaviour, and what every homework that already exists still does.\n  * students chosen -> only they see it, and only they may submit to it.\n\nTargeting NARROWS an audience and never widens one: a student still has to be subscribed to the subject, so no row here hands anyone access they did not already have.\n\nWire-level: `student_ids`, `students` and `is_targeted` are ADDED to the homework object. Nothing was removed or renamed, and a client that ignores all three behaves exactly as it does today.\n\nNeeds migration 126, which is applied. Before it ran, targeting did not exist and homework stayed visible to the whole subject rather than anything breaking.\n\nNo ownership filter - an admin works across everyone, so `teacher_id` is a field they choose and it is REQUIRED on create, because `homework.teacher_id` is NOT NULL and it is the name every student sees against the assignment.\n\nThe targeting rows go with it - the link table cascades on the homework.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/student/homework": {
+      "get": {
+        "tags": [
+          "update-12 / Student / Homework"
+        ],
+        "summary": "update-12: untargeted homework, plus the homework aimed at me",
+        "description": "update-12 (CHANGED): homework can be aimed at particular students.\n\nA homework row carried a subject and nothing else, so publishing one handed it to every student subscribed to that subject. A teacher wanting to set extra practice for the three students who are behind had no way to say so.\n\n  * NO students chosen -> the homework is for everyone subscribed to the subject. This is exactly the old behaviour, and what every homework that already exists still does.\n  * students chosen -> only they see it, and only they may submit to it.\n\nTargeting NARROWS an audience and never widens one: a student still has to be subscribed to the subject, so no row here hands anyone access they did not already have.\n\nWire-level: `student_ids`, `students` and `is_targeted` are ADDED to the homework object. Nothing was removed or renamed, and a client that ignores all three behaves exactly as it does today.\n\nNeeds migration 126, which is applied. Before it ran, targeting did not exist and homework stayed visible to the whole subject rather than anything breaking.\n\nThe subject filter still decides what this student could see at all; targeting only removes homework aimed at other people. A homework with no targeting rows has no row in the link table, so it stays visible to everyone exactly as before.\n\nEach row carries `my_submission`, which is null until they have handed something in.",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "1-based.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows per page, capped at 100.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/student/homework/submit": {
+      "post": {
+        "tags": [
+          "update-12 / Student / Homework"
+        ],
+        "summary": "update-12: submit, with the audience checked again",
+        "description": "update-12 (CHANGED): homework can be aimed at particular students.\n\nA homework row carried a subject and nothing else, so publishing one handed it to every student subscribed to that subject. A teacher wanting to set extra practice for the three students who are behind had no way to say so.\n\n  * NO students chosen -> the homework is for everyone subscribed to the subject. This is exactly the old behaviour, and what every homework that already exists still does.\n  * students chosen -> only they see it, and only they may submit to it.\n\nTargeting NARROWS an audience and never widens one: a student still has to be subscribed to the subject, so no row here hands anyone access they did not already have.\n\nWire-level: `student_ids`, `students` and `is_targeted` are ADDED to the homework object. Nothing was removed or renamed, and a client that ignores all three behaves exactly as it does today.\n\nNeeds migration 126, which is applied. Before it ran, targeting did not exist and homework stayed visible to the whole subject rather than anything breaking.\n\nThe audience is re-checked HERE and not only in the listing: a homework this student was never shown must not become submittable because its id was guessed or kept from an older response.\n\nA second submission replaces the first and clears any feedback already given on it, because the teacher graded something that is no longer the answer.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "homework_id",
+                  "file"
+                ],
+                "properties": {
+                  "homework_id": {
+                    "type": "integer"
+                  },
+                  "file": {
+                    "type": "string",
+                    "description": "A URL, a base64 data URI, or a multipart file."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "StudentAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/upload": {
+      "post": {
+        "tags": [
+          "update-16 / Common / Upload"
+        ],
+        "summary": "update-16 (BREAKING): a file upload that now needs a token",
+        "description": "update-16 (BREAKING): this endpoint now requires authentication.\n\nIt took a file from anybody at all - no token, no role - wrote it to the server's disk and handed back the URL it is served from. That is free hosting on this domain for whatever a stranger wants to put there, and it was the only unguarded write on the API.\n\nIt is guarded by `anyAuthMiddleware`, the same guard `/upload/audio` already used, which accepts ANY of the four roles - admin, teacher, student or parent. So every signed-in caller keeps working unchanged and only anonymous requests are refused.\n\nWhat breaks: anything calling this without an Authorization header. The one caller in the dashboards already sends one.\n\nTakes the file as a multipart part, or as a base64 data URI under any of `file`, `image`, `document`, `attachment` or `media`. Returns `file_path` (what to store) and `file_url` (the absolute URL).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "description": "A multipart file part, or a base64 data URI."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AnyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccess"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "tags": [
@@ -29893,6 +30534,10 @@
     {
       "name": "update-15 / Pricing",
       "description": "update-15: the country a request comes from decides its prices, not a country stamped on the student."
+    },
+    {
+      "name": "update-16 / Common / Upload",
+      "description": "update-16: the general file upload now requires a token."
     }
   ]
 }
