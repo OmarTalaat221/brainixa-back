@@ -1,6 +1,10 @@
 <?php
 require_once __DIR__ . '/../../../helpers/functions.php';
 require_once __DIR__ . '/../../../helpers/pricing.php';
+// app_text() lives here. Every file below calls it and most reached it only by luck, through
+// whatever else their chain happened to pull in - session_ratings did not, and died with a
+// PHP fatal that came back as an HTML page where the client expected JSON.
+require_once __DIR__ . '/../../../helpers/app_settings.php';
 
 /**
  * The admin side of pricing: which countries and currencies are offered, and what each item costs

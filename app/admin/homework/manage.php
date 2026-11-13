@@ -3,6 +3,10 @@ require_once __DIR__ . '/../../../helpers/functions.php';
 require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/upload.php';
 require_once __DIR__ . '/../../../helpers/entities.php';
+// app_text() lives here. Every file below calls it and most reached it only by luck, through
+// whatever else their chain happened to pull in - session_ratings did not, and died with a
+// PHP fatal that came back as an HTML page where the client expected JSON.
+require_once __DIR__ . '/../../../helpers/app_settings.php';
 // get_homework_details() and get_submission_details() already exist for the teacher side and are
 // guarded with function_exists, so they are shared rather than copied: an admin and a teacher
 // looking at the same homework should not be shown two different shapes of it.
