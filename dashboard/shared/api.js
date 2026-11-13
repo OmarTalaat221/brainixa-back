@@ -1,5 +1,5 @@
-/* ==== Najeh Dashboard - Shared API client ==== */
-const API_BASE = "https://camp-coding.online/najeh";
+/* ==== Brainixa Dashboard - Shared API client ==== */
+const API_BASE = "https://camp-coding.online/brain-ixa";
 
 const Store = {
   get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
@@ -25,7 +25,7 @@ function clearTokens(ns) {
 async function apiRequest(ns, path, { method = "GET", body = null, auth = true, isRetry = false } = {}) {
   const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
   const headers = {
-    "Accept-Language": localStorage.getItem("najeh_lang") || "ar",
+    "Accept-Language": localStorage.getItem("brainixa_lang") || "ar",
   };
   // Leave Content-Type unset for FormData - the browser sets it (with the multipart boundary) itself.
   if (!isFormData) headers["Content-Type"] = "application/json";
@@ -54,7 +54,7 @@ async function apiRequest(ns, path, { method = "GET", body = null, auth = true, 
     data = { status: "error", message: "استجابة غير صالحة من الخادم (الرد لم يكن JSON صحيح)" };
     // The PHP backend prints warnings/notices as raw HTML before the JSON on certain errors,
     // which breaks JSON.parse - log the raw body so it's visible while debugging.
-    console.error(`[najeh api] non-JSON response from ${path}:`, rawText.slice(0, 800));
+    console.error(`[brainixa api] non-JSON response from ${path}:`, rawText.slice(0, 800));
   }
 
   if (res.status === 401 && auth && tokens.refresh_token && !isRetry) {
@@ -63,7 +63,7 @@ async function apiRequest(ns, path, { method = "GET", body = null, auth = true, 
       return apiRequest(ns, path, { method, body, auth, isRetry: true });
     }
     clearTokens(ns);
-    window.dispatchEvent(new CustomEvent("najeh:unauthorized"));
+    window.dispatchEvent(new CustomEvent("brainixa:unauthorized"));
     throw { message: data.message || "انتهت الجلسة، برجاء تسجيل الدخول مرة أخرى", status: 401 };
   }
 
@@ -119,7 +119,7 @@ function qs(params) {
 
 function translatedName(entity, lang) {
   if (!entity) return "";
-  lang = lang || localStorage.getItem("najeh_lang") || "ar";
+  lang = lang || localStorage.getItem("brainixa_lang") || "ar";
   if (entity["name_" + lang]) return entity["name_" + lang];
   if (entity.name) return entity.name;
   if (entity.translations) {

@@ -1,4 +1,4 @@
-/* ==== Najeh Student Dashboard ==== */
+/* ==== Brainixa Student Dashboard ==== */
 const NS = "student";
 let pendingEmail = "";
 
@@ -38,7 +38,7 @@ function showApp() {
   navigate("home");
 }
 
-window.addEventListener("najeh:unauthorized", () => { toast("انتهت الجلسة، سجل الدخول مرة أخرى", "error"); showAuth(); });
+window.addEventListener("brainixa:unauthorized", () => { toast("انتهت الجلسة، سجل الدخول مرة أخرى", "error"); showAuth(); });
 
 /* ---- navigation between auth steps ---- */
 document.getElementById("gotoRegister").onclick = (e) => { e.preventDefault(); renderImageWrap(); renderRegisterExtras(); showStep("Register"); };
@@ -359,7 +359,7 @@ function renderRedeemView(root) {
       <div class="card-header"><h3>🎟️ اشتراك بكود</h3></div>
       <div class="card-body">
         <p class="text-muted">أدخل كود الاشتراك اللي معاك عشان تفتح المحتوى المرتبط بيه (كورس / مادة / معلم).</p>
-        <div class="field"><label>كود الاشتراك</label><input type="text" id="redeemCode" placeholder="مثال: NAJEH-2026-XXXX"></div>
+        <div class="field"><label>كود الاشتراك</label><input type="text" id="redeemCode" placeholder="مثال: BRAINIXA-2026-XXXX"></div>
         <button class="btn btn-primary btn-block" id="redeemBtn">تفعيل الكود</button>
         <div id="redeemResult" style="margin-top:16px"></div>
       </div>

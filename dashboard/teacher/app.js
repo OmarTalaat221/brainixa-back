@@ -1,4 +1,4 @@
-/* ==== Najeh Teacher Dashboard ==== */
+/* ==== Brainixa Teacher Dashboard ==== */
 const NS = "teacher";
 let pendingEmail = "";
 
@@ -38,7 +38,7 @@ function showApp() {
   navigate("profile");
 }
 
-window.addEventListener("najeh:unauthorized", () => { toast("انتهت الجلسة، سجل الدخول مرة أخرى", "error"); showAuth(); });
+window.addEventListener("brainixa:unauthorized", () => { toast("انتهت الجلسة، سجل الدخول مرة أخرى", "error"); showAuth(); });
 
 /* ---- navigation between auth steps ---- */
 document.getElementById("gotoRegister").onclick = (e) => { e.preventDefault(); renderImageWrap(); renderRegisterExtras(); showStep("Register"); };

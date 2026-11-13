@@ -7563,6 +7563,13 @@ $routes = [
             "method" => "POST",
             "path" => "/brain-ixa/upload",
             "handler" => function ($con) {
+                // Guarded like every other write. This one took a file from anybody at all - no
+                // token, no role - and wrote it to the server's disk under a URL it handed back,
+                // which is free hosting for whatever a stranger wants to serve from this domain.
+                // `anyAuthMiddleware` is the same guard /upload/audio already used, and it accepts
+                // any of the four roles, so no existing caller loses access.
+                include_once "./middlewares/anyauthmiddleware.php";
+                anyAuthMiddleware();
                 include_once "./app/common/upload/manage.php";
                 return handleGeneralFileUpload($con);
             },

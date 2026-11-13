@@ -1,4 +1,4 @@
-/* ==== Najeh Dashboard - Small UI kit: modal, image field, multiselect, pagination, confirm ==== */
+/* ==== Brainixa Dashboard - Small UI kit: modal, image field, multiselect, pagination, confirm ==== */
 
 const Modal = {
   open({ title, bodyHtml, footerHtml, size = "" }) {

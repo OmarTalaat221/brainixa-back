@@ -1,4 +1,4 @@
-/* ==== Najeh Admin Dashboard ==== */
+/* ==== Brainixa Admin Dashboard ==== */
 const NS = "admin";
 
 /* ---------- Response shape normalizer ---------- */
@@ -135,7 +135,7 @@ function doLogout() {
   location.reload();
 }
 
-window.addEventListener("najeh:unauthorized", () => {
+window.addEventListener("brainixa:unauthorized", () => {
   toast("انتهت الجلسة، سجل الدخول مرة أخرى", "error");
   showLogin();
 });
@@ -191,7 +191,7 @@ function applyLangDirection(lang) {
   document.documentElement.setAttribute("lang", lang);
 }
 document.getElementById("langSwitch").addEventListener("change", (e) => {
-  localStorage.setItem("najeh_lang", e.target.value);
+  localStorage.setItem("brainixa_lang", e.target.value);
   applyLangDirection(e.target.value);
   navigate(currentView);
 });
@@ -2944,7 +2944,7 @@ async function downloadReport(params) {
     const res = await fetch(API_BASE + path, {
       headers: {
         Authorization: "Bearer " + (tokens.token || ""),
-        "Accept-Language": localStorage.getItem("najeh_lang") || "ar",
+        "Accept-Language": localStorage.getItem("brainixa_lang") || "ar",
       },
     });
     if (!res.ok) throw new Error("تعذر تصدير التقرير");
@@ -3479,7 +3479,7 @@ const productsCfg = {
 };
 /* ---------- boot ---------- */
 (function init() {
-  const savedLang = localStorage.getItem("najeh_lang") || "ar";
+  const savedLang = localStorage.getItem("brainixa_lang") || "ar";
   document.getElementById("langSwitch").value = savedLang;
   applyLangDirection(savedLang);
   if (isLoggedIn()) showApp();

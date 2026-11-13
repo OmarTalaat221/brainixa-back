@@ -1,9 +1,9 @@
 (function () {
-  let currentLang = localStorage.getItem("najeh_user_lang") || "ar";
+  let currentLang = localStorage.getItem("brainixa_user_lang") || "ar";
 
   function applyLanguage(lang) {
     currentLang = lang;
-    localStorage.setItem("najeh_user_lang", lang);
+    localStorage.setItem("brainixa_user_lang", lang);
     if (lang === "en") {
       document.body.classList.add("lang-en");
       document.documentElement.dir = "ltr";
@@ -19,7 +19,7 @@
 
   async function fetchLandingData() {
     try {
-      const res = await fetch("/najeh/site-settings", {
+      const res = await fetch("/brain-ixa/site-settings", {
         headers: {
           "Accept-Language": currentLang,
         },
@@ -39,7 +39,7 @@
 
   async function fetchAboutUsData() {
     try {
-      const res = await fetch("/najeh/about-us", {
+      const res = await fetch("/brain-ixa/about-us", {
         headers: {
           "Accept-Language": currentLang,
         },
