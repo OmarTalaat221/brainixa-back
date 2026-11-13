@@ -509,14 +509,30 @@ if (!function_exists('pricing_context')) {
      * The order is deliberate, most authoritative first:
      *
      *   1. a country the client asked for outright - the currency switcher;
-     *   2. the country on the student's own record;
-     *   3. the country the CDN in front of us already resolved;
-     *   4. a geo-IP lookup of the address;
+     *   2. the country the CDN in front of us already resolved;
+     *   3. a geo-IP lookup of the address;
+     *   4. the country on the student's own record;
      *   5. nothing, which means the base currency.
      *
-     * A student who has told us where they live outranks their address, because a Saudi student
-     * on holiday in Cairo is still a Saudi student and should not have their prices re-denominated
-     * because of where they opened the app.
+     * WHERE THE REQUEST COMES FROM DECIDES. The saved country used to sit at position 2 and beat
+     * both of the live signals, which is why a student connecting from Germany kept being quoted
+     * Egyptian prices: `students.country_id` had been filled in long before, and nothing about the
+     * connection could outrank it.
+     *
+     * That column cannot carry the weight it was being given. It holds three different things that
+     * are indistinguishable once written - what was captured at registration, what the student
+     * later chose, and what an earlier geo-IP lookup wrote into it - so "the student told us where
+     * they live" was frequently not true at all.
+     *
+     * It is still the fallback, and a good one: when there is no CDN header and the geo lookup
+     * fails or is circuit-broken, the last country we knew about this student beats quoting them
+     * the base currency.
+     *
+     * The trade-off, stated plainly: a student travelling (or on a VPN) is now priced where they
+     * are rather than where they live. That was already true for every signed-out visitor, since
+     * nothing but geo-IP speaks for them, so the old rule only protected signed-in purchases and
+     * only half the time. Someone who wants to fix their country can still send it explicitly,
+     * which is position 1 and beats everything here.
      */
     function pricing_context($con, int $studentId = 0): array {
         static $cache = [];
@@ -547,11 +563,6 @@ if (!function_exists('pricing_context')) {
             if ($country) $source = 'client';
         }
 
-        if (!$country && $studentId > 0) {
-            $saved = pricing_student_country($con, $studentId);
-            if ($saved) { $country = $saved; $source = 'student'; }
-        }
-
         if (!$country) {
             $edge = pricing_edge_country_code();
             if ($edge !== '') {
@@ -568,17 +579,25 @@ if (!function_exists('pricing_context')) {
             }
         }
 
+        // Only once the connection has told us nothing. Repeating the lookup costs nothing either
+        // way - a hit is cached for 30 days in `ip_country_cache`, and five failures in a row open
+        // a circuit that stops anything asking for an hour.
+        if (!$country && $studentId > 0) {
+            $saved = pricing_student_country($con, $studentId);
+            if ($saved) { $country = $saved; $source = 'student'; }
+        }
+
         if (!$country) {
             $cache[$studentId] = $fallback;
             return $fallback;
         }
 
-        // A student whose record does not say where they are, and whose address just told us:
-        // remember it, so every later request skips the lookup entirely. Only ever fills a blank -
-        // it never overwrites a country the student chose.
-        if ($studentId > 0 && ($source === 'edge' || $source === 'geoip')) {
-            pricing_remember_student_country($con, $studentId, (int)$country['id']);
-        }
+        // No write back to `students.country_id` from a lookup. It used to be stamped here the
+        // first time an address resolved, which is what turned a one-off connection into a
+        // permanent verdict on a student and destroyed the NULL that means "detect it each time" -
+        // a student who had been stamped could never get back to automatic. Where someone connects
+        // from is read per request now; where they LIVE is theirs to state, through
+        // POST /student/pricing/country.
 
         $currency = currency_info($con, $country['currency_code']);
 
@@ -616,6 +635,11 @@ if (!function_exists('pricing_student_country')) {
 }
 
 if (!function_exists('pricing_remember_student_country')) {
+    /**
+     * Kept, but no longer called from pricing_context - see the note there. Anything that wants to
+     * record where a student is must mean it, because this value is what pricing falls back to
+     * when a connection cannot be placed.
+     */
     function pricing_remember_student_country($con, int $studentId, int $countryId): void {
         $stmt = @mysqli_prepare($con, "UPDATE students SET country_id = ? WHERE id = ? AND country_id IS NULL");
         if (!$stmt) return;
