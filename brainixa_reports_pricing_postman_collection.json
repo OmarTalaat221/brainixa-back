@@ -1034,7 +1034,7 @@
           "response": []
         },
         {
-          "name": "Teacher - country prices on MY item",
+          "name": "Teacher - country prices on a course I OWN",
           "request": {
             "method": "GET",
             "header": [
@@ -1050,7 +1050,7 @@
               }
             ],
             "url": {
-              "raw": "{{base_url}}/teacher/item-prices?item_type=course&item_id={{course_id}}",
+              "raw": "{{base_url}}/teacher/item-prices?item_type=course&item_id={{my_course_id}}",
               "host": [
                 "{{base_url}}"
               ],
@@ -1066,12 +1066,12 @@
                 },
                 {
                   "key": "item_id",
-                  "value": "{{course_id}}",
-                  "description": "Must belong to this teacher."
+                  "value": "{{my_course_id}}",
+                  "description": "A course THIS teacher owns - from GET /teacher/courses."
                 }
               ]
             },
-            "description": "The same screen for a teacher, with an ownership check: a teacher prices only what they own.\n\nNote that country pricing is READ only on the student side - no teacher endpoint applies it. A teacher always sees their own base price, as entered, which is the point: they are setting the number, not being quoted it."
+            "description": "The same screen for a teacher, with an ownership check in front of it.\n\n**`item_id` must be a course this teacher owns**, or the answer is `status: \"error\"` with \"العنصر ده مش موجود\" - verified against the live API: a teacher asking about someone else's course gets that, and asking about their own gets the prices. The message says NOT FOUND rather than NOT YOURS on purpose; whether a course exists is not a teacher's business to learn by probing ids.\n\nSo get the id from `GET /teacher/courses` rather than from the admin's list.\n\nNote that country pricing is READ only on the student side - no teacher endpoint applies it. A teacher always sees their own base price as entered, which is the point: they set the number, they are not being quoted it."
           },
           "response": []
         }
@@ -1243,6 +1243,11 @@
     },
     {
       "key": "date_to",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "my_course_id",
       "value": "",
       "type": "string"
     }
