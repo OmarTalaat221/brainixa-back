@@ -175,6 +175,96 @@ if (!function_exists('teacherListBookPurchaseRequests')) {
     }
 }
 
+if (!function_exists('teacherDeleteBookPurchaseRequest')) {
+    /**
+     * Clears a purchase request off this teacher's list once it has been decided.
+     *
+     * Same rule as the admin's: the list is a QUEUE, not a ledger, so removing a decided row is
+     * tidying rather than undoing - approving a request grants the product through
+     * `student_book_subscriptions`, a separate row this does not touch.
+     *
+     * A PENDING request is refused, because deleting one drops a student's request with no answer
+     * and they never learn it was seen. And a teacher may only clear requests for their OWN
+     * products, which is the same ownership check the review path makes.
+     */
+    function teacherDeleteBookPurchaseRequest($con, $teacherData = null) {
+        $teacherId = 0;
+        if (is_array($teacherData)) {
+            $teacherId = (int)($teacherData['id'] ?? $teacherData['teacher_id'] ?? 0);
+        } elseif (is_object($teacherData)) {
+            $teacherId = (int)($teacherData->id ?? $teacherData->teacher_id ?? 0);
+        }
+        if ($teacherId <= 0) {
+            return ['status' => 'error', 'message' => 'Teacher authentication is required'];
+        }
+
+        $body = read_json_body();
+        // `id` is what the dashboard sends on a DELETE; `request_id` is what the review endpoint
+        // takes. Both are accepted so the two do not disagree about what to call the same number.
+        $requestId = (int)($body['id'] ?? $body['request_id'] ?? $_GET['id'] ?? $_GET['request_id'] ?? 0);
+        if ($requestId <= 0) {
+            return [
+                'status' => 'error',
+                'message' => app_text($con, 'رقم الطلب مطلوب.', 'The request id is required.'),
+            ];
+        }
+
+        $stmt = mysqli_prepare($con, "SELECT id, book_id, status FROM student_book_purchase_requests WHERE id = ? LIMIT 1");
+        if (!$stmt) {
+            return ['status' => 'error', 'message' => 'Database error: ' . mysqli_error($con)];
+        }
+        mysqli_stmt_bind_param($stmt, "i", $requestId);
+        mysqli_stmt_execute($stmt);
+        $row = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+
+        if (!$row) {
+            return [
+                'status' => 'error',
+                'message' => app_text($con, 'الطلب غير موجود.', 'That request does not exist.'),
+            ];
+        }
+
+        $bookId = (int)$row['book_id'];
+        $ownerCheck = mysqli_query($con, "
+            SELECT cb.id FROM course_books cb
+            WHERE cb.id = {$bookId} AND " . teacher_book_ownership_clause($teacherId) . "
+            LIMIT 1
+        ");
+        if (!$ownerCheck || mysqli_num_rows($ownerCheck) === 0) {
+            return [
+                'status' => 'error',
+                'message' => app_text($con, 'الطلب ده مش على منتج من منتجاتك.', 'That request is not for one of your products.'),
+            ];
+        }
+
+        if (($row['status'] ?? '') === 'pending') {
+            return [
+                'status' => 'error',
+                'message' => app_text(
+                    $con,
+                    'الطلب ده لسه مستني رد. اقبله أو ارفضه الأول، وبعدين امسحه — عشان الطالب يعرف نتيجته.',
+                    'This request is still awaiting an answer. Approve or reject it first, then remove it, so the student is told the outcome.'
+                ),
+            ];
+        }
+
+        $del = mysqli_prepare($con, "DELETE FROM student_book_purchase_requests WHERE id = ?");
+        if (!$del) {
+            return ['status' => 'error', 'message' => 'Database error: ' . mysqli_error($con)];
+        }
+        mysqli_stmt_bind_param($del, "i", $requestId);
+        if (!mysqli_stmt_execute($del)) {
+            return ['status' => 'error', 'message' => 'Failed to delete the request: ' . mysqli_error($con)];
+        }
+
+        return [
+            'status' => 'success',
+            'message' => app_text($con, 'تم حذف الطلب.', 'The request was deleted.'),
+            'data' => ['id' => $requestId],
+        ];
+    }
+}
+
 if (!function_exists('teacherReviewBookRequest')) {
     function teacherReviewBookRequest($con, $teacherData = null) {
         $teacherId = 0;

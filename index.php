@@ -1268,6 +1268,16 @@ $routes = [
         },
     ],
     [
+        "method" => "DELETE",
+        "path" => "/brain-ixa/teacher/books/purchase-requests",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/teacher/books/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherDeleteBookPurchaseRequest($con, $teacherData);
+        },
+    ],
+    [
         "method" => "POST",
         "path" => "/brain-ixa/teacher/books/purchase-requests/review",
         "handler" => function ($con) {

@@ -60,6 +60,28 @@ if (!function_exists('teacher_filter_discount_course_ids')) {
     }
 }
 
+/**
+ * The store half of the same rule: the product ids to store, or a string error message if any of
+ * them is not this teacher's. An empty list means no products were named, which is the state
+ * every code was in before the store could be discounted at all.
+ */
+if (!function_exists('teacher_filter_discount_book_ids')) {
+    function teacher_filter_discount_book_ids($con, int $teacherId, $bookIds) {
+        if (!is_array($bookIds)) {
+            $bookIds = $bookIds !== null && $bookIds !== '' ? [$bookIds] : [];
+        }
+        $requested = array_values(array_unique(array_filter(array_map('intval', $bookIds))));
+        if (!$requested) return [];
+
+        $owned = discount_teacher_book_ids($con, $teacherId);
+        $foreign = array_values(array_diff($requested, $owned));
+        if ($foreign) {
+            return 'لا يمكنك عمل خصم على منتجات مش بتاعتك (' . implode(', ', $foreign) . ')';
+        }
+        return $requested;
+    }
+}
+
 if (!function_exists('teacherListDiscountCodes')) {
     function teacherListDiscountCodes($con, $teacherData = null) {
         $teacherId = teacher_discount_id($teacherData);
@@ -176,6 +198,13 @@ if (!function_exists('teacherCreateDiscountCode')) {
             return ['status' => 'error', 'message' => $courseIds];
         }
 
+        // The store half of the scope. An absent key means no products, which is what every code
+        // had before the store could be discounted.
+        $bookIds = teacher_filter_discount_book_ids($con, $teacherId, $body['book_ids'] ?? []);
+        if (is_string($bookIds)) {
+            return ['status' => 'error', 'message' => $bookIds];
+        }
+
         $code = strtoupper(trim($body['code'] ?? ''));
         if ($code === '') {
             $code = 'DISC-' . strtoupper(substr(md5(uniqid('', true)), 0, 8));
@@ -191,7 +220,9 @@ if (!function_exists('teacherCreateDiscountCode')) {
         $description = trim($body['description'] ?? '') ?: null;
         $maxDiscount = isset($body['max_discount_amount']) && $body['max_discount_amount'] !== '' && $body['max_discount_amount'] !== null
             ? (float)$body['max_discount_amount'] : null;
-        $appliesTo = !empty($courseIds) ? 'selected' : 'all';
+        // Naming anything in EITHER list narrows the code; leaving both empty is what makes it
+        // global. A code that names products only is still a narrowed code.
+        $appliesTo = (!empty($courseIds) || !empty($bookIds)) ? 'selected' : 'all';
         $maxUses = isset($body['max_uses']) && $body['max_uses'] !== '' && $body['max_uses'] !== null
             ? (int)$body['max_uses'] : null;
         $oncePerStudent = isset($body['once_per_student']) ? (int)(bool)$body['once_per_student'] : 1;
@@ -222,6 +253,7 @@ if (!function_exists('teacherCreateDiscountCode')) {
 
         $newId = mysqli_insert_id($con);
         discount_sync_courses($con, $newId, $courseIds);
+        discount_sync_books($con, $newId, $bookIds);
 
         return [
             'status' => 'success',
@@ -309,16 +341,36 @@ if (!function_exists('teacherUpdateDiscountCode')) {
             $types .= 'i';
         }
 
-        // The scope follows the course list, same as the admin handler - except a teacher may
-        // only ever name their own courses.
+        // The scope follows both lists, same as the admin handler - except a teacher may only
+        // ever name their own courses and their own products.
+        //
+        // Each list is synced only when its key is SENT, so an older client editing a title
+        // cannot wipe the other half of a code's scope by omission.
+        $scopeTouched = false;
+
         if (array_key_exists('course_ids', $body)) {
             $courseIds = teacher_filter_discount_course_ids($con, $teacherId, $body['course_ids']);
             if (is_string($courseIds)) {
                 return ['status' => 'error', 'message' => $courseIds];
             }
             discount_sync_courses($con, $id, $courseIds);
+            $scopeTouched = true;
+        }
+        if (array_key_exists('book_ids', $body)) {
+            $bookIds = teacher_filter_discount_book_ids($con, $teacherId, $body['book_ids']);
+            if (is_string($bookIds)) {
+                return ['status' => 'error', 'message' => $bookIds];
+            }
+            discount_sync_books($con, $id, $bookIds);
+            $scopeTouched = true;
+        }
+
+        if ($scopeTouched) {
+            // Read back rather than guessed from this request: a request that sends only products
+            // must not decide `applies_to` on the strength of courses it never mentioned.
+            $existing = get_discount_code_details($con, $id) ?: [];
             $fields[] = 'applies_to = ?';
-            $params[] = !empty($courseIds) ? 'selected' : 'all';
+            $params[] = (!empty($existing['course_ids']) || !empty($existing['book_ids'])) ? 'selected' : 'all';
             $types .= 's';
         }
 
@@ -353,6 +405,9 @@ if (!function_exists('teacherDeleteDiscountCode')) {
         }
 
         mysqli_query($con, "DELETE FROM discount_code_courses WHERE discount_code_id = {$id}");
+        // Guarded with @ because migration 129 is applied by hand; before it runs there is no
+        // such table and the code simply has no products.
+        @mysqli_query($con, "DELETE FROM discount_code_books WHERE discount_code_id = {$id}");
 
         $stmt = mysqli_prepare($con, "DELETE FROM discount_codes WHERE id = ?");
         mysqli_stmt_bind_param($stmt, "i", $id);
@@ -374,8 +429,12 @@ if (!function_exists('teacherCheckDiscountCode')) {
         if (!is_array($courseIds)) {
             $courseIds = array_filter(array_map('trim', explode(',', (string)$courseIds)));
         }
+        $bookIds = $body['book_ids'] ?? $_GET['book_ids'] ?? [];
+        if (!is_array($bookIds)) {
+            $bookIds = array_filter(array_map('trim', explode(',', (string)$bookIds)));
+        }
 
-        $result = discount_validate_code($con, $code, $studentId ?: null, $courseIds);
+        $result = discount_validate_code($con, $code, $studentId ?: null, $courseIds, $bookIds);
 
         return [
             'status' => !empty($result['valid']) ? 'success' : 'error',
