@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../../helpers/unpriced.php';
+require_once __DIR__ . '/../../../helpers/teacher_ownership.php';
 require_once __DIR__ . '/../../../helpers/functions.php';
 require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/upload.php';
@@ -161,6 +162,10 @@ if (!function_exists('adminListBooks')) {
         ";
         $res = mysqli_query($con, $sql);
         $books = [];
+        // For a teacher: which of these rows are theirs. The list also carries the admin's
+        // unassigned products, read-only, and a teacher can neither discount those nor act on their
+        // purchase requests - the server refuses both by the same rule this reads.
+        $ownedBookIds = $teacherId > 0 ? array_flip(teacher_owned_book_ids($con, $teacherId)) : [];
         if ($res) {
             while ($row = mysqli_fetch_assoc($res)) {
                 $bId = (int)$row['id'];
@@ -168,6 +173,7 @@ if (!function_exists('adminListBooks')) {
                 if ($detail) {
                     if ($teacherId > 0) {
                         $detail['can_edit'] = ($detail['created_by_type'] ?? 'admin') !== 'admin';
+                        $detail['is_owned'] = isset($ownedBookIds[$bId]);
                     }
                     $books[] = $detail;
                 }

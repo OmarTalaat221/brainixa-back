@@ -76,15 +76,7 @@ if (!function_exists('discount_teacher_book_ids')) {
         // The same rule the teacher's store screen uses. This used to be a two-route version of
         // its own, so a product the teacher saw on their store screen was refused here as "not
         // yours".
-        $ids = [];
-        $res = @mysqli_query($con, "
-            SELECT DISTINCT cb.id FROM course_books cb
-            WHERE " . teacher_book_ownership_clause((int)$teacherId) . "
-        ");
-        if ($res) {
-            while ($row = mysqli_fetch_assoc($res)) $ids[] = (int)$row['id'];
-        }
-        return $ids;
+        return teacher_owned_book_ids($con, (int)$teacherId);
     }
 }
 

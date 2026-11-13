@@ -36,3 +36,16 @@ if (!function_exists('teacher_book_ownership_clause')) {
         )";
     }
 }
+
+if (!function_exists('teacher_owned_book_ids')) {
+    /** Every course_books id this teacher owns, by teacher_book_ownership_clause(). One query. */
+    function teacher_owned_book_ids($con, int $teacherId): array {
+        if ($teacherId <= 0) return [];
+        $ids = [];
+        $res = @mysqli_query($con, "SELECT DISTINCT cb.id FROM course_books cb WHERE " . teacher_book_ownership_clause($teacherId));
+        while ($res && ($row = mysqli_fetch_assoc($res))) {
+            $ids[] = (int)$row['id'];
+        }
+        return $ids;
+    }
+}
