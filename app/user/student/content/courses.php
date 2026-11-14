@@ -70,20 +70,10 @@ if (!function_exists('studentGetAllCoursesWithOwn')) {
             $sp = '%' . mysqli_real_escape_string($con, $search) . '%';
             $whereConditions[] = "(c.slug LIKE '{$sp}' OR ct.name LIKE '{$sp}' OR ct.description LIKE '{$sp}')";
         }
-        // `subscribed=0` is the app's "جديد المنصة": only what this student does not have yet,
-        // courses and packages together unless `kind` narrows it. `subscribed=1` is the opposite.
-        // It is the same rule as `own` below, applied in SQL so the pages and `total_count` stay
-        // right - filtering a page after fetching it would leave short pages and a wrong total.
-        // Without the parameter nothing changes.
-        $subscribedFilter = $_GET['subscribed'] ?? $body['subscribed'] ?? null;
-        if ($subscribedFilter !== null && trim((string)$subscribedFilter) !== '') {
-            $wantOwned = in_array(strtolower(trim((string)$subscribedFilter)), ['1', 'true', 'yes'], true);
-            $ownedIds = array_values(array_unique(array_map('intval', $accessibleCourseIds)));
-            if ($wantOwned) {
-                $whereConditions[] = !empty($ownedIds) ? "c.id IN (" . implode(',', $ownedIds) . ")" : "1 = 0";
-            } elseif (!empty($ownedIds)) {
-                $whereConditions[] = "c.id NOT IN (" . implode(',', $ownedIds) . ")";
-            }
+        // `subscribed` - see student_course_subscribed_condition (subscriptions/manage.php).
+        $subscribedCondition = student_course_subscribed_condition($accessibleCourseIds, $body);
+        if ($subscribedCondition !== null) {
+            $whereConditions[] = $subscribedCondition;
         }
 
         $whereClause = "WHERE " . implode(" AND ", $whereConditions);

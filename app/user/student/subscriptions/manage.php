@@ -1121,6 +1121,30 @@ if (!function_exists('studentTrackBookOpen')) {
 
 
 
+if (!function_exists('student_course_subscribed_condition')) {
+    /**
+     * The `subscribed` filter of the student course list, as a WHERE condition (or null for none).
+     * `0` is the app's "جديد المنصة": only what the student does not have yet; `1` the opposite.
+     * Same rule as the `own` flag on each row, applied in SQL so the pages and `total_count`
+     * follow it - filtering a fetched page would leave short pages and a wrong total.
+     *
+     * Shared on purpose: studentGetAllCoursesWithOwn is defined twice (here and in
+     * content/courses.php), and whichever file is loaded first wins.
+     */
+    function student_course_subscribed_condition(array $accessibleCourseIds, array $body = []): ?string {
+        $raw = $_GET['subscribed'] ?? $body['subscribed'] ?? null;
+        if ($raw === null || trim((string)$raw) === '') {
+            return null;
+        }
+        $wantOwned = in_array(strtolower(trim((string)$raw)), ['1', 'true', 'yes'], true);
+        $ownedIds = array_values(array_unique(array_map('intval', $accessibleCourseIds)));
+        if ($wantOwned) {
+            return !empty($ownedIds) ? "c.id IN (" . implode(',', $ownedIds) . ")" : "1 = 0";
+        }
+        return !empty($ownedIds) ? "c.id NOT IN (" . implode(',', $ownedIds) . ")" : null;
+    }
+}
+
 if (!function_exists('studentGetAllCoursesWithOwn')) {
     function studentGetAllCoursesWithOwn($con, $studentData = null) {
         $stId = 0;
@@ -1164,6 +1188,10 @@ if (!function_exists('studentGetAllCoursesWithOwn')) {
         if (!empty($search)) {
             $sp = '%' . mysqli_real_escape_string($con, $search) . '%';
             $whereConditions[] = "(c.slug LIKE '{$sp}' OR ct.name LIKE '{$sp}' OR ct.description LIKE '{$sp}')";
+        }
+        $subscribedCondition = student_course_subscribed_condition($accessibleCourseIds, $body);
+        if ($subscribedCondition !== null) {
+            $whereConditions[] = $subscribedCondition;
         }
 
         $whereClause = "WHERE " . implode(" AND ", $whereConditions);
