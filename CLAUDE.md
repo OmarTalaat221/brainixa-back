@@ -67,7 +67,9 @@ the Najeh file of the same path before changing it.
     "The same request is also accepted at" and in `x-also-accepted-at`, not as a second operation.
   - After any spec change run `python tools/api_docs/build_postman_collection.py`, which regenerates
     `brainixa_api_postman_collection.json` (nested folders). Commit both.
-- `updates-for-project/` holds the per-update change summaries (update-2, update-3).
+- Per-update history lives in the OpenAPI itself (each request's "What changed, update by update").
+  The old update summaries (md/html/pdf) and POSTMAN.md were removed on 2026-11-14; the Postman
+  setup is in the spec's own description.
 
 ## Current state (2026-10-07)
 

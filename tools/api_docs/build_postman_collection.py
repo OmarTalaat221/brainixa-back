@@ -170,7 +170,41 @@ def build_request(path, method, op):
                               '_postman_previewlanguage': 'json',
                               'header': [{'key': 'Content-Type', 'value': 'application/json'}],
                               'body': json.dumps(ex, ensure_ascii=False, indent=2)})
-    return {'name': op.get('summary') or '%s %s' % (method.upper(), path), 'request': req, 'response': responses}
+    item = {'name': op.get('summary') or '%s %s' % (method.upper(), path), 'request': req, 'response': responses}
+
+    # A sign-in request reads its email and password from the environment and writes the token it
+    # gets back into it, so every other request of that role works straight after.
+    role = LOGIN_ROLES.get((method, path))
+    if role:
+        if body and body.get('mode') == 'raw':
+            try:
+                sent = json.loads(body['raw'])
+            except ValueError:
+                sent = {}
+            sent['email'] = '{{%s_email}}' % role
+            sent['password'] = '{{%s_password}}' % role
+            body['raw'] = json.dumps(sent, ensure_ascii=False, indent=2)
+        item['event'] = [{'listen': 'test', 'script': {'type': 'text/javascript', 'exec': [
+            'const body = pm.response.json();',
+            'const token = body?.data?.tokens?.access_token || body?.data?.access_token;',
+            'const refresh = body?.data?.tokens?.refresh_token || body?.data?.refresh_token;',
+            'if (token) {',
+            '  pm.environment.set("%s_token", token);' % role,
+            '  if (refresh) pm.environment.set("%s_refresh_token", refresh);' % role,
+            '  console.log("%s_token saved");' % role,
+            '} else {',
+            '  console.warn("No token in the response:", body?.message);',
+            '}',
+        ]}}]
+    return item
+
+
+LOGIN_ROLES = {
+    ('post', '/admin/auth/login'): 'admin',
+    ('post', '/teacher/auth/login'): 'teacher',
+    ('post', '/user/student/auth/login'): 'student',
+    ('post', '/parent/auth/login'): 'parent',
+}
 
 
 # ---- the tree
