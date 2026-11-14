@@ -55,9 +55,18 @@ the Najeh file of the same path before changing it.
 - Migrations: `migrations/NNN_name.sql`, applied by hand. Write them idempotently
   (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS` — MariaDB 10.11 supports it, and
   guarded `INSERT`s). They get replayed against databases in different states.
-- API spec: `brainixa_api_openapi.json`. Tags follow `<batch> / <Role> / <Feature>`
-  (e.g. `update-3 / Teacher / Attendance & Wallet`), where `old` means "never changed since the
-  base version". Keep new endpoints tagged the same way.
+- API spec: `brainixa_api_openapi.json` (reorganised role-first on 2026-11-14, version 20.0.0).
+  - **One tag per operation, a folder path:** `<Role> / <Feature>[ / <Part>]`, roles `Admin`,
+    `Teacher`, `User` (student web + mobile, shared), `Parent`, `Landing`, `Shared`. Pick the folder
+    from `tools/api_docs/taxonomy.py` (`RULES`); a new folder needs a `FOLDERS` description. No update
+    number in tags or summaries.
+  - **History lives in the description:** it starts with `**Last changed in:** update-N | **Auth:** ...`,
+    then `**What changed, update by update:**` with one `- **update-N** - ...` line per update. On a
+    change, add a line for the new update, bump `x-last-update`, and keep the older lines.
+  - **No duplicate requests.** An alias (same handler, another path or method) is listed under
+    "The same request is also accepted at" and in `x-also-accepted-at`, not as a second operation.
+  - After any spec change run `python tools/api_docs/build_postman_collection.py`, which regenerates
+    `brainixa_api_postman_collection.json` (nested folders). Commit both.
 - `updates-for-project/` holds the per-update change summaries (update-2, update-3).
 
 ## Current state (2026-10-07)

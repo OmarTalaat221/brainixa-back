@@ -4,10 +4,29 @@ Two files in this repo are all you need:
 
 | File | What it is |
 |---|---|
-| `brainixa_api_openapi.json` | The API. Import it and Postman builds a collection out of it. |
+| `brainixa_api_postman_collection.json` | **Import this one.** The whole API as a Postman collection with real nested folders: **who calls it** (Admin, Teacher, User, Parent, Landing, Shared) → **feature** (Content, Store, Live Classes...) → **part of the feature** (Zoom, Consultations...). Every folder and every request carries its explanation. Generated from the spec - do not edit it by hand. |
 | `brainixa_postman_environment.json` | The environment: base URL, one token per role, and the ids the requests keep asking for. |
 
-And one hand-written collection, for the part a generated one documents poorly:
+`brainixa_api_openapi.json` is the source both are made from. Importing it straight into Postman
+also works, but Postman then makes one flat folder per tag ("Admin / Store / Products" as a single
+name) instead of the tree. After changing the spec, rebuild the collection:
+
+```
+python tools/api_docs/build_postman_collection.py
+```
+
+### How the API is organised
+
+- **User** is the student - the web dashboard and the mobile app share every endpoint, so they are
+  documented once. The User folder's own description lists what matters on a phone (device-limited
+  sign-in, the FCM token, Zoom inside the app).
+- **Each request appears once.** Where the server also accepts it under another path or method (an
+  alias kept for older clients), the request says so under *"The same request is also accepted at"*.
+- **Every request starts with its history:** *Last changed in* (also in the field `x-last-update`),
+  then *What changed, update by update* - one line per update, oldest first - then the full
+  explanation. Update numbers live there now, not in the folder names.
+
+And two hand-written collections, for the parts a generated one documents poorly:
 
 | File | What it is |
 |---|---|
@@ -16,7 +35,7 @@ And one hand-written collection, for the part a generated one documents poorly:
 
 ## Setup, once
 
-1. **Import** both files (Postman → Import → drop them in).
+1. **Import** the collection and the environment (Postman → Import → drop them in).
 2. Pick **Brainixa - Live** from the environment dropdown, top right.
 3. Fill in the passwords. They are deliberately **empty in the file** — this repo is cloned by
    people who should not get a working admin login out of it.
@@ -55,9 +74,9 @@ if (token) {
   are not interchangeable, and `AnyAuth` endpoints are the only ones that take whichever you have.
 - **`slot_id` and `session_id` are different things.** A slot is a dated availability slot or a
   consultation; a session is a weekly recurring class. Their Zoom endpoints are separate too.
-- **The spec is a changelog, not a full reference.** Tags read `<batch> / <Role> / <Feature>`,
-  and an endpoint untouched since the base version is deliberately absent. Filter by `update-16`
-  to see only what the latest batch added or changed.
+- **The API document covers what changed since the base version.** An endpoint untouched since
+  the platform was built from the Najeh codebase is not described yet. To see what one update
+  changed, search the collection for its name (`update-16`): every request lists its updates.
 - **`POST /upload` now needs a token** (update-16). It used to accept a file from anyone at all.
   Any of the four roles works, so a signed-in caller is unaffected; an anonymous one is refused.
 - **A third outcome exists beside success and error.** `severity: "warning"` means the write
