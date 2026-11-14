@@ -618,10 +618,18 @@ if (!function_exists('getPublicLandingConfig')) {
             }
         }
 
-        // A bare number is not a price. Decorate with the default country's currency so the
-        // landing page can print "150 ج.م" instead of "150".
-        if ($websiteBooks && function_exists('pricing_decorate_rows')) {
-            pricing_decorate_rows($con, $websiteBooks, 'book', 0);
+        // A bare number is not a price. Each row is priced for the country this request comes
+        // from (CDN header, then geo-IP - the same rule as the student dashboard), and carries
+        // `currency` and `price_formatted` beside it, so the landing page prints "50 ر.س" to a
+        // visitor in Saudi Arabia instead of the base "150" with a symbol it had to guess.
+        // Courses and packages used to skip this and always showed the base price.
+        if (function_exists('pricing_decorate_rows')) {
+            if ($websiteCourses) {
+                pricing_decorate_rows($con, $websiteCourses, 'course', 0);
+            }
+            if ($websiteBooks) {
+                pricing_decorate_rows($con, $websiteBooks, 'book', 0);
+            }
         }
 
         $aboutUsData = getPublicAboutUsConfig($con)['data'] ?? null;
