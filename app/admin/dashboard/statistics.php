@@ -646,6 +646,12 @@ if (!function_exists('adminDashboardStatistics')) {
         $courses = dashboard_fetch_row($con, "SELECT COUNT(*) AS total, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active FROM courses WHERE kind <> 'package'");
         $packages = dashboard_fetch_row($con, "SELECT COUNT(*) AS total, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active FROM courses WHERE kind = 'package'");
 
+        // The store tile: what GET /store sells - the store's own products plus the books sold on
+        // their own (no course, no unit). A book tied to a course is that course's content and
+        // is not counted. Without the products table (migration 127) its half reads as 0.
+        $storeBooks = dashboard_fetch_row($con, "SELECT COUNT(*) AS total, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active FROM course_books WHERE unit_id IS NULL AND course_id IS NULL");
+        $storeProducts = dashboard_fetch_row($con, "SELECT COUNT(*) AS total, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active FROM products");
+
         return [
             'status' => 'success',
             'data' => [
@@ -687,6 +693,12 @@ if (!function_exists('adminDashboardStatistics')) {
                     'packages' => [
                         'total' => (int)($packages['total'] ?? 0),
                         'active' => (int)($packages['active'] ?? 0)
+                    ],
+                    'store' => [
+                        'total' => (int)($storeBooks['total'] ?? 0) + (int)($storeProducts['total'] ?? 0),
+                        'active' => (int)($storeBooks['active'] ?? 0) + (int)($storeProducts['active'] ?? 0),
+                        'books' => (int)($storeBooks['total'] ?? 0),
+                        'products' => (int)($storeProducts['total'] ?? 0)
                     ]
                 ],
                 'sales' => dashboard_sales_summary($con),
