@@ -83,10 +83,11 @@ Done:
   also a question bank of 7 folders / 169 questions, owned across the admin and teachers 1-3.
   Regenerate a seed only if the database is rebuilt.
 - Zoom: `ZOOM_INTEGRATION.md` is the integration guide handed to the mobile developer (three
-  live-class paths, endpoints, entitlement rules, account limits). `seed_zoom_test_student2005.sql`
-  prepares the Zoom test account `student2005@example.com` / `12345678` — package
-  `package-zoom-test-2026` with `teacher1@brainixa.cloud`, booked and open slots, consultations,
-  and weekly `class_sessions`. Idempotent; run it on the server by hand.
+  live-class paths, endpoints, entitlement rules, account limits). The Zoom test account
+  `student2005@example.com` / `12345678` was seeded on the live database on 2026-11-05; its slots
+  have since run out, and it is flagged as a demo account (it owns every course).
+- Demo, test and seed SQL files were deleted from the repo root on 2026-11-14 (their data is
+  already applied). Write a new one only when asked, and do not commit it.
 
 Pending / known gaps:
 - Admin and teacher dashboards are rebuilt locally but **not committed or pushed** yet
