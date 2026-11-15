@@ -130,7 +130,8 @@ if (!function_exists('adminScheduleStudent')) {
         if (empty($body['end_date']) && $subscription && !empty($subscription['end_date'])) {
             $body['end_date'] = date('Y-m-d', strtotime($subscription['end_date']));
         }
-        if (empty($body['start_date']) || empty($body['end_date'])) {
+        // Days picked one by one on the calendar need no range; a pattern does.
+        if (!availability_body_has_dates($body) && (empty($body['start_date']) || empty($body['end_date']))) {
             return ['status' => 'error', 'message' => 'start_date and end_date are required (the student has no dated subscription to infer them from)'];
         }
 

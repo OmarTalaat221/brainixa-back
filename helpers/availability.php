@@ -407,8 +407,52 @@ if (!function_exists('availability_create_slot')) {
     }
 }
 
+if (!function_exists('availability_body_has_dates')) {
+    /** Whether a request names its days one by one (`dates`) instead of by a pattern. */
+    function availability_body_has_dates(array $body): bool {
+        $raw = $body['dates'] ?? null;
+        if (is_array($raw)) return count(array_filter($raw, fn($d) => trim((string)$d) !== '')) > 0;
+        return is_string($raw) && trim($raw) !== '';
+    }
+}
+
+if (!function_exists('availability_explicit_dates')) {
+    /**
+     * The days an admin or teacher picked on a calendar, checked and put in order: each must be
+     * a real Y-m-d date, repeats are dropped, and at most 400 (the same ceiling a pattern has).
+     * Accepts a JSON array, or the same list as a JSON string or a comma-separated string, which
+     * is how a multipart form sends it.
+     */
+    function availability_explicit_dates($raw): array {
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            $raw = is_array($decoded) ? $decoded : explode(',', $raw);
+        }
+        $dates = [];
+        foreach ((array)$raw as $value) {
+            $value = trim((string)$value);
+            if ($value === '') continue;
+            $d = DateTime::createFromFormat('!Y-m-d', $value);
+            if (!$d || $d->format('Y-m-d') !== $value) {
+                return ['error' => "Invalid date in dates[]: {$value} (expected YYYY-MM-DD)"];
+            }
+            $dates[$value] = true;
+        }
+        $dates = array_keys($dates);
+        sort($dates);
+        if (!$dates) {
+            return ['error' => 'dates[] needs at least one day'];
+        }
+        if (count($dates) > 400) {
+            return ['error' => 'No more than 400 days can be picked at once'];
+        }
+        return ['dates' => $dates];
+    }
+}
+
 /**
- * Bulk-creates one slot per date produced by the pattern. Dates the teacher already has a slot
+ * Bulk-creates one slot per date produced by the pattern, or per day in `dates` when the days were
+ * picked one by one. Dates the teacher already has a slot
  * for at that exact time are skipped rather than failing the whole request, so re-running a
  * generator over an overlapping range is safe and the response says how many were skipped.
  */
@@ -431,10 +475,16 @@ if (!function_exists('availability_generate_slots')) {
             return ['status' => 'error', 'message' => 'end_time must be after start_time'];
         }
 
-        $result = availability_pattern_dates($pattern, $startDate, $endDate, [
-            'days' => $body['days'] ?? [],
-            'days_of_month' => $body['days_of_month'] ?? [],
-        ]);
+        // Either the days picked one by one on a calendar (`dates`), or a pattern over a range.
+        if (availability_body_has_dates($body)) {
+            $pattern = 'dates';
+            $result = availability_explicit_dates($body['dates']);
+        } else {
+            $result = availability_pattern_dates($pattern, $startDate, $endDate, [
+                'days' => $body['days'] ?? [],
+                'days_of_month' => $body['days_of_month'] ?? [],
+            ]);
+        }
         if (isset($result['error'])) {
             return ['status' => 'error', 'message' => $result['error']];
         }
