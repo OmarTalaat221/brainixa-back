@@ -90,7 +90,8 @@ Done:
   have since run out, and it is flagged as a demo account (it owns every course).
 - Demo, test and seed SQL files were deleted from the repo root on 2026-11-14 (their data is
   already applied). Write a new one only when asked, and do not commit it.
-- **Store unification (2026-11-15, migration 131).** The store is the `products` table alone.
+- **Store unification (2026-11-15, migration 131 — applied on the live database the same day,
+  all four frontends pushed).** The store is the `products` table alone.
   Migration `131_store_products_unification.sql` moves every standalone `course_books` row
   (`course_id IS NULL AND unit_id IS NULL`) into `products` **under the same id**, renumbers the
   older products past them, archives the moved rows in `course_books_store_archive*`, and pushes
@@ -113,8 +114,6 @@ Done:
     the gitignored `updates-for-project/store-unification-harness/`.
 
 Pending / known gaps:
-- Migration 131 must be run on the live database (after a `mysqldump` backup) right after the
-  code is pulled; the code expects it. Until then the store screens read the old layout badly.
 - Admin and teacher dashboards are rebuilt locally but **not committed or pushed** yet
   (~193 and ~118 changed files). They need the user's go-ahead.
 - Firebase (chat + push) still points at Najeh's project `najeh-e3ef7` in all three frontends,
