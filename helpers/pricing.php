@@ -104,9 +104,16 @@ if (!function_exists('pricing_format_amount')) {
      */
     function pricing_format_amount($con, float $amount, array $currency): string {
         $number = number_format($amount, (int)$currency['decimal_digits'], '.', ',');
-        return get_request_lang($con) === 'en'
-            ? $currency['symbol'] . ' ' . $number
-            : $number . ' ' . $currency['symbol'];
+        if (get_request_lang($con) === 'en') {
+            // An Arabic symbol ("رس", "د.إ") on an English page reads as noise; the ISO code is
+            // what an English reader expects there ("SAR 120.00").
+            $symbol = (string)($currency['symbol'] ?? '');
+            if (($symbol === '' || preg_match('/\p{Arabic}/u', $symbol)) && !empty($currency['code'])) {
+                $symbol = (string)$currency['code'];
+            }
+            return $symbol . ' ' . $number;
+        }
+        return $number . ' ' . $currency['symbol'];
     }
 }
 
