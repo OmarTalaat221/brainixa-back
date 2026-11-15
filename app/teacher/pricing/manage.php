@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../../helpers/discounts.php';
 // PHP fatal that came back as an HTML page where the client expected JSON.
 require_once __DIR__ . '/../../../helpers/app_settings.php';
 require_once __DIR__ . '/../../../app/admin/pricing/manage.php';
+require_once __DIR__ . '/../../../helpers/store_items.php';
 
 /**
  * A teacher setting country prices for their own work.
@@ -35,22 +36,9 @@ if (!function_exists('teacher_pricing_owns_item')) {
 
         if ($itemType !== 'book') return false;
 
-        // A book is the teacher's if they created it, if they are linked to it, or if it belongs
-        // to one of their courses - the same three ways a course is theirs.
-        $stmt = mysqli_prepare($con, "SELECT b.id FROM course_books b
-            LEFT JOIN book_teachers bt ON bt.book_id = b.id AND bt.teacher_id = ?
-            WHERE b.id = ?
-              AND (
-                    (b.created_by_type = 'teacher' AND b.created_by_id = ?)
-                 OR bt.id IS NOT NULL
-                 OR b.course_id IN (SELECT c.id FROM courses c WHERE c.teacher_id = ?)
-              )
-            LIMIT 1");
-        if (!$stmt) return false;
-
-        mysqli_stmt_bind_param($stmt, "iiii", $teacherId, $itemId, $teacherId, $teacherId);
-        mysqli_stmt_execute($stmt);
-        return (bool)mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+        // A priced 'book' is a store item - a `products` row since migration 131 - and it is the
+        // teacher's if they created it or are assigned to it. Lesson files are not priced.
+        return in_array($teacherId, store_item_owner_teacher_ids($con, $itemId), true);
     }
 }
 
@@ -61,7 +49,7 @@ if (!function_exists('teacher_pricing_resolve')) {
      * somebody else's course.
      */
     function teacher_pricing_resolve($con, int $teacherId, array $source) {
-        $itemType = strtolower(trim((string)($source['item_type'] ?? 'course')));
+        $itemType = store_item_type((string)($source['item_type'] ?? 'course'));
         $itemId = (int)($source['item_id'] ?? 0);
 
         $notFound = ['status' => 'error', 'message' => app_text($con, 'العنصر ده مش موجود.', 'That item does not exist.')];

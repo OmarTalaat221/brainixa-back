@@ -7,6 +7,7 @@
 require_once __DIR__ . '/notifications.php';
 require_once __DIR__ . '/language.php';
 require_once __DIR__ . '/entities.php';
+require_once __DIR__ . '/store_items.php';
 
 if (!function_exists('notify_admins')) {
     function notify_admins($con, string $title, string $body, array $data = []): void {
@@ -31,11 +32,9 @@ if (!function_exists('admin_notify_get_student_name')) {
 
 if (!function_exists('admin_notify_get_book_title')) {
     function admin_notify_get_book_title($con, int $bookId): string {
-        $langInfo = get_language_info($con);
-        $langId = (int)($langInfo['id'] ?? 1);
-        $res = mysqli_query($con, "SELECT title FROM course_books_translations WHERE book_id = {$bookId} AND language_id = {$langId} LIMIT 1");
-        $row = $res ? mysqli_fetch_assoc($res) : null;
-        return $row['title'] ?? "كتاب #{$bookId}";
+        // A purchase request is for a store item, which is a `products` row since migration 131.
+        $name = store_item_name($con, $bookId);
+        return $name !== '' ? $name : "كتاب #{$bookId}";
     }
 }
 

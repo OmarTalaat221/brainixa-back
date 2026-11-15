@@ -3,6 +3,7 @@ require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/entities.php';
 require_once __DIR__ . '/../../../helpers/upload.php';
 require_once __DIR__ . '/../../../helpers/pricing.php';
+require_once __DIR__ . '/../../../helpers/store_items.php';
 
 if (!function_exists('dashboard_fetch_row')) {
     function dashboard_fetch_row($con, string $sql): array {
@@ -646,11 +647,23 @@ if (!function_exists('adminDashboardStatistics')) {
         $courses = dashboard_fetch_row($con, "SELECT COUNT(*) AS total, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active FROM courses WHERE kind <> 'package'");
         $packages = dashboard_fetch_row($con, "SELECT COUNT(*) AS total, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active FROM courses WHERE kind = 'package'");
 
-        // The store tile: what GET /store sells - the store's own products plus the books sold on
-        // their own (no course, no unit). A book tied to a course is that course's content and
-        // is not counted. Without the products table (migration 127) its half reads as 0.
-        $storeBooks = dashboard_fetch_row($con, "SELECT COUNT(*) AS total, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active FROM course_books WHERE unit_id IS NULL AND course_id IS NULL");
-        $storeProducts = dashboard_fetch_row($con, "SELECT COUNT(*) AS total, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active FROM products");
+        // The store tile: what GET /store sells. Since migration 131 every store item is a
+        // `products` row (the store's old books moved there), and course_books holds only lesson
+        // files, which are a course's content and not counted. The keys stay as they were:
+        //   total / active - every product;
+        //   books          - DIGITAL products (a file the buyer opens - what a store "book" was);
+        //   products       - PHYSICAL products.
+        // `books` deliberately does not mean "moved from course_books" (legacy_book_id): an item
+        // created after the move is the same kind of thing as one that was moved.
+        // Before migration 131 there is no product_type, so the table counts whole as physical.
+        $typeSql = store_products_ready($con)
+            ? "SUM(CASE WHEN product_type = 'digital' THEN 1 ELSE 0 END) AS digital,
+               SUM(CASE WHEN product_type = 'digital' THEN 0 ELSE 1 END) AS physical"
+            : "0 AS digital, COUNT(*) AS physical";
+        $store = dashboard_fetch_row($con, "SELECT COUNT(*) AS total,
+                SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active,
+                {$typeSql}
+            FROM products");
 
         return [
             'status' => 'success',
@@ -695,10 +708,10 @@ if (!function_exists('adminDashboardStatistics')) {
                         'active' => (int)($packages['active'] ?? 0)
                     ],
                     'store' => [
-                        'total' => (int)($storeBooks['total'] ?? 0) + (int)($storeProducts['total'] ?? 0),
-                        'active' => (int)($storeBooks['active'] ?? 0) + (int)($storeProducts['active'] ?? 0),
-                        'books' => (int)($storeBooks['total'] ?? 0),
-                        'products' => (int)($storeProducts['total'] ?? 0)
+                        'total' => (int)($store['total'] ?? 0),
+                        'active' => (int)($store['active'] ?? 0),
+                        'books' => (int)($store['digital'] ?? 0),
+                        'products' => (int)($store['physical'] ?? 0)
                     ]
                 ],
                 'sales' => dashboard_sales_summary($con),

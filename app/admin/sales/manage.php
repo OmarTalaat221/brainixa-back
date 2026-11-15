@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../../helpers/sales.php';
+require_once __DIR__ . '/../../../helpers/store_items.php';
 require_once __DIR__ . '/../dashboard/statistics.php';
 
 /**
@@ -30,7 +31,8 @@ if (!function_exists('adminSalesOverview')) {
 if (!function_exists('adminSalesItems')) {
     function adminSalesItems($con) {
         [$dateFrom, $dateTo] = sales_date_params();
-        $kind = strtolower(trim($_GET['kind'] ?? 'course'));
+        // 'product' is the store item's other name; it is reported as 'book' (store_items.php).
+        $kind = store_item_type((string)($_GET['kind'] ?? 'course'));
         $search = trim($_GET['search'] ?? $_GET['q'] ?? '');
         $page = max(1, (int)($_GET['page'] ?? 1));
         $limit = max(1, min(100, (int)($_GET['limit'] ?? 10)));
@@ -72,7 +74,8 @@ if (!function_exists('adminSalesItems')) {
 if (!function_exists('adminSalesItemDetail')) {
     function adminSalesItemDetail($con) {
         [$dateFrom, $dateTo] = sales_date_params();
-        $kind = strtolower(trim($_GET['kind'] ?? 'course'));
+        // 'product' is the store item's other name; it is reported as 'book' (store_items.php).
+        $kind = store_item_type((string)($_GET['kind'] ?? 'course'));
         $itemId = (int)($_GET['id'] ?? ($kind === 'book' ? ($_GET['book_id'] ?? 0) : ($_GET['course_id'] ?? 0)));
         $page = max(1, (int)($_GET['page'] ?? 1));
         $limit = max(1, min(100, (int)($_GET['limit'] ?? 20)));
@@ -84,11 +87,12 @@ if (!function_exists('adminSalesItemDetail')) {
         if ($kind === 'book') {
             $langInfo = get_language_info($con);
             $langId = (int)($langInfo['id'] ?? 1);
+            // A store item is a `products` row since migration 131.
+            $nameSql = store_name_sql($langId, 'p');
             $bookRow = dashboard_fetch_row($con, "
-                SELECT cb.id, cb.cover_image, COALESCE(cbt.title, CONCAT('#', cb.id)) AS name
-                FROM course_books cb
-                LEFT JOIN course_books_translations cbt ON cbt.book_id = cb.id AND cbt.language_id = {$langId}
-                WHERE cb.id = {$itemId}
+                SELECT p.id, p.image AS cover_image, COALESCE({$nameSql}, CONCAT('#', p.id)) AS name
+                FROM products p
+                WHERE p.id = {$itemId}
                 LIMIT 1
             ");
             $itemInfo = format_response_images([

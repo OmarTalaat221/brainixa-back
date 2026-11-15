@@ -1,5 +1,22 @@
 <?php
 require_once __DIR__ . '/../../admin/manual_sales/manage.php';
+require_once __DIR__ . '/../../../helpers/store_items.php';
+
+if (!function_exists('teacher_manual_sale_stock_scope')) {
+    /**
+     * The row as far as stock is concerned. A link to a store item the teacher does not own (R7:
+     * not its creator, not assigned in book_teachers) is dropped, so neither the out-of-stock
+     * refusal nor the decrement reaches another owner's item. The row itself is still recorded
+     * with that link, as it always was.
+     */
+    function teacher_manual_sale_stock_scope($con, int $teacherId, array $after): array {
+        if (($after['item_type'] ?? '') === 'book' && (int)($after['item_id'] ?? 0) > 0
+            && !in_array($teacherId, store_item_owner_teacher_ids($con, (int)$after['item_id']), true)) {
+            $after['item_id'] = null;
+        }
+        return $after;
+    }
+}
 
 /**
  * A teacher's own manual sales sheet - same feature and same table as the admin's (see
@@ -35,6 +52,7 @@ if (!function_exists('teacherListManualSales')) {
 
         foreach (['status', 'channel', 'item_type'] as $field) {
             $raw = strtolower(trim($_GET[$field] ?? ''));
+            if ($field === 'item_type') $raw = store_item_type($raw);
             if ($raw !== '' && in_array($raw, manual_sale_enums()[$field], true)) {
                 $where[] = "{$field} = ?";
                 $params[] = $raw;
@@ -177,6 +195,12 @@ if (!function_exists('teacherCreateManualSale')) {
         $paidAt = trim($body['paid_at'] ?? '') ?: null;
         $receipt = manual_sale_receipt_value($body) ?: null;
 
+        $stockAfter = teacher_manual_sale_stock_scope($con, $teacherId,
+            ['status' => $status, 'item_type' => $itemType, 'item_id' => $itemId]);
+        if ($block = manual_sale_stock_block($con, null, $stockAfter)) {
+            return $block;
+        }
+
         $stmt = mysqli_prepare($con, "
             INSERT INTO manual_sales
                 (student_name, phone, phone_country_code, item_type, item_name, item_id,
@@ -195,11 +219,13 @@ if (!function_exists('teacherCreateManualSale')) {
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => 'Failed to create the manual sale: ' . mysqli_error($con)];
         }
+        $newId = mysqli_insert_id($con);
+        manual_sale_settle_stock($con, null, $stockAfter);
 
         return [
             'status' => 'success',
             'message' => 'Manual sale recorded',
-            'data' => ['id' => mysqli_insert_id($con)],
+            'data' => ['id' => $newId],
         ];
     }
 }
@@ -219,6 +245,13 @@ if (!function_exists('teacherUpdateManualSale')) {
         mysqli_stmt_execute($ownsStmt);
         if (!mysqli_fetch_assoc(mysqli_stmt_get_result($ownsStmt))) {
             return ['status' => 'error', 'message' => 'Manual sale not found'];
+        }
+
+        // Read before writing: only the move into "approved" takes stock (see the admin file).
+        $before = manual_sale_find($con, $id);
+        $stockAfter = $before ? teacher_manual_sale_stock_scope($con, $teacherId, manual_sale_prospective($before, $body)) : null;
+        if ($before && ($block = manual_sale_stock_block($con, $before, $stockAfter))) {
+            return $block;
         }
 
         $fields = [];
@@ -293,6 +326,9 @@ if (!function_exists('teacherUpdateManualSale')) {
 
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => 'Failed to update the manual sale: ' . mysqli_error($con)];
+        }
+        if ($before && mysqli_stmt_affected_rows($stmt) > 0) {
+            manual_sale_settle_stock($con, $before, $stockAfter);
         }
 
         return ['status' => 'success', 'message' => 'Manual sale updated'];

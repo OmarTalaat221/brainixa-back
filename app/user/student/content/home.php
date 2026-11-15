@@ -242,6 +242,25 @@ if (!function_exists('studentHome')) {
             if ($bkRes) {
                 $booksCount = (int)(mysqli_fetch_assoc($bkRes)['total'] ?? 0);
             }
+
+            // Store items moved from course_books to products in migration 131 and count by the
+            // same rules they did as books (a store item has no course, so only the subject and
+            // teacher conditions can match it).
+            require_once __DIR__ . '/../../../../helpers/store_items.php';
+            $pConds = [];
+            if (!empty($subjectIds)) {
+                $pConds[] = "p.subject_id IN ({$sList})";
+            }
+            if (!empty($teacherIds)) {
+                $pConds[] = "(p.created_by_type = 'teacher' AND p.created_by_id IN ({$tList}))";
+                $pConds[] = "p.id IN (SELECT book_id FROM book_teachers WHERE teacher_id IN ({$tList}) AND is_active = 1)";
+            }
+            if ($pConds && store_products_ready($con)) {
+                $pkRes = @mysqli_query($con, "SELECT COUNT(*) AS total FROM products p WHERE p.is_active = 1 AND (" . implode(" OR ", $pConds) . ")");
+                if ($pkRes) {
+                    $booksCount += (int)(mysqli_fetch_assoc($pkRes)['total'] ?? 0);
+                }
+            }
         }
 
         $allCourses = [];

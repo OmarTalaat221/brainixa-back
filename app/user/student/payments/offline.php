@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../../../../helpers/functions.php';
 require_once __DIR__ . '/../../../../helpers/upload.php';
 require_once __DIR__ . '/../../../../helpers/offline_payments.php';
+require_once __DIR__ . '/../../../../helpers/store_items.php';
 
 /**
  * The student half of offline payments: where to send the money, what it should come to, and
@@ -47,7 +48,8 @@ if (!function_exists('studentQuoteOfflinePayment')) {
         }
 
         $body = read_json_body();
-        $itemType = strtolower(trim($body['item_type'] ?? $_GET['item_type'] ?? 'course'));
+        // 'product' is the store item's other name; quoted and stored as 'book' (store_items.php).
+        $itemType = store_item_type((string)($body['item_type'] ?? $_GET['item_type'] ?? 'course'));
         $itemId = (int)($body['item_id'] ?? $_GET['item_id'] ?? 0);
         $code = trim($body['discount_code'] ?? $_GET['discount_code'] ?? '');
         // A quote only shows what spending points WOULD do; nothing is taken until the request is
@@ -64,7 +66,10 @@ if (!function_exists('studentQuoteOfflinePayment')) {
 
         $quote = offline_payment_quote($con, $studentId, $itemType, $itemId, $code, $usePoints);
         if (empty($quote['ok'])) {
-            return ['status' => 'error', 'message' => $quote['message']];
+            $refusal = ['status' => 'error', 'message' => $quote['message']];
+            // e.g. 'out_of_stock' for a physical store item with none left.
+            if (!empty($quote['error_code'])) $refusal['error_code'] = $quote['error_code'];
+            return $refusal;
         }
 
         unset($quote['ok']);
@@ -85,7 +90,7 @@ if (!function_exists('studentCreateOfflinePayment')) {
         }
 
         $body = read_json_body();
-        $itemType = strtolower(trim($body['item_type'] ?? 'course'));
+        $itemType = store_item_type((string)($body['item_type'] ?? 'course'));
         $itemId = (int)($body['item_id'] ?? 0);
 
         if (!in_array($itemType, ['course', 'book'], true) || $itemId <= 0) {
@@ -115,7 +120,10 @@ if (!function_exists('studentCreateOfflinePayment')) {
         $usePoints = max(0.0, (float)($body['use_points'] ?? 0));
         $quote = offline_payment_quote($con, $studentId, $itemType, $itemId, trim($body['discount_code'] ?? ''), $usePoints);
         if (empty($quote['ok'])) {
-            return ['status' => 'error', 'message' => $quote['message']];
+            $refusal = ['status' => 'error', 'message' => $quote['message']];
+            // e.g. 'out_of_stock' for a physical store item with none left.
+            if (!empty($quote['error_code'])) $refusal['error_code'] = $quote['error_code'];
+            return $refusal;
         }
 
         // Asked to spend points and got none: say so instead of silently filing a request at the

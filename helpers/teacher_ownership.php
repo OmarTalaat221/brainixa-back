@@ -8,12 +8,56 @@
  * helper had its own two-route version of "this teacher's book", while the store listing used all
  * seven routes below. The result: a teacher's own product, listed on their own store screen, was
  * refused as "not yours" the moment they tried to put a discount code on it.
+ *
+ * Since migration 131 there are two different questions here, and they must not be mixed:
+ *   - a STORE ITEM is a `products` row, and a teacher owns it when they created it or are
+ *     assigned to it in `book_teachers` (teacher_store_item_ownership_clause and friends);
+ *   - a LESSON FILE is a `course_books` row, owned through its course/unit/subject
+ *     (teacher_book_ownership_clause, unchanged).
+ * The two id ranges never overlap (course_books continues from 1,000,000), so a `book_id` column
+ * that may hold either still answers both questions correctly.
  */
+
+if (!function_exists('teacher_store_item_ownership_clause')) {
+    /**
+     * "This teacher's store item" as a SQL condition over a `products` alias. The same rule as
+     * store_item_owner_teacher_ids(): its creator when that was a teacher, or an active
+     * `book_teachers` assignment - nothing else. A subject the teacher happens to teach no longer
+     * makes another teacher's product theirs.
+     */
+    function teacher_store_item_ownership_clause(int $teacherId, string $alias = 'p'): string {
+        return "(
+            ({$alias}.created_by_type = 'teacher' AND {$alias}.created_by_id = {$teacherId})
+            OR {$alias}.id IN (SELECT book_id FROM book_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
+        )";
+    }
+}
+
+if (!function_exists('teacher_owned_store_item_ids')) {
+    /** Every `products` id this teacher owns, by teacher_store_item_ownership_clause(). One query. */
+    function teacher_owned_store_item_ids($con, int $teacherId): array {
+        if ($teacherId <= 0) return [];
+        $ids = [];
+        $res = @mysqli_query($con, "SELECT p.id FROM products p WHERE " . teacher_store_item_ownership_clause($teacherId, 'p'));
+        while ($res && ($row = mysqli_fetch_assoc($res))) {
+            $ids[] = (int)$row['id'];
+        }
+        return $ids;
+    }
+}
+
+if (!function_exists('teacher_owns_store_item')) {
+    function teacher_owns_store_item($con, int $teacherId, int $itemId): bool {
+        if ($teacherId <= 0 || $itemId <= 0) return false;
+        $res = @mysqli_query($con, "SELECT p.id FROM products p WHERE p.id = {$itemId} AND " . teacher_store_item_ownership_clause($teacherId, 'p') . " LIMIT 1");
+        return $res && mysqli_num_rows($res) > 0;
+    }
+}
 
 if (!function_exists('teacher_book_ownership_clause')) {
     /**
-     * The one definition of "this teacher's book", as a SQL condition over the alias `cb`
-     * (course_books).
+     * "This teacher's LESSON FILE", as a SQL condition over the alias `cb` (course_books). Store
+     * items are not in course_books any more; use teacher_store_item_ownership_clause() for them.
      *
      * It exists because the listing and the review check used to disagree: the list matched eight
      * ownership routes, the review only three, so a teacher saw purchase requests with a working
@@ -37,9 +81,9 @@ if (!function_exists('teacher_book_ownership_clause')) {
     }
 }
 
-if (!function_exists('teacher_owned_book_ids')) {
-    /** Every course_books id this teacher owns, by teacher_book_ownership_clause(). One query. */
-    function teacher_owned_book_ids($con, int $teacherId): array {
+if (!function_exists('teacher_owned_lesson_file_ids')) {
+    /** Every course_books (lesson file) id this teacher owns, by teacher_book_ownership_clause(). */
+    function teacher_owned_lesson_file_ids($con, int $teacherId): array {
         if ($teacherId <= 0) return [];
         $ids = [];
         $res = @mysqli_query($con, "SELECT DISTINCT cb.id FROM course_books cb WHERE " . teacher_book_ownership_clause($teacherId));
@@ -47,5 +91,18 @@ if (!function_exists('teacher_owned_book_ids')) {
             $ids[] = (int)$row['id'];
         }
         return $ids;
+    }
+}
+
+if (!function_exists('teacher_owned_book_ids')) {
+    /**
+     * The store items this teacher owns (R7: creator or assigned), as `book_id` values.
+     *
+     * Its callers (discount codes above all) ask about the things the store sells, and those are
+     * products now. It used to answer from course_books, where no store item lives any more, so
+     * every teacher's discount picker would have come back empty.
+     */
+    function teacher_owned_book_ids($con, int $teacherId): array {
+        return teacher_owned_store_item_ids($con, $teacherId);
     }
 }

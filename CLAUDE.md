@@ -90,8 +90,31 @@ Done:
   have since run out, and it is flagged as a demo account (it owns every course).
 - Demo, test and seed SQL files were deleted from the repo root on 2026-11-14 (their data is
   already applied). Write a new one only when asked, and do not commit it.
+- **Store unification (2026-11-15, migration 131).** The store is the `products` table alone.
+  Migration `131_store_products_unification.sql` moves every standalone `course_books` row
+  (`course_id IS NULL AND unit_id IS NULL`) into `products` **under the same id**, renumbers the
+  older products past them, archives the moved rows in `course_books_store_archive*`, and pushes
+  `course_books` AUTO_INCREMENT to 1,000,000 so the two id ranges never meet again. From then on:
+  - `course_books` ("books") is only lesson files of a course or a unit. `POST /admin|teacher/books`
+    without both is refused with `error_code: store_item_is_product`.
+  - Every table that pointed at a store book (`student_book_subscriptions`, purchase requests,
+    `book_teachers`, `discount_code_books`, `student_book_progress`, …) now holds the product id.
+    Money tables keep `item_type 'book'` meaning "store item"; `'product'` is accepted on input
+    (`store_item_type()` in `helpers/store_items.php`).
+  - Product fields added: `product_type` (physical/digital), `subject_id`, `book_category`,
+    `allow_download`, `link`, `legacy_book_id`. A product's price is in the base currency; a
+    country price overrides it (`pricing_decorate_rows`), otherwise the base price shows.
+  - Stock: `store_item_sale_block()` refuses inactive or sold-out items (`out_of_stock`);
+    `store_item_take_stock()` takes one per grant. Stock is NOT given back on refund or revoke.
+  - Teachers manage their own products at `/teacher/products` (7 routes). `/admin/products`
+    opens under `manage_products` OR `manage_books` (`requireAnyPermission`).
+  - Students order a product on WhatsApp (`whatsapp_number` in site settings); online payment stays.
+  - Test harness (local MariaDB + PHP, `reset_t2.sh`, `store_e2e.py` 58 checks) is backed up in
+    the gitignored `updates-for-project/store-unification-harness/`.
 
 Pending / known gaps:
+- Migration 131 must be run on the live database (after a `mysqldump` backup) right after the
+  code is pulled; the code expects it. Until then the store screens read the old layout badly.
 - Admin and teacher dashboards are rebuilt locally but **not committed or pushed** yet
   (~193 and ~118 changed files). They need the user's go-ahead.
 - Firebase (chat + push) still points at Najeh's project `najeh-e3ef7` in all three frontends,

@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/admin_notifications.php';
+// A store item ('book' on every money table) is a `products` row since migration 131.
+require_once __DIR__ . '/store_items.php';
 
 /**
  * Granting paid access, independent of how the money arrived.
@@ -12,10 +14,24 @@ require_once __DIR__ . '/admin_notifications.php';
  */
 if (!function_exists('payments_resolve_purchasable_item')) {
     function payments_resolve_purchasable_item($con, string $itemType, int $itemId) {
+        $itemType = store_item_type($itemType);
+        if ($itemType === 'book') {
+            // A store item: a `products` row. Its price is what it sells for now (the sale price
+            // while on sale), and `sale_block` says why it cannot be sold at all - inactive, or a
+            // physical item with tracked stock run out - so every purchase path refuses alike.
+            $product = store_item_find($con, $itemId);
+            if (!$product) return null;
+            $effective = store_item_effective_price($product);
+            return [
+                'id' => (int)$product['id'],
+                'price' => (float)($effective ?? 0.0),
+                'is_priced' => $effective !== null,
+                'is_active' => (int)$product['is_active'],
+                'sale_block' => store_item_sale_block($con, $product),
+            ];
+        }
         if ($itemType === 'course') {
             $stmt = mysqli_prepare($con, "SELECT id, price, is_active FROM courses WHERE id = ? LIMIT 1");
-        } elseif ($itemType === 'book') {
-            $stmt = mysqli_prepare($con, "SELECT id, price, is_active FROM course_books WHERE id = ? LIMIT 1");
         } else {
             return null;
         }
@@ -36,6 +52,7 @@ if (!function_exists('payments_resolve_purchasable_item')) {
 
 if (!function_exists('payments_student_already_has_access')) {
     function payments_student_already_has_access($con, int $studentId, string $itemType, int $itemId): bool {
+        $itemType = store_item_type($itemType);
         if ($itemType === 'course') {
             $stmt = mysqli_prepare($con, "SELECT ss.id FROM student_subscription_courses ssc
                 JOIN student_subscriptions ss ON ss.id = ssc.student_subscription_id
@@ -54,6 +71,7 @@ if (!function_exists('payments_student_already_has_access')) {
 
 if (!function_exists('payments_grant_access')) {
     function payments_grant_access($con, int $studentId, string $itemType, int $itemId, float $price): ?int {
+        $itemType = store_item_type($itemType);
         if ($itemType === 'course') {
             // A package sells a fixed period (courses.duration_months), so the access it grants
             // has to expire with it; an ordinary course stays open ended as before.
@@ -85,6 +103,10 @@ if (!function_exists('payments_grant_access')) {
         if (!mysqli_stmt_execute($stmt)) return null;
         $grantedId = mysqli_insert_id($con);
 
+        // The item left the shelf. Stock was checked when the purchase began; by the time money
+        // has arrived the grant goes ahead regardless, and the count simply stops at 0.
+        store_item_take_stock($con, $itemId);
+
         // Paying for a book and asking a teacher to approve it are two doors into the same room.
         // A student who filed a request and then just paid used to leave that request sitting
         // `pending` in the teacher's queue forever, with an Approve button for access the student
@@ -115,6 +137,7 @@ if (!function_exists('payments_revoke_access')) {
      * from a repeat of one already done.
      */
     function payments_revoke_access($con, int $studentId, string $itemType, ?int $grantedRefId): bool {
+        $itemType = store_item_type($itemType);
         if ($studentId <= 0 || !$grantedRefId || $grantedRefId <= 0) {
             return false;
         }

@@ -5,6 +5,9 @@ require_once __DIR__ . '/entities.php';
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/upload.php';
 require_once __DIR__ . '/pricing.php';
+// A code's "books" (discount_code_books.book_id) are store items - `products` rows since
+// migration 131, kept under their old ids.
+require_once __DIR__ . '/store_items.php';
 
 /**
  * Discount codes for course and package subscriptions.
@@ -43,27 +46,17 @@ if (!function_exists('discount_book_details')) {
     function discount_book_details($con, int $bookId): ?array {
         if ($bookId <= 0) return null;
 
-        $langId = (int)(get_language_info($con)['id'] ?? 1);
-        $stmt = @mysqli_prepare($con, "
-            SELECT b.id, b.price,
-                   COALESCE(
-                     (SELECT t.title FROM course_books_translations t
-                       WHERE t.book_id = b.id AND t.language_id = ? LIMIT 1),
-                     (SELECT t.title FROM course_books_translations t WHERE t.book_id = b.id LIMIT 1)
-                   ) AS name
-            FROM course_books b WHERE b.id = ? LIMIT 1
-        ");
-        if (!$stmt) return null;
-
-        mysqli_stmt_bind_param($stmt, "ii", $langId, $bookId);
-        mysqli_stmt_execute($stmt);
-        $row = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
-        if (!$row) return null;
+        // The store item is a `products` row. Its price here is the one a buyer pays before any
+        // country price - the sale price while it is on sale - because that is what a code
+        // reduces. No price (NULL) reads as 0, as a book's did; the purchase paths refuse it.
+        $product = store_item_find($con, $bookId);
+        if (!$product) return null;
+        $name = store_item_name($con, $bookId);
 
         return [
-            'id' => (int)$row['id'],
-            'name' => $row['name'] ?: ('#' . (int)$row['id']),
-            'price' => (float)$row['price'],
+            'id' => (int)$product['id'],
+            'name' => $name !== '' ? $name : ('#' . (int)$product['id']),
+            'price' => (float)(store_item_effective_price($product) ?? 0.0),
         ];
     }
 }
@@ -73,10 +66,21 @@ if (!function_exists('discount_teacher_book_ids')) {
     function discount_teacher_book_ids($con, int $teacherId): array {
         if ($teacherId <= 0) return [];
 
-        // The same rule the teacher's store screen uses. This used to be a two-route version of
-        // its own, so a product the teacher saw on their store screen was refused here as "not
-        // yours".
-        return teacher_owned_book_ids($con, (int)$teacherId);
+        // The store items a teacher owns, by the one rule store_item_owner_teacher_ids() states
+        // for a single item: products the teacher created, plus those they are actively assigned
+        // to in book_teachers. Asked for the whole list at once here, since a code is checked
+        // against every item it names.
+        $ids = [];
+        $teacherId = (int)$teacherId;
+        $res = @mysqli_query($con, "
+            SELECT p.id FROM products p
+             WHERE (p.created_by_type = 'teacher' AND p.created_by_id = {$teacherId})
+                OR p.id IN (SELECT bt.book_id FROM book_teachers bt WHERE bt.teacher_id = {$teacherId} AND bt.is_active = 1)
+        ");
+        while ($res && ($row = mysqli_fetch_assoc($res))) {
+            $ids[] = (int)$row['id'];
+        }
+        return $ids;
     }
 }
 
@@ -186,6 +190,10 @@ if (!function_exists('discount_sync_books')) {
             $bookIds = $bookIds !== null && $bookIds !== '' ? [$bookIds] : [];
         }
         $unique = array_values(array_unique(array_filter(array_map('intval', $bookIds))));
+        // Only ids that are store items. The foreign key that used to drop an unknown id quietly
+        // (INSERT IGNORE) pointed at course_books and went with migration 131; this keeps the same
+        // quiet behaviour against `products`, and keeps a lesson file's id out of a code's scope.
+        $unique = array_keys(store_items_find($con, $unique));
         if (!$unique) return;
 
         $ins = @mysqli_prepare($con, "INSERT IGNORE INTO discount_code_books (discount_code_id, book_id) VALUES (?, ?)");

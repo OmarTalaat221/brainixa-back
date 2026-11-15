@@ -1,29 +1,26 @@
 <?php
 /**
- * المتجر — one shelf, two kinds of thing on it.
+ * المتجر — the shop front.
  *
- * The store already sold books: rows of `course_books` that are standalone (tied to no course and
- * no unit), which `GET /books?standalone=1` lists. Products are a separate table with a separate
- * shape - stock, a sale price, a product category - and merging the two tables in the database
- * was never the right answer, because a book has a file, a subject and a reader, and a product
- * has none of those.
+ * Until migration 131 the shelf was merged here from two tables: standalone `course_books` rows
+ * (item_type 'book') and `products` (item_type 'product'). Every standalone book has since become
+ * a product with the same id, so the shelf is one table now and every entry is `item_type =
+ * 'product'`, with an id that is unique on its own. Nothing that was on the shelf left it: a
+ * former book is listed here exactly as long as it was listed before (see store_visible_sql).
  *
- * They are merged HERE instead, at the one place that has to show them together: the shop front.
- * Every entry carries `item_type` ('product' or 'book') and an `id` that is only unique within
- * its own type, so a client must key on the pair. That is stated rather than hidden behind a
- * synthetic id, because an id that silently means two different things in two different tables is
- * how a cart ends up buying the wrong row.
+ * Each entry keeps the product shape and also carries what a book card needed - whether the
+ * student owns it, the standing purchase request, `file_type`, `subject_id` - because every item
+ * on the shelf can now be bought and owned the way a book was.
  *
- * `GET /books` is untouched and still lists books exactly as it did. This endpoint is additive:
- * nothing that reads the old one has to change.
- *
- * Needs migration 127. Without it the store simply shows the books it always showed, rather than
- * failing - a half-deployed server should still have a shop.
+ * Prices are country prices (item_type 'book' in item_country_prices, meaning "store item"), on
+ * top of the sale price while an item is on sale.
  */
 
 require_once __DIR__ . '/../../helpers/functions.php';
 require_once __DIR__ . '/../../helpers/language.php';
 require_once __DIR__ . '/../../helpers/upload.php';
+require_once __DIR__ . '/../../helpers/pricing.php';
+require_once __DIR__ . '/../../helpers/store_items.php';
 require_once __DIR__ . '/../admin/products/manage.php';
 
 if (!function_exists('store_item_from_product')) {
@@ -52,10 +49,9 @@ if (!function_exists('store_item_from_product')) {
             'sku' => $p['sku'],
             'gallery' => $p['gallery'],
             // The attachment is described to a shopper, but its PATH is withheld unless the
-            // product says the file is public. A digital product's file is the thing being sold,
-            // and a shop front that hands out the download link has given the product away.
-            // Checkout does not exist yet, so there is no third state - and defaulting to the
-            // one that leaks would be the wrong way round.
+            // product says the file is public (or, below, the student owns it). A digital
+            // product's file is the thing being sold, and a shop front that hands out the
+            // download link has given the product away.
             'has_file' => $p['has_file'] ?? false,
             'file_name' => ($p['has_file'] ?? false) ? $p['file_name'] : null,
             'file_extension' => ($p['has_file'] ?? false) ? $p['file_extension'] : null,
@@ -65,129 +61,167 @@ if (!function_exists('store_item_from_product')) {
             'file_is_public' => (bool)($p['file_is_public'] ?? false),
             'order_num' => $p['order_num'],
             'created_at' => $p['created_at'],
-            // A book can already be owned by the student; a product is bought every time, so
-            // these are stated rather than omitted - a card that reads both kinds should not
-            // have to know which fields a product happens not to have.
             'own' => false,
             'is_locked' => false,
         ];
     }
 }
 
-if (!function_exists('store_item_from_book')) {
-    /** A standalone book, flattened into the same shape. */
-    function store_item_from_book(array $b): array {
-        $price = (float)($b['price'] ?? 0);
-
-        return [
-            'item_type' => 'book',
-            'id' => (int)$b['id'],
-            'name' => $b['title'] ?? ('#' . $b['id']),
-            'description' => $b['description'] ?? null,
-            'image' => $b['cover_image'] ?? null,
-            'price' => round($price, 2),
-            // Books carry no sale price and no stock. Reported as null / unlimited rather than
-            // as zero, so a client sorting or filtering on these does not read every book as
-            // free or as sold out.
-            'sale_price' => null,
-            'effective_price' => round($price, 2),
-            'is_on_sale' => false,
-            'discount_percent' => 0,
-            'currency' => $b['currency'] ?? 'EGP',
-            'in_stock' => true,
-            'stock' => null,
-            'is_stock_tracked' => false,
-            // A book's own file has always been gated by the books endpoint (it is nulled unless
-            // the student owns the book), so it is not re-exposed here under a product's name.
-            'has_file' => !empty($b['file_path']),
-            'file_name' => null,
-            'file_extension' => $b['extension'] ?? null,
-            'file_size' => null,
-            'file_size_label' => null,
-            'file_path' => $b['file_path'] ?? null,
-            'file_is_public' => false,
-            'category' => null,
-            'product_category_id' => null,
-            'slug' => null,
-            'sku' => null,
-            'gallery' => [],
-            'order_num' => (int)($b['order_num'] ?? 1),
-            'created_at' => $b['created_at'] ?? null,
-            'own' => (bool)($b['own'] ?? false),
-            'is_locked' => (bool)($b['is_locked'] ?? !($b['own'] ?? false)),
-            // Kept so a book card can still do the things only books do.
-            'file_type' => $b['file_type'] ?? null,
-            'subject_id' => $b['subject_id'] ?? null,
-            'request_status' => $b['request_status'] ?? null,
-        ];
+if (!function_exists('store_visible_sql')) {
+    /**
+     * What a shopper may see: every live item. `show_on_website` decides only whether the item
+     * is shown on the public landing page (getPublicLandingConfig), which is what it always meant
+     * for a book. One store, one rule - where an item came from does not matter.
+     */
+    function store_visible_sql($con): string {
+        return "p.is_active = 1";
     }
 }
 
-if (!function_exists('store_fetch_products')) {
-    /**
-     * Public products, already filtered and shaped. Returns [] when migration 127 has not run,
-     * which is what keeps the store working on a half-deployed server.
-     */
-    function store_fetch_products($con): array {
-        if (!products_tables_ready($con)) {
-            return [];
+if (!function_exists('store_is_book_sql')) {
+    /** A "book" on the shelf: a digital item (a file the buyer opens). */
+    function store_is_book_sql($con): string {
+        if (function_exists('store_products_ready') && store_products_ready($con)) {
+            return "p.product_type = 'digital'";
         }
-
-        $where = product_filters_sql($con, true);
-        $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
-
-        // Not paginated here: the two sources are merged and sorted as one list below, and a
-        // page taken from either source before the merge is a page of the wrong things. Bounded
-        // so a catalogue that grows past this is still an answer rather than a timeout.
-        $res = @mysqli_query($con, "SELECT p.* FROM products p {$whereSql} ORDER BY p.order_num ASC, p.id DESC LIMIT 500");
-        if (!$res) {
-            return [];
-        }
-
-        $items = [];
-        while ($row = mysqli_fetch_assoc($res)) {
-            $items[] = store_item_from_product(product_row($con, $row));
-        }
-        return $items;
+        return "1 = 0";
     }
 }
 
-if (!function_exists('store_fetch_books')) {
+if (!function_exists('store_item_is_book')) {
+    function store_item_is_book(array $raw): bool {
+        return ($raw['product_type'] ?? '') === 'digital';
+    }
+}
+
+if (!function_exists('store_price_blocks')) {
     /**
-     * Standalone books, through the endpoint that already owns what a book in the store is -
-     * including whether this student already owns it, which is not a thing this file should be
-     * working out a second time.
+     * The price each item is quoted at for this visitor: the effective base price (the sale price
+     * while on sale) overridden by a country price, in one query for the lot.
+     *
+     * @return array<int, array> the decorated row per id: price, is_priced, base_price, currency, ...
      */
-    function store_fetch_books($con, $studentData): array {
-        require_once __DIR__ . '/../user/student/content/books.php';
-
-        // The books endpoint reads its filters from $_GET. Forced for the duration of the call
-        // and restored afterwards, so the store's own paging never leaks into it.
-        $saved = $_GET;
-        $_GET['standalone'] = '1';
-        $_GET['page'] = 1;
-        $_GET['limit'] = 100;
-        unset($_GET['category_id'], $_GET['product_category_id'], $_GET['min_price'], $_GET['max_price'], $_GET['in_stock']);
-
-        $response = studentGetAllBooksWithOwn($con, $studentData);
-
-        $_GET = $saved;
-
-        $items = [];
-        foreach ($response['data'] ?? [] as $book) {
-            $items[] = store_item_from_book($book);
+    function store_price_blocks($con, array $rawRows, int $stId): array {
+        $rows = [];
+        foreach ($rawRows as $raw) {
+            $effective = store_item_effective_price($raw);
+            $rows[] = ['id' => (int)$raw['id'], 'price' => $effective !== null ? $effective : 0.0];
         }
-        return $items;
+        if ($rows) {
+            pricing_decorate_rows($con, $rows, 'book', $stId);
+        }
+        $out = [];
+        foreach ($rows as $r) {
+            $out[(int)$r['id']] = $r;
+        }
+        return $out;
+    }
+}
+
+if (!function_exists('store_shelf_item')) {
+    /**
+     * One shelf entry: the product shape, priced for this visitor, with what a book card reads.
+     */
+    function store_shelf_item($con, array $raw, ?array $names, array $price, array $access): array {
+        $id = (int)$raw['id'];
+        $item = store_item_from_product(product_row($con, $raw));
+
+        if ($names !== null) {
+            $item['name'] = $names['name'];
+            $item['description'] = $names['description'];
+        }
+
+        // Price. Without a country price the numbers are base-currency numbers, the sale price
+        // included. A country price replaces the lot: it is the one number this visitor pays, and
+        // a base-currency "was" price beside it would be in a different currency.
+        $isCountry = !empty($price['is_country_price']);
+        $item['is_priced'] = (bool)($price['is_priced'] ?? ($raw['price'] !== null));
+        $item['effective_price'] = (float)($price['price'] ?? $item['effective_price']);
+        $item['base_price'] = $price['base_price'] ?? null;
+        $item['price_formatted'] = $price['price_formatted'] ?? null;
+        $item['is_country_price'] = $isCountry;
+        if (is_array($price['currency'] ?? null)) {
+            $item['currency'] = $price['currency']['code'] ?? $item['currency'];
+            $item['currency_info'] = $price['currency'];
+        }
+        if ($isCountry) {
+            $item['price'] = $item['effective_price'];
+            $item['sale_price'] = null;
+            $item['is_on_sale'] = false;
+            $item['discount_percent'] = 0;
+        }
+
+        // What a book card needs, now true of every item on the shelf.
+        $own = (bool)($access['own'] ?? false);
+        $item['own'] = $own;
+        $item['is_subscribed'] = $own;
+        $item['is_locked'] = !$own;
+        $item['request_status'] = $access['request_status'] ?? null;
+        $item['file_type'] = store_item_file_type($raw);
+        $item['product_type'] = $raw['product_type'] ?? 'physical';
+        $item['subject_id'] = isset($raw['subject_id']) && $raw['subject_id'] !== null ? (int)$raw['subject_id'] : null;
+        $item['book_category'] = $raw['book_category'] ?? null;
+        $item['is_book'] = store_item_is_book($raw);
+        $item['allow_download'] = (int)($raw['allow_download'] ?? 1);
+
+        // The file. A physical item has none. A digital one is opened by its owner - straight
+        // from its path when downloads are allowed, otherwise only through the stream endpoint -
+        // and by nobody else unless the product marks its file public.
+        $digital = ($raw['product_type'] ?? 'physical') === 'digital';
+        $source = $digital ? trim((string)(($raw['file_path'] ?? '') ?: ($raw['link'] ?? '') ?: '')) : '';
+        $item['has_file'] = $source !== '';
+        $item['view_url'] = null;
+        if (!$digital) {
+            $item['file_path'] = null;
+        } elseif ($own && $source !== '') {
+            if ($item['allow_download'] === 1) {
+                $item['file_path'] = format_image_url($source);
+                $item['view_url'] = $item['file_path'];
+            } else {
+                $item['file_path'] = null;
+                $item['view_url'] = 'https://camp-coding.online/brain-ixa/student/books/stream?book_id=' . $id;
+            }
+        }
+
+        return $item;
+    }
+}
+
+if (!function_exists('store_student_id')) {
+    function store_student_id($studentData): int {
+        if (is_array($studentData)) {
+            return (int)($studentData['id'] ?? $studentData['student_id'] ?? 0);
+        }
+        if (is_object($studentData)) {
+            return (int)($studentData->id ?? $studentData->student_id ?? 0);
+        }
+        return 0;
+    }
+}
+
+if (!function_exists('store_access_for')) {
+    /** Ownership and requests for these raw rows; nobody owns anything when no one is signed in. */
+    function store_access_for($con, int $stId, array $rawById): array {
+        if ($stId > 0 && $rawById) {
+            require_once __DIR__ . '/../user/student/content/books.php';
+            return student_store_items_access($con, $stId, $rawById);
+        }
+        $out = [];
+        foreach ($rawById as $id => $_) {
+            $out[(int)$id] = ['own' => false, 'request_status' => null, 'request_review_notes' => null];
+        }
+        return $out;
     }
 }
 
 if (!function_exists('storeList')) {
     /**
-     * The shelf. Products and standalone books in one list, one shape, one sort.
+     * The shelf: every live store item, one shape, one sort.
      *
-     * `type=product` or `type=book` narrows it to one kind; `category_id` narrows to one product
-     * category and so excludes books, which have none - said in the response's `applied_filters`
-     * rather than left for somebody to work out from a suddenly shorter list.
+     * `type=book` narrows it to the items that are books (former books, and digital items filed as
+     * a summary or a past paper); `type=product` is the whole shelf, since every item is a product.
+     * `category_id` narrows to one product category, which a former book does not have - said in
+     * `applied_filters` rather than left for somebody to work out from a suddenly shorter list.
      */
     function storeList($con, $studentData = null) {
         $page = max(1, (int)($_GET['page'] ?? 1));
@@ -195,37 +229,80 @@ if (!function_exists('storeList')) {
 
         $type = strtolower(trim($_GET['type'] ?? $_GET['item_type'] ?? ''));
         $categoryId = (int)($_GET['category_id'] ?? $_GET['product_category_id'] ?? 0);
-
-        // A product category is a product's attribute. Filtering by one and still returning books
-        // would be returning rows the filter does not apply to.
-        $booksExcludedByCategory = $categoryId > 0;
-
-        $items = [];
-        if ($type !== 'book') {
-            $items = array_merge($items, store_fetch_products($con));
-        }
-        if ($type !== 'product' && !$booksExcludedByCategory) {
-            $items = array_merge($items, store_fetch_books($con, $studentData));
-        }
-
         $sort = strtolower(trim($_GET['sort'] ?? 'newest'));
-        usort($items, function ($a, $b) use ($sort) {
+        $stId = store_student_id($studentData);
+
+        $raws = [];
+        if (products_tables_ready($con)) {
+            // The shared filters (category, search, price range, in stock), with the shopper's
+            // visibility rule in place of the plain "on the website" one.
+            $where = array_values(array_filter(
+                product_filters_sql($con, true),
+                fn($w) => !in_array(trim($w), ['p.is_active = 1', 'p.show_on_website = 1'], true)
+            ));
+            $where[] = store_visible_sql($con);
+            if ($type === 'book') {
+                $where[] = store_is_book_sql($con);
+            }
+
+            // Not paginated in SQL: the sort can be by the price this visitor is quoted, which is
+            // a country price decided after the query. Bounded so a catalogue that grows past
+            // this is still an answer rather than a timeout.
+            $res = @mysqli_query($con, "SELECT p.* FROM products p WHERE " . implode(' AND ', $where) . " ORDER BY p.order_num ASC, p.id DESC LIMIT 1000");
+            while ($res && ($row = mysqli_fetch_assoc($res))) {
+                $raws[(int)$row['id']] = $row;
+            }
+        }
+
+        $langId = (int)(get_language_info($con)['id'] ?? 1);
+        $names = store_item_names($con, array_keys($raws), $langId);
+        $prices = store_price_blocks($con, array_values($raws), $stId);
+
+        $keys = [];
+        foreach ($raws as $id => $raw) {
+            $keys[] = [
+                'id' => $id,
+                'price' => (float)($prices[$id]['price'] ?? 0),
+                'name' => (string)($names[$id]['name'] ?? $raw['slug'] ?? ''),
+                'created_at' => (string)($raw['created_at'] ?? ''),
+            ];
+        }
+        usort($keys, function ($a, $b) use ($sort) {
             switch ($sort) {
-                case 'price_asc':  return $a['effective_price'] <=> $b['effective_price'];
-                case 'price_desc': return $b['effective_price'] <=> $a['effective_price'];
-                case 'name':       return strcmp((string)$a['name'], (string)$b['name']);
-                case 'oldest':     return strcmp((string)($a['created_at'] ?? ''), (string)($b['created_at'] ?? ''));
-                default:           return strcmp((string)($b['created_at'] ?? ''), (string)($a['created_at'] ?? ''));
+                case 'price_asc':  return $a['price'] <=> $b['price'];
+                case 'price_desc': return $b['price'] <=> $a['price'];
+                case 'name':       return strcmp($a['name'], $b['name']);
+                case 'oldest':     return strcmp($a['created_at'], $b['created_at']);
+                default:           return strcmp($b['created_at'], $a['created_at']);
             }
         });
 
-        $total = count($items);
-        $pageItems = array_slice($items, ($page - 1) * $limit, $limit);
+        $total = count($keys);
+        $booksCount = 0;
+        foreach ($raws as $raw) {
+            if (store_item_is_book($raw)) $booksCount++;
+        }
+
+        // Only the page is built in full: product_row() reads translations and the category per
+        // row, and the ownership checks are per student.
+        $pageKeys = array_slice($keys, ($page - 1) * $limit, $limit);
+        $pageRaws = [];
+        foreach ($pageKeys as $k) {
+            $pageRaws[$k['id']] = $raws[$k['id']];
+        }
+        $access = store_access_for($con, $stId, $pageRaws);
+
+        $pageItems = [];
+        foreach ($pageRaws as $id => $raw) {
+            $pageItems[] = store_shelf_item($con, $raw, $names[$id] ?? null, $prices[$id] ?? [], $access[$id] ?? []);
+        }
 
         $response = build_paginated_response($pageItems, $page, $limit, $total, [
             'total_count' => $total,
-            'products_count' => count(array_filter($items, fn($i) => $i['item_type'] === 'product')),
-            'books_count' => count(array_filter($items, fn($i) => $i['item_type'] === 'book')),
+            'products_count' => $total,
+            // The items that are books, among the ones listed. They are products too, so they are
+            // also counted in products_count.
+            'books_count' => $booksCount,
         ]);
 
         $response['applied_filters'] = [
@@ -233,7 +310,7 @@ if (!function_exists('storeList')) {
             'category_id' => $categoryId > 0 ? $categoryId : null,
             'sort' => $sort,
             // So a client never has to guess why the books vanished.
-            'books_excluded_reason' => $booksExcludedByCategory
+            'books_excluded_reason' => $categoryId > 0
                 ? 'الكتب لا تحمل تصنيف منتجات، فهي مستبعَدة أثناء الفلترة بتصنيف'
                 : null,
         ];
@@ -300,8 +377,8 @@ if (!function_exists('storeCategories')) {
 }
 
 if (!function_exists('storeShowProduct')) {
-    /** One product, for its details page. Only a live one: this is the shopper's view. */
-    function storeShowProduct($con) {
+    /** One store item, for its details page. Only a visible one: this is the shopper's view. */
+    function storeShowProduct($con, $studentData = null) {
         if (!products_tables_ready($con)) {
             return ['status' => 'error', 'message' => 'المنتج غير موجود'];
         }
@@ -313,11 +390,12 @@ if (!function_exists('storeShowProduct')) {
             return ['status' => 'error', 'message' => 'id أو slug مطلوب'];
         }
 
+        $visible = store_visible_sql($con);
         if ($id > 0) {
-            $stmt = mysqli_prepare($con, "SELECT * FROM products WHERE id = ? AND is_active = 1 AND show_on_website = 1 LIMIT 1");
+            $stmt = mysqli_prepare($con, "SELECT p.* FROM products p WHERE p.id = ? AND {$visible} LIMIT 1");
             mysqli_stmt_bind_param($stmt, "i", $id);
         } else {
-            $stmt = mysqli_prepare($con, "SELECT * FROM products WHERE slug = ? AND is_active = 1 AND show_on_website = 1 LIMIT 1");
+            $stmt = mysqli_prepare($con, "SELECT p.* FROM products p WHERE p.slug = ? AND {$visible} LIMIT 1");
             mysqli_stmt_bind_param($stmt, "s", $slug);
         }
 
@@ -328,6 +406,13 @@ if (!function_exists('storeShowProduct')) {
             return ['status' => 'error', 'message' => 'المنتج غير موجود'];
         }
 
-        return ['status' => 'success', 'data' => store_item_from_product(product_row($con, $row))];
+        $rowId = (int)$row['id'];
+        $stId = store_student_id($studentData);
+        $prices = store_price_blocks($con, [$row], $stId);
+        $access = store_access_for($con, $stId, [$rowId => $row]);
+        $langId = (int)(get_language_info($con)['id'] ?? 1);
+        $names = store_item_names($con, [$rowId], $langId);
+
+        return ['status' => 'success', 'data' => store_shelf_item($con, $row, $names[$rowId] ?? null, $prices[$rowId] ?? [], $access[$rowId] ?? [])];
     }
 }

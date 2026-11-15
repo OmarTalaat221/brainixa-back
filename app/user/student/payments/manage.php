@@ -15,6 +15,7 @@ require_once __DIR__ . '/../../../../helpers/offline_payments.php';
 require_once __DIR__ . '/../../../../helpers/points.php';
 // discount_apply_code() / get_discount_code_details() - the code is spent once payment succeeds.
 require_once __DIR__ . '/../../../../helpers/discounts.php';
+require_once __DIR__ . '/../../../../helpers/store_items.php';
 
 
 if (!function_exists('payments_new_gateway_reference')) {
@@ -89,7 +90,8 @@ if (!function_exists('studentInitiatePayment')) {
         }
 
         $body = read_json_body();
-        $itemType = strtolower(trim($body['item_type'] ?? ''));
+        // 'product' names a store item as well as 'book'; it is stored as 'book' (store_items.php).
+        $itemType = store_item_type((string)($body['item_type'] ?? ''));
         $itemId = (int)($body['item_id'] ?? 0);
 
         if (!in_array($itemType, ['course', 'book'], true) || $itemId <= 0) {
@@ -99,6 +101,10 @@ if (!function_exists('studentInitiatePayment')) {
         $item = payments_resolve_purchasable_item($con, $itemType, $itemId);
         if (!$item || (int)$item['is_active'] !== 1) {
             return ['status' => 'error', 'message' => trans('item_not_found_or_unavailable')];
+        }
+        // A physical store item out of tracked stock: refused before anyone is sent to the gateway.
+        if (!empty($item['sale_block'])) {
+            return $item['sale_block'];
         }
         // "No price" is not "free": an item with no price is not for sale at all. A country
         // price can still make it buyable for this student, which is the quote's call below.
@@ -158,7 +164,9 @@ if (!function_exists('studentInitiatePayment')) {
 
         $quote = offline_payment_quote($con, $stId, $itemType, $itemId, $discountCode, $usePoints);
         if (empty($quote['ok'])) {
-            return ['status' => 'error', 'message' => $quote['message'] ?? trans('invalid_request')];
+            $refusal = ['status' => 'error', 'message' => $quote['message'] ?? trans('invalid_request')];
+            if (!empty($quote['error_code'])) $refusal['error_code'] = $quote['error_code'];
+            return $refusal;
         }
 
         // A code the student asked for that could not be honoured is refused outright rather than
@@ -562,13 +570,17 @@ if (!function_exists('payments_process_easykash_result')) {
 
         // The code is spent HERE, not at checkout - the same rule the offline path follows: a
         // checkout the student abandoned at the gateway must not cost them one of its uses.
+        // A store item ('book') is discounted at checkout through the same quote, so its code is
+        // spent here too - recorded against the item rather than a course, as the offline path does.
         $codeId = !empty($tx['discount_code_id']) ? (int)$tx['discount_code_id'] : 0;
-        if ($codeId > 0 && $tx['item_type'] === 'course' && function_exists('discount_apply_code')) {
+        $isStoreItem = $tx['item_type'] === 'book';
+        if ($codeId > 0 && in_array($tx['item_type'], ['course', 'book'], true) && function_exists('discount_apply_code')) {
             $codeRow = get_discount_code_details($con, $codeId);
             if ($codeRow) {
                 discount_apply_code(
                     $con, (string)$codeRow['code'], (int)$tx['student_id'],
-                    [(int)$tx['item_id']], 'student', (int)$tx['student_id'], $grantedRefId
+                    $isStoreItem ? [] : [(int)$tx['item_id']], 'student', (int)$tx['student_id'], $grantedRefId,
+                    $isStoreItem ? [(int)$tx['item_id']] : []
                 );
             }
         }

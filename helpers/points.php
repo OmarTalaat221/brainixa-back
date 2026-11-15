@@ -15,6 +15,7 @@
 
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/pricing.php';
+require_once __DIR__ . '/store_items.php';
 
 if (!function_exists('points_setting')) {
     function points_setting($con, string $key, string $default = ''): string {
@@ -187,7 +188,9 @@ if (!function_exists('points_spend')) {
 
         $negative = -1 * $points;
         // `reference_type` is an ENUM('course','book','affiliate_commission','other'); anything
-        // else would be stored as an empty string rather than rejected.
+        // else would be stored as an empty string rather than rejected. A store item may be named
+        // 'product' by the caller; the enum calls it 'book'.
+        $referenceType = store_item_type($referenceType);
         $refType = in_array($referenceType, ['course', 'book', 'affiliate_commission', 'other'], true) ? $referenceType : 'other';
         $ins = mysqli_prepare($con, "INSERT INTO student_point_transactions (student_id, points, type, reference_type, reference_id, description) VALUES (?, ?, 'redeem', ?, ?, ?)");
         if ($ins) {
@@ -210,6 +213,7 @@ if (!function_exists('points_refund')) {
         mysqli_stmt_bind_param($stmt, "di", $points, $studentId);
         mysqli_stmt_execute($stmt);
 
+        $referenceType = store_item_type($referenceType);
         $refType = in_array($referenceType, ['course', 'book', 'affiliate_commission', 'other'], true) ? $referenceType : 'other';
         $ins = mysqli_prepare($con, "INSERT INTO student_point_transactions (student_id, points, type, reference_type, reference_id, description) VALUES (?, ?, 'refund', ?, ?, ?)");
         if ($ins) {

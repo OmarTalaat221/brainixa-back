@@ -589,31 +589,53 @@ if (!function_exists('getPublicLandingConfig')) {
             }
         }
 
-        // b.cover_image, not b.image: course_books has no `image` column at all, so this whole
-        // query returned false and the landing page's books section has been silently empty the
-        // entire time - the "an empty library lists nothing" branch made it look intentional.
-        $booksRes = mysqli_query($con, "
-            SELECT b.id, b.unit_id, b.subject_id, b.course_id, b.cover_image, b.price, b.show_on_website, b.file_type,
-                   COALESCE((SELECT title FROM course_books_translations bt WHERE bt.book_id = b.id AND bt.language_id = {$langId} LIMIT 1),
-                            (SELECT title FROM course_books_translations bt WHERE bt.book_id = b.id LIMIT 1),
-                            CONCAT('كتاب رقم ', b.id)) AS title,
-                   COALESCE((SELECT description FROM course_books_translations bt WHERE bt.book_id = b.id AND bt.language_id = {$langId} LIMIT 1),
-                            (SELECT description FROM course_books_translations bt WHERE bt.book_id = b.id LIMIT 1)) AS description,
-                   COALESCE((SELECT t.name FROM teachers t WHERE t.id = b.created_by_id AND b.created_by_type = 'teacher' LIMIT 1), '') AS teacher_name
-            FROM course_books b
-            WHERE b.is_active = 1 AND b.show_on_website = 1
-            ORDER BY b.id DESC
-            LIMIT 10
-        ");
+        // The store's items for the website. Since migration 131 these are `products` rows - every
+        // standalone book became one under its old id - returned in the book shape this section
+        // has always had (store_item_as_book), so the landing page reads them unchanged. Lesson
+        // files belong to their courses and are not sold here.
+        require_once __DIR__ . '/../../../helpers/store_items.php';
         $websiteBooks = [];
-        if ($booksRes) {
-            while ($bRow = mysqli_fetch_assoc($booksRes)) {
-                $bRow['id'] = (int)$bRow['id'];
-                $bRow['price'] = (float)($bRow['price'] ?? 0.00);
-                // The public site never gets the PDF itself. The key stays in the payload so no
-                // existing client breaks on its absence, but it is always empty here: a paid book
-                // whose file_path is published is a paid book anyone can download without paying.
+        $productsReady = store_products_ready($con);
+        $booksRes = $productsReady ? @mysqli_query($con, "
+            SELECT p.* FROM products p
+            WHERE p.is_active = 1 AND p.show_on_website = 1
+            ORDER BY p.id DESC
+            LIMIT 10
+        ") : false;
+        $storeRows = [];
+        while ($booksRes && ($pRow = mysqli_fetch_assoc($booksRes))) {
+            $storeRows[(int)$pRow['id']] = $pRow;
+        }
+        if ($storeRows) {
+            $storeNames = store_item_names($con, array_keys($storeRows), $langId);
+            $teacherIds = [];
+            foreach ($storeRows as $pRow) {
+                if (($pRow['created_by_type'] ?? '') === 'teacher' && !empty($pRow['created_by_id'])) {
+                    $teacherIds[] = (int)$pRow['created_by_id'];
+                }
+            }
+            $teacherNames = [];
+            if ($teacherIds) {
+                $tRes = @mysqli_query($con, "SELECT id, name FROM teachers WHERE id IN (" . implode(',', array_unique($teacherIds)) . ")");
+                while ($tRes && ($tRow = mysqli_fetch_assoc($tRes))) {
+                    $teacherNames[(int)$tRow['id']] = (string)$tRow['name'];
+                }
+            }
+            foreach ($storeRows as $id => $pRow) {
+                $bRow = store_item_as_book($con, $pRow, $storeNames[$id] ?? null, $langId);
+                // What the visitor pays before any country price: the sale price while on sale.
+                $effective = store_item_effective_price($pRow);
+                $bRow['price'] = $effective !== null ? $effective : 0.00;
+                $bRow['teacher_name'] = ($pRow['created_by_type'] ?? '') === 'teacher'
+                    ? ($teacherNames[(int)($pRow['created_by_id'] ?? 0)] ?? '')
+                    : '';
+                // The public site never gets the file itself. The key stays in the payload so no
+                // existing client breaks on its absence, but it is always empty here: a paid item
+                // whose file_path is published is a paid item anyone can download without paying.
+                // `link` is the same file by another road, so it is not sent at all - this payload
+                // never carried it.
                 $bRow['file_path'] = '';
+                unset($bRow['link']);
                 $websiteBooks[] = format_response_images($bRow);
             }
         }

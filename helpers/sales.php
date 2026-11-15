@@ -2,6 +2,7 @@
 require_once __DIR__ . '/entities.php';
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/upload.php';
+require_once __DIR__ . '/store_items.php';
 
 /**
  * The admin dashboard's "top 10 courses" widget (app/admin/dashboard/statistics.php) already
@@ -205,13 +206,15 @@ if (!function_exists('sales_aggregate_books')) {
         $langId = (int)($langInfo['id'] ?? 1);
         $ids = implode(',', array_map('intval', array_keys($agg)));
 
+        // What was sold is a store item - a `products` row since migration 131, under the id the
+        // money rows already carry.
         $books = [];
+        $nameSql = store_name_sql($langId, 'p');
         foreach (dashboard_fetch_all($con, "
-            SELECT cb.id, cb.price, cb.cover_image, cb.is_active,
-                   COALESCE(cbt.title, CONCAT('#', cb.id)) AS name
-            FROM course_books cb
-            LEFT JOIN course_books_translations cbt ON cbt.book_id = cb.id AND cbt.language_id = {$langId}
-            WHERE cb.id IN ({$ids})
+            SELECT p.id, p.price, p.image AS cover_image, p.is_active,
+                   COALESCE({$nameSql}, CONCAT('#', p.id)) AS name
+            FROM products p
+            WHERE p.id IN ({$ids})
         ") as $row) {
             $books[(int)$row['id']] = $row;
         }

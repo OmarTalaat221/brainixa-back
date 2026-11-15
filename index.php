@@ -1287,6 +1287,79 @@ $routes = [
             return teacherReviewBookRequest($con, $teacherData);
         },
     ],
+    // Teacher store: products (migration 131 - the store's books are products now). The same
+    // functions as /admin/products with the teacher as the creator; a teacher edits, deletes or
+    // hides only a product they own (creator or assigned in book_teachers). Categories are read-only.
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/teacher/products",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/teacher/products/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherListProducts($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/teacher/products/show",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/teacher/products/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherGetProduct($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/teacher/products",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/teacher/products/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherCreateProduct($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "PUT",
+        "path" => "/brain-ixa/teacher/products",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/teacher/products/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherUpdateProduct($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "DELETE",
+        "path" => "/brain-ixa/teacher/products",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/teacher/products/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherDeleteProduct($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "POST",
+        "path" => "/brain-ixa/teacher/products/toggle-website-visibility",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/teacher/products/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherToggleProductWebsiteVisibility($con, $teacherData);
+        },
+    ],
+    [
+        "method" => "GET",
+        "path" => "/brain-ixa/teacher/product-categories",
+        "handler" => function ($con) {
+            include_once "./middlewares/teacherauthmiddleware.php";
+            include_once "./app/teacher/products/manage.php";
+            $teacherData = teacherAuthMiddleware();
+            return teacherListProductCategories($con, $teacherData);
+        },
+    ],
     [
         "method" => "GET",
         "path" => "/brain-ixa/teacher/exams",
@@ -4115,7 +4188,7 @@ $routes = [
                 include_once "./app/admin/books/manage.php";
                 $adminData = adminAuthMiddleware();
                 requirePermission($con, $adminData, 'manage_books');
-                return adminGrantBookAccessToStudent($con);
+                return adminGrantBookAccessToStudent($con, $adminData);
             },
         ],
         [
@@ -6210,8 +6283,8 @@ $routes = [
         ],
 
         // Admin Store Products & Categories -------------------------
-        // منتجات المتجر وتصنيفاتها. جداول مستقلة عن الكتب (مايجريشن 127)، والمتجر يعرض
-        // الاثنين معًا عبر /store. الصلاحية manage_products، منفصلة عن manage_books.
+        // منتجات المتجر وتصنيفاتها. منذ مايجريشن 131 هذا هو المتجر كله: كتب المتجر انتقلت إلى
+        // products بأرقامها نفسها، و/admin/books صار لملفات الدروس فقط. الصلاحية manage_products أو manage_books (المتجر كان شاشتين بصلاحيتين).
         [
             "method" => "GET",
             "path" => "/brain-ixa/admin/product-categories",
@@ -6219,7 +6292,7 @@ $routes = [
                 include_once "./middlewares/adminauthmiddleware.php";
                 include_once "./app/admin/products/manage.php";
                 $adminData = adminAuthMiddleware();
-                requirePermission($con, $adminData, 'manage_products');
+                requireAnyPermission($con, $adminData, ['manage_products', 'manage_books']);
                 return adminListProductCategories($con);
             },
         ],
@@ -6230,7 +6303,7 @@ $routes = [
                 include_once "./middlewares/adminauthmiddleware.php";
                 include_once "./app/admin/products/manage.php";
                 $adminData = adminAuthMiddleware();
-                requirePermission($con, $adminData, 'manage_products');
+                requireAnyPermission($con, $adminData, ['manage_products', 'manage_books']);
                 return adminGetProductCategory($con);
             },
         ],
@@ -6241,7 +6314,7 @@ $routes = [
                 include_once "./middlewares/adminauthmiddleware.php";
                 include_once "./app/admin/products/manage.php";
                 $adminData = adminAuthMiddleware();
-                requirePermission($con, $adminData, 'manage_products');
+                requireAnyPermission($con, $adminData, ['manage_products', 'manage_books']);
                 return adminCreateProductCategory($con);
             },
         ],
@@ -6252,7 +6325,7 @@ $routes = [
                 include_once "./middlewares/adminauthmiddleware.php";
                 include_once "./app/admin/products/manage.php";
                 $adminData = adminAuthMiddleware();
-                requirePermission($con, $adminData, 'manage_products');
+                requireAnyPermission($con, $adminData, ['manage_products', 'manage_books']);
                 return adminUpdateProductCategory($con);
             },
         ],
@@ -6263,7 +6336,7 @@ $routes = [
                 include_once "./middlewares/adminauthmiddleware.php";
                 include_once "./app/admin/products/manage.php";
                 $adminData = adminAuthMiddleware();
-                requirePermission($con, $adminData, 'manage_products');
+                requireAnyPermission($con, $adminData, ['manage_products', 'manage_books']);
                 return adminDeleteProductCategory($con);
             },
         ],
@@ -6274,7 +6347,7 @@ $routes = [
                 include_once "./middlewares/adminauthmiddleware.php";
                 include_once "./app/admin/products/manage.php";
                 $adminData = adminAuthMiddleware();
-                requirePermission($con, $adminData, 'manage_products');
+                requireAnyPermission($con, $adminData, ['manage_products', 'manage_books']);
                 return adminListProducts($con);
             },
         ],
@@ -6285,7 +6358,7 @@ $routes = [
                 include_once "./middlewares/adminauthmiddleware.php";
                 include_once "./app/admin/products/manage.php";
                 $adminData = adminAuthMiddleware();
-                requirePermission($con, $adminData, 'manage_products');
+                requireAnyPermission($con, $adminData, ['manage_products', 'manage_books']);
                 return adminGetProduct($con);
             },
         ],
@@ -6296,7 +6369,7 @@ $routes = [
                 include_once "./middlewares/adminauthmiddleware.php";
                 include_once "./app/admin/products/manage.php";
                 $adminData = adminAuthMiddleware();
-                requirePermission($con, $adminData, 'manage_products');
+                requireAnyPermission($con, $adminData, ['manage_products', 'manage_books']);
                 return adminCreateProduct($con, $adminData);
             },
         ],
@@ -6307,8 +6380,8 @@ $routes = [
                 include_once "./middlewares/adminauthmiddleware.php";
                 include_once "./app/admin/products/manage.php";
                 $adminData = adminAuthMiddleware();
-                requirePermission($con, $adminData, 'manage_products');
-                return adminUpdateProduct($con);
+                requireAnyPermission($con, $adminData, ['manage_products', 'manage_books']);
+                return adminUpdateProduct($con, $adminData);
             },
         ],
         [
@@ -6318,8 +6391,8 @@ $routes = [
                 include_once "./middlewares/adminauthmiddleware.php";
                 include_once "./app/admin/products/manage.php";
                 $adminData = adminAuthMiddleware();
-                requirePermission($con, $adminData, 'manage_products');
-                return adminDeleteProduct($con);
+                requireAnyPermission($con, $adminData, ['manage_products', 'manage_books']);
+                return adminDeleteProduct($con, $adminData);
             },
         ],
         [
@@ -6329,8 +6402,8 @@ $routes = [
                 include_once "./middlewares/adminauthmiddleware.php";
                 include_once "./app/admin/products/manage.php";
                 $adminData = adminAuthMiddleware();
-                requirePermission($con, $adminData, 'manage_products');
-                return adminToggleProductWebsiteVisibility($con);
+                requireAnyPermission($con, $adminData, ['manage_products', 'manage_books']);
+                return adminToggleProductWebsiteVisibility($con, $adminData);
             },
         ],
 

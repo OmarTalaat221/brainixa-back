@@ -1053,21 +1053,17 @@ if (!function_exists('studentTrackBookOpen')) {
             return ['status' => 'error', 'message' => trans('book_id is required')];
         }
 
-        $bStmt = mysqli_prepare($con, "SELECT id, unit_id, subject_id, course_id, created_by_type, created_by_id FROM course_books WHERE id = ? LIMIT 1");
-        if (!$bStmt) {
-            return ['status' => 'error', 'message' => 'Query preparation error: ' . mysqli_error($con)];
-        }
-        mysqli_stmt_bind_param($bStmt, "i", $bookId);
-        mysqli_stmt_execute($bStmt);
-        $bRow = mysqli_fetch_assoc(mysqli_stmt_get_result($bStmt));
-        if (!$bRow) {
-            return ['status' => 'error', 'message' => trans('Book not found')];
+        // This file is reached by routes that do not pull in the student book module, so make
+        // sure the shared lookup and ownership helpers are loaded before leaning on them.
+        if (!function_exists('student_owns_book') || !function_exists('student_book_exists')) {
+            require_once __DIR__ . '/../content/books.php';
         }
 
-        // This file is reached by routes that do not pull in the student book module, so make
-        // sure the shared ownership helper is loaded before leaning on it.
-        if (!function_exists('student_owns_book')) {
-            require_once __DIR__ . '/../content/books.php';
+        // The id is a store item (products, where every standalone book now lives under its old
+        // id) or a lesson file (course_books). The two ranges never collide, and progress for
+        // both goes into the same table.
+        if (!student_book_exists($con, $bookId)) {
+            return ['status' => 'error', 'message' => trans('Book not found')];
         }
 
         // Ownership is decided by the one helper every other book endpoint uses, which also

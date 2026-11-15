@@ -8,21 +8,122 @@ require_once __DIR__ . '/../../../helpers/entities.php';
 // app_text() lives here. Reaching it through whatever else the chain happens to pull in is how
 // session_ratings died with a PHP fatal that came back as HTML where the client expected JSON.
 require_once __DIR__ . '/../../../helpers/app_settings.php';
+require_once __DIR__ . '/../../../helpers/store_items.php';
 require_once __DIR__ . '/../content/units.php';
+require_once __DIR__ . '/../products/manage.php';
+
+/*
+ * Since migration 131 this file manages LESSON FILES only - `course_books` rows that belong to a
+ * course or a unit. The store's books became `products` (same ids) and are managed through
+ * /admin/products and /teacher/products. What still touches store items here:
+ *   - the books list with `scope=general` (and with no scope) carries them as book-shaped rows,
+ *     read-only, so an older dashboard build still sees its store tab;
+ *   - show / stream fall back to the product for a store item's id;
+ *   - purchase requests and grant-access, which were always about store items, read products.
+ * A request that would create a book with no course and no unit, or turn a lesson file into one,
+ * is refused rather than quietly creating a product.
+ */
 
 if (!function_exists('ensure_books_schema')) {
     function ensure_books_schema($con) {
     }
 }
 
+if (!function_exists('books_store_item_refusal')) {
+    /** Why /books will not create, edit or remove a store item any more, and where to go instead. */
+    function books_store_item_refusal($con): array {
+        $where = is_teacher_request() ? '/teacher/products' : '/admin/products';
+        return [
+            'status' => 'error',
+            'error_code' => 'store_item_is_product',
+            'message' => app_text(
+                $con,
+                "عناصر المتجر أصبحت تُدار كمنتجات من شاشة المنتجات ({$where}). الكتب هنا هي ملفات الدروس فقط، ويجب أن ترتبط بكورس أو وحدة.",
+                "Store items are managed as products now ({$where}). Books here are lesson files only and must belong to a course or a unit."
+            ),
+        ];
+    }
+}
+
+if (!function_exists('books_is_lesson_file')) {
+    function books_is_lesson_file($con, int $id): bool {
+        if ($id <= 0) return false;
+        $res = @mysqli_query($con, "SELECT id FROM course_books WHERE id = {$id} LIMIT 1");
+        return $res && mysqli_num_rows($res) > 0;
+    }
+}
+
+if (!function_exists('admin_store_item_book_row')) {
+    /**
+     * A store item (a product) in the exact shape adminGetBookDetails() gives a book, so the
+     * books screens of an older dashboard keep rendering it. Read-only: `manage_via` says where
+     * it is edited now.
+     */
+    function admin_store_item_book_row($con, array $p): array {
+        $id = (int)$p['id'];
+        $langInfo = get_language_info($con);
+
+        $translations = [];
+        $titleAr = $titleEn = $descAr = $descEn = null;
+        $tRes = @mysqli_query($con, "SELECT t.language_id, l.code AS language_code, t.name AS title, t.description FROM products_translations t JOIN languages l ON t.language_id = l.id WHERE t.product_id = {$id}");
+        while ($tRes && ($tRow = mysqli_fetch_assoc($tRes))) {
+            $tRow['language_id'] = (int)$tRow['language_id'];
+            $translations[] = $tRow;
+            if ($tRow['language_code'] === 'ar') { $titleAr = $tRow['title']; $descAr = $tRow['description']; }
+            if ($tRow['language_code'] === 'en') { $titleEn = $tRow['title']; $descEn = $tRow['description']; }
+        }
+        $transMap = array_column($translations, 'title', 'language_code');
+        $descMap = array_column($translations, 'description', 'language_code');
+        $title = $transMap[$langInfo['code']] ?? ($titleAr ?? $titleEn ?? ('Book #' . $id));
+        $description = $descMap[$langInfo['code']] ?? ($descAr ?? $descEn ?? '');
+
+        $row = store_item_as_book($con, $p, ['name' => $title, 'description' => $description]);
+
+        // The admin's book shape: null is "no price", not 0.
+        $row['is_priced'] = $p['price'] !== null;
+        $row['price'] = price_out($p['price']);
+        $row['updated_at'] = $p['updated_at'] ?? null;
+
+        // The same file rule adminGetBookDetails() applies to a book.
+        if ((int)$row['allow_download'] === 1) {
+            $row['link'] = format_image_url($row['link']);
+            $row['file_path'] = format_image_url($row['file_path'] ?: $row['link']);
+            $row['view_url'] = $row['file_path'];
+        } else {
+            $row['link'] = null;
+            $row['file_path'] = null;
+            $streamBase = is_teacher_request() ? 'teacher' : 'admin';
+            $row['view_url'] = 'https://camp-coding.online/brain-ixa/' . $streamBase . '/books/stream?book_id=' . $id;
+        }
+
+        $row['translations'] = $translations;
+        $row['title_ar'] = $titleAr;
+        $row['title_en'] = $titleEn;
+        $row['description_ar'] = $descAr;
+        $row['description_en'] = $descEn;
+        $row['unit'] = null;
+        $row['course'] = null;
+        $row['subject'] = $row['subject_id'] ? get_subject_details($con, $row['subject_id']) : null;
+        $row['teachers'] = product_teachers($con, $p);
+        $row['is_store_item'] = true;
+        $row['read_only'] = true;
+        $row['manage_via'] = 'products';
+
+        return format_response_images($row);
+    }
+}
+
 if (!function_exists('adminGetBookDetails')) {
     function adminGetBookDetails($con, $bookId) {
         if (!$bookId) return null;
+        $bookId = (int)$bookId;
         $langInfo = get_language_info($con);
 
         $res = mysqli_query($con, "SELECT id, subject_id, course_id, unit_id, file_type, category, extension, link, file_path, cover_image, price, allow_download, order_num, is_active, created_by_type, created_by_id, created_at, updated_at FROM course_books WHERE id = {$bookId} LIMIT 1");
         if (!$res || !($row = mysqli_fetch_assoc($res))) {
-            return null;
+            // Not a lesson file: a store item asked for by the id it had as a book.
+            $product = store_item_find($con, $bookId);
+            return $product ? admin_store_item_book_row($con, $product) : null;
         }
 
         $row['id'] = (int)$row['id'];
@@ -96,6 +197,19 @@ if (!function_exists('adminGetBookDetails')) {
 }
 
 if (!function_exists('adminListBooks')) {
+    /**
+     * Lesson files from `course_books`, and - where the old list showed store books - the store
+     * items from `products` as book-shaped rows (read-only). The two are paged as ONE list: a
+     * UNION ALL of (id, order_num, source) is ordered and cut in SQL, and the total is the sum of
+     * both counts, so pagination stays right however the two are mixed.
+     *
+     *   scope=unit                lesson files only
+     *   scope=general             store items only (the old store tab); with a course_id it is
+     *                             that course's files not tied to a unit, which is what the
+     *                             teacher dashboard's course-books page asks for
+     *   no scope                  both
+     *   course_id / unit_id       lesson files only (a store item belongs to neither)
+     */
     function adminListBooks($con) {
         $page = max(1, (int)($_GET['page'] ?? 1));
         $limit = max(1, min(100, (int)($_GET['limit'] ?? 10)));
@@ -107,22 +221,21 @@ if (!function_exists('adminListBooks')) {
         $subjectId = isset($_GET['subject_id']) ? (int)$_GET['subject_id'] : 0;
         $teacherId = isset($_GET['teacher_id']) ? (int)$_GET['teacher_id'] : 0;
         $category = in_array(trim($_GET['category'] ?? ''), ['summary', 'exam'], true) ? trim($_GET['category']) : '';
-        // "general" = standalone library book (no unit/course/subject), "unit" = tied to a lesson -
-        // the two tabs on the admin books library page, previously done by fetching every single
-        // book in the table and filtering in the browser.
         $scope = in_array(trim($_GET['scope'] ?? ''), ['general', 'unit'], true) ? trim($_GET['scope']) : '';
 
         $langInfo = get_language_info($con);
         $langId = (int)($langInfo['id'] ?? 1);
 
-        $cbWhere = ["1=1"];
+        $linkedFilter = $courseId > 0 || $unitId > 0;
+        $includeLessons = $scope !== 'general' || $linkedFilter;
+        $includeStore = $scope !== 'unit' && !$linkedFilter && products_tables_ready($con);
+
+        // ---- lesson files (course_books) ----
+        // A store item is never read from course_books (R1): only rows tied to a course or unit.
+        $cbWhere = ["(cb.course_id IS NOT NULL OR cb.unit_id IS NOT NULL)"];
         if ($unitId > 0) $cbWhere[] = "cb.unit_id = {$unitId}";
         if ($category !== '') $cbWhere[] = "cb.category = '{$category}'";
-        // "general" is what the store sells, and that means tied to NOTHING - neither a unit nor
-        // a course. Testing unit_id alone let a course-level book through as a store product,
-        // which the purchase endpoint then refuses as "bundled with its course".
-        if ($scope === 'general') $cbWhere[] = "cb.unit_id IS NULL AND cb.course_id IS NULL";
-        if ($scope === 'unit') $cbWhere[] = "(cb.unit_id IS NOT NULL OR cb.course_id IS NOT NULL)";
+        if ($scope === 'general') $cbWhere[] = "cb.unit_id IS NULL";
         if ($courseId > 0) $cbWhere[] = "(cb.course_id = {$courseId} OR cb.unit_id IN (SELECT id FROM units WHERE course_id = {$courseId}))";
         if ($subjectId > 0) $cbWhere[] = "cb.subject_id = {$subjectId}";
         if ($teacherId > 0) {
@@ -143,61 +256,113 @@ if (!function_exists('adminListBooks')) {
             $cbWhere[] = "(cbt.title LIKE '{$sp}' OR cbt.description LIKE '{$sp}')";
         }
         $cbWhereSql = "WHERE " . implode(" AND ", $cbWhere);
-
-        $countRes = mysqli_query($con, "
-            SELECT COUNT(DISTINCT cb.id) AS total
-            FROM course_books cb
+        $cbFrom = "FROM course_books cb
             LEFT JOIN course_books_translations cbt ON cb.id = cbt.book_id AND cbt.language_id = {$langId}
-            {$cbWhereSql}
-        ");
-        $totalRecords = $countRes ? (int)(mysqli_fetch_assoc($countRes)['total'] ?? 0) : 0;
+            {$cbWhereSql}";
 
-        $sql = "
-            SELECT DISTINCT cb.id
-            FROM course_books cb
-            LEFT JOIN course_books_translations cbt ON cb.id = cbt.book_id AND cbt.language_id = {$langId}
-            {$cbWhereSql}
-            ORDER BY cb.order_num ASC, cb.id ASC
-            LIMIT {$limit} OFFSET {$offset}
-        ";
-        $res = mysqli_query($con, $sql);
+        // ---- store items (products) ----
+        $pWhere = [];
+        $storeReady = store_products_ready($con);
+        if ($category !== '' && $storeReady) $pWhere[] = "p.book_category = '{$category}'";
+        if ($subjectId > 0 && $storeReady) $pWhere[] = "p.subject_id = {$subjectId}";
+        // The old store list for a teacher: their own items, the ones assigned to them, and the
+        // admin's unassigned items (read-only).
+        if ($teacherId > 0) $pWhere[] = product_teacher_visibility_clause($teacherId, 'p');
+        if (!empty($search)) {
+            $sp = '%' . mysqli_real_escape_string($con, $search) . '%';
+            $pWhere[] = "EXISTS (SELECT 1 FROM products_translations pt_s WHERE pt_s.product_id = p.id AND (pt_s.name LIKE '{$sp}' OR pt_s.description LIKE '{$sp}'))";
+        }
+        $pWhereSql = $pWhere ? "WHERE " . implode(" AND ", $pWhere) : "";
+
+        $totalRecords = 0;
+        if ($includeLessons) {
+            $countRes = mysqli_query($con, "SELECT COUNT(DISTINCT cb.id) AS total {$cbFrom}");
+            $totalRecords += $countRes ? (int)(mysqli_fetch_assoc($countRes)['total'] ?? 0) : 0;
+        }
+        if ($includeStore) {
+            $countRes = @mysqli_query($con, "SELECT COUNT(*) AS total FROM products p {$pWhereSql}");
+            $totalRecords += $countRes ? (int)(mysqli_fetch_assoc($countRes)['total'] ?? 0) : 0;
+        }
+
+        $parts = [];
+        if ($includeLessons) {
+            $parts[] = "SELECT DISTINCT cb.id AS id, cb.order_num AS order_num, 0 AS src {$cbFrom}";
+        }
+        if ($includeStore) {
+            $parts[] = "SELECT p.id AS id, p.order_num AS order_num, 1 AS src FROM products p {$pWhereSql}";
+        }
+
         $books = [];
-        // For a teacher: which of these rows are theirs. The list also carries the admin's
-        // unassigned products, read-only, and a teacher can neither discount those nor act on their
-        // purchase requests - the server refuses both by the same rule this reads.
-        $ownedBookIds = $teacherId > 0 ? array_flip(teacher_owned_book_ids($con, $teacherId)) : [];
-        if ($res) {
-            while ($row = mysqli_fetch_assoc($res)) {
-                $bId = (int)$row['id'];
-                $detail = adminGetBookDetails($con, $bId);
-                if ($detail) {
+        if ($parts) {
+            $res = @mysqli_query($con, "
+                SELECT x.id, x.src FROM (" . implode(" UNION ALL ", $parts) . ") x
+                ORDER BY x.order_num ASC, x.src ASC, x.id ASC
+                LIMIT {$limit} OFFSET {$offset}
+            ");
+
+            // For a teacher: which of these rows are theirs. Lesson files by the course/unit
+            // route, store items by R7. The list also carries the admin's unassigned products,
+            // read-only, and a teacher can neither discount those nor act on their purchase
+            // requests - the server refuses both by the same rule this reads.
+            $ownedLessons = $teacherId > 0 && $includeLessons ? array_flip(teacher_owned_lesson_file_ids($con, $teacherId)) : [];
+            $ownedStore = $teacherId > 0 && $includeStore ? array_flip(teacher_owned_store_item_ids($con, $teacherId)) : [];
+
+            $storeIds = [];
+            $order = [];
+            while ($res && ($row = mysqli_fetch_assoc($res))) {
+                $order[] = [(int)$row['id'], (int)$row['src']];
+                if ((int)$row['src'] === 1) $storeIds[] = (int)$row['id'];
+            }
+            $storeRows = $storeIds ? store_items_find($con, $storeIds) : [];
+
+            foreach ($order as [$bId, $src]) {
+                if ($src === 1) {
+                    if (!isset($storeRows[$bId])) continue;
+                    $detail = admin_store_item_book_row($con, $storeRows[$bId]);
+                    if ($teacherId > 0) {
+                        $detail['is_owned'] = isset($ownedStore[$bId]);
+                        // Edited through /teacher/products, never through /books.
+                        $detail['can_edit'] = false;
+                    }
+                } else {
+                    $detail = adminGetBookDetails($con, $bId);
+                    if (!$detail) continue;
                     if ($teacherId > 0) {
                         $detail['can_edit'] = ($detail['created_by_type'] ?? 'admin') !== 'admin';
-                        $detail['is_owned'] = isset($ownedBookIds[$bId]);
+                        $detail['is_owned'] = isset($ownedLessons[$bId]);
                     }
-                    $books[] = $detail;
                 }
+                $books[] = $detail;
             }
         }
 
-        // Cheap aggregate counts for the library's stat cards - across the whole table, not just
-        // the current page/search/scope, so the admin building the page no longer has to fetch
-        // every single book (sometimes thousands, one page of 100 at a time) just to total them up.
-        $statsRow = mysqli_fetch_assoc(mysqli_query($con, "
+        // Cheap aggregate counts for the library's stat cards - across both tables, not just the
+        // current page/search/scope. `general_count` is the store (products), `unit_count` the
+        // lesson files, as the two tabs show them.
+        $lessonStats = mysqli_fetch_assoc(mysqli_query($con, "
             SELECT
                 COUNT(*) AS total_count,
-                SUM(is_active = 1) AS active_count,
-                SUM(is_active = 0) AS inactive_count,
-                SUM(unit_id IS NULL) AS general_count,
-                SUM(unit_id IS NOT NULL) AS unit_count
+                COALESCE(SUM(is_active = 1), 0) AS active_count,
+                COALESCE(SUM(is_active = 0), 0) AS inactive_count
             FROM course_books
+            WHERE course_id IS NOT NULL OR unit_id IS NOT NULL
         ")) ?: [];
+        $storeStats = [];
+        if (products_tables_ready($con)) {
+            $sRes = @mysqli_query($con, "
+                SELECT COUNT(*) AS total_count,
+                       COALESCE(SUM(is_active = 1), 0) AS active_count,
+                       COALESCE(SUM(is_active = 0), 0) AS inactive_count
+                FROM products
+            ");
+            $storeStats = $sRes ? (mysqli_fetch_assoc($sRes) ?: []) : [];
+        }
         $statistics = [
-            'total_count' => (int)($statsRow['total_count'] ?? 0),
-            'active_count' => (int)($statsRow['active_count'] ?? 0),
-            'inactive_count' => (int)($statsRow['inactive_count'] ?? 0),
-            'general_count' => (int)($statsRow['general_count'] ?? 0),
-            'unit_count' => (int)($statsRow['unit_count'] ?? 0),
+            'total_count' => (int)($lessonStats['total_count'] ?? 0) + (int)($storeStats['total_count'] ?? 0),
+            'active_count' => (int)($lessonStats['active_count'] ?? 0) + (int)($storeStats['active_count'] ?? 0),
+            'inactive_count' => (int)($lessonStats['inactive_count'] ?? 0) + (int)($storeStats['inactive_count'] ?? 0),
+            'general_count' => (int)($storeStats['total_count'] ?? 0),
+            'unit_count' => (int)($lessonStats['total_count'] ?? 0),
         ];
 
         return build_admin_paginated_response($books, $page, $limit, $totalRecords, $statistics);
@@ -268,6 +433,12 @@ if (!function_exists('adminCreateBook')) {
             }
         }
 
+        // A book with no course and no unit used to be a store item. The store is `products` now
+        // (migration 131); creating one here would put a store item where nothing sells it.
+        if ($courseId === null && $unitId === null) {
+            return books_store_item_refusal($con);
+        }
+
         // Books tied to a course/unit are bundled with the course purchase and
         // must never carry their own separate price — only standalone
         // (external) books, with no course_id/unit_id, are individually priced.
@@ -323,11 +494,20 @@ if (!function_exists('adminUpdateBook')) {
         $existingRes = mysqli_query($con, "SELECT course_id, unit_id FROM course_books WHERE id = {$id} LIMIT 1");
         $existingRow = $existingRes ? mysqli_fetch_assoc($existingRes) : null;
         if (!$existingRow) {
+            // A store item's id: it is edited as a product now.
+            if (store_item_find($con, $id)) {
+                return books_store_item_refusal($con);
+            }
             return ['status' => 'error', 'message' => 'Book not found'];
         }
 
         $resolvedCourseId = isset($body['course_id']) ? (int)$body['course_id'] : (int)($existingRow['course_id'] ?? 0);
         $resolvedUnitId = isset($body['unit_id']) ? (int)$body['unit_id'] : (int)($existingRow['unit_id'] ?? 0);
+        // Detaching a lesson file from both its course and its unit would turn it into a store
+        // item, which is a product now.
+        if ($resolvedCourseId <= 0 && $resolvedUnitId <= 0) {
+            return books_store_item_refusal($con);
+        }
         // Books tied to a course/unit are bundled with the course purchase —
         // force their price to 0 regardless of what was submitted.
         $isCourseLinked = ($resolvedCourseId > 0 || $resolvedUnitId > 0);
@@ -438,6 +618,10 @@ if (!function_exists('adminDeleteBook')) {
         if ($id <= 0) {
             return ['status' => 'error', 'message' => 'Book ID is required'];
         }
+        // A store item is deleted as a product, never through /books.
+        if (!books_is_lesson_file($con, $id) && store_item_find($con, $id)) {
+            return books_store_item_refusal($con);
+        }
         if (mysqli_query($con, "DELETE FROM course_books WHERE id = {$id}")) {
             @mysqli_query($con, "DELETE FROM course_books_translations WHERE book_id = {$id}");
             return ['status' => 'success', 'message' => 'Book deleted successfully'];
@@ -493,6 +677,17 @@ if (!function_exists('adminStreamBookFile')) {
         $bRes = mysqli_query($con, "SELECT file_path, link, file_type FROM course_books WHERE id = {$bookId} LIMIT 1");
         $bRow = $bRes ? mysqli_fetch_assoc($bRes) : null;
         if (!$bRow) {
+            // A store item: the view-only URL adminGetBookDetails() hands out for it points here.
+            $product = store_item_find($con, $bookId);
+            if ($product) {
+                $bRow = [
+                    'file_path' => $product['file_path'] ?? '',
+                    'link' => $product['link'] ?? '',
+                    'file_type' => store_item_file_type($product),
+                ];
+            }
+        }
+        if (!$bRow) {
             return ['status' => 'error', 'message' => 'Book not found'];
         }
 
@@ -547,6 +742,10 @@ if (!function_exists('adminToggleBookWebsiteVisibility')) {
         if ($id <= 0) {
             return ['status' => 'error', 'message' => 'Book ID is required'];
         }
+        // A store item's visibility is toggled as a product (/admin/products/toggle-website-visibility).
+        if (!books_is_lesson_file($con, $id) && store_item_find($con, $id)) {
+            return books_store_item_refusal($con);
+        }
 
         if ($showOnWebsite !== null) {
             $val = $showOnWebsite ? 1 : 0;
@@ -559,8 +758,55 @@ if (!function_exists('adminToggleBookWebsiteVisibility')) {
     }
 }
 
-if (!function_exists('adminGrantBookAccessToStudent')) {
-    function adminGrantBookAccessToStudent($con) {
+if (!function_exists('store_item_grant_one')) {
+    /**
+     * Gives one student one store item - the shared core of grant-access and of approving a
+     * purchase request, for the admin and the teacher alike.
+     *
+     * Returns 'granted' (a new or re-activated ownership: one unit of tracked stock leaves), or
+     * 'already' (the student already held it: nothing leaves the shelf twice), or the
+     * store_item_sale_block() error code when the item cannot be handed over right now. Stock is
+     * re-read for each student because a grant to a list of students can empty the shelf midway.
+     */
+    function store_item_grant_one($con, int $itemId, int $studentId, string $byType, int $byId, bool $restampGrantor): string {
+        $chk = mysqli_query($con, "SELECT id, is_active FROM student_book_subscriptions WHERE student_id = {$studentId} AND book_id = {$itemId} LIMIT 1");
+        $existing = $chk ? mysqli_fetch_assoc($chk) : null;
+        $byType = $byType === 'teacher' ? 'teacher' : 'admin';
+
+        if ($existing && (int)$existing['is_active'] === 1) {
+            if ($restampGrantor) {
+                mysqli_query($con, "UPDATE student_book_subscriptions SET granted_by_type = '{$byType}', granted_by_id = {$byId} WHERE student_id = {$studentId} AND book_id = {$itemId}");
+            }
+            return 'already';
+        }
+
+        $item = store_item_find($con, $itemId);
+        $block = store_item_sale_block($con, $item);
+        if ($block) {
+            return $block['error_code'];
+        }
+
+        if ($existing) {
+            $grantor = $restampGrantor ? ", granted_by_type = '{$byType}', granted_by_id = {$byId}" : "";
+            mysqli_query($con, "UPDATE student_book_subscriptions SET is_active = 1{$grantor} WHERE student_id = {$studentId} AND book_id = {$itemId}");
+        } else {
+            // What the student would have paid: the sale price while on sale. "No price" is
+            // recorded as 0 - a grant is a gift, whatever the shop would charge.
+            $price = (float)(store_item_effective_price($item) ?? 0.00);
+            mysqli_query($con, "INSERT INTO student_book_subscriptions (student_id, book_id, granted_by_type, granted_by_id, price, is_active) VALUES ({$studentId}, {$itemId}, '{$byType}', {$byId}, {$price}, 1)");
+        }
+
+        store_item_take_stock($con, $itemId);
+        return 'granted';
+    }
+}
+
+if (!function_exists('store_item_grant_access')) {
+    /**
+     * grant-access for the admin and the teacher: the same body, the same response. A teacher may
+     * grant only an item they own (R7); `$teacherId` is 0 for the admin.
+     */
+    function store_item_grant_access($con, string $byType, int $byId, int $teacherId = 0) {
         $body = read_json_body();
 
         $bookId = (int)($body['book_id'] ?? $body['id'] ?? $_GET['book_id'] ?? 0);
@@ -577,23 +823,32 @@ if (!function_exists('adminGrantBookAccessToStudent')) {
             return ['status' => 'error', 'message' => 'book_id and student_id (or student_ids) are required'];
         }
 
-        $bRes = mysqli_query($con, "SELECT id, price FROM course_books WHERE id = {$bookId} LIMIT 1");
-        $bRow = $bRes ? mysqli_fetch_assoc($bRes) : null;
-        if (!$bRow) {
+        $item = store_item_find($con, $bookId);
+        if (!$item) {
             return ['status' => 'error', 'message' => 'Book not found'];
         }
+        if ($teacherId > 0 && !teacher_owns_store_item($con, $teacherId, $bookId)) {
+            return [
+                'status' => 'error',
+                'error_code' => 'not_owner',
+                'message' => app_text($con, 'هذا المنتج ليس من منتجاتك، فلا يمكنك منحه لطالب.', 'This product is not one of yours, so you cannot grant it to a student.'),
+            ];
+        }
+        $block = store_item_sale_block($con, $item);
+        if ($block) {
+            return $block;
+        }
 
-        $price = (float)($bRow['price'] ?? 0.00);
         $grantedCount = 0;
+        $outOfStock = [];
 
-        foreach ($studentIds as $stId) {
+        foreach (array_unique($studentIds) as $stId) {
             if ($stId <= 0) continue;
 
-            $chk = mysqli_query($con, "SELECT id FROM student_book_subscriptions WHERE student_id = {$stId} AND book_id = {$bookId} LIMIT 1");
-            if ($chk && mysqli_num_rows($chk) > 0) {
-                mysqli_query($con, "UPDATE student_book_subscriptions SET is_active = 1 WHERE student_id = {$stId} AND book_id = {$bookId}");
-            } else {
-                mysqli_query($con, "INSERT INTO student_book_subscriptions (student_id, book_id, granted_by_type, granted_by_id, price, is_active) VALUES ({$stId}, {$bookId}, 'admin', 1, {$price}, 1)");
+            $result = store_item_grant_one($con, $bookId, $stId, $byType, $byId, false);
+            if ($result !== 'granted' && $result !== 'already') {
+                $outOfStock[] = $stId;
+                continue;
             }
 
             $subStmt = mysqli_prepare($con, "INSERT INTO student_subscriptions (student_id, subscription_type, is_active) VALUES (?, 'custom', 1)");
@@ -609,18 +864,142 @@ if (!function_exists('adminGrantBookAccessToStudent')) {
             $grantedCount++;
         }
 
+        $message = "Book access granted successfully to {$grantedCount} student(s)";
+        if ($outOfStock) {
+            $message .= app_text($con, '. نفد المخزون قبل منح ' . count($outOfStock) . ' طالب.', '. Stock ran out before ' . count($outOfStock) . ' student(s) could be granted.');
+        }
+
         return [
             'status' => 'success',
-            'message' => "Book access granted successfully to {$grantedCount} student(s)",
+            'message' => $message,
             'data' => [
                 'book_id' => $bookId,
-                'granted_students_count' => $grantedCount
+                'granted_students_count' => $grantedCount,
+                'out_of_stock_student_ids' => $outOfStock,
             ]
         ];
     }
 }
 
-// teacherGrantBookAccessToStudent moved to app/teacher/books/manage.php
+if (!function_exists('adminGrantBookAccessToStudent')) {
+    function adminGrantBookAccessToStudent($con, $adminData = null) {
+        $adminId = 1;
+        if (is_array($adminData) && !empty($adminData['id'])) {
+            $adminId = (int)$adminData['id'];
+        } elseif (is_object($adminData) && !empty($adminData->id)) {
+            $adminId = (int)$adminData->id;
+        }
+        return store_item_grant_access($con, 'admin', $adminId);
+    }
+}
+
+// teacherGrantBookAccessToStudent lives in app/teacher/books/manage.php
+
+if (!function_exists('book_request_select_sql')) {
+    /**
+     * The columns of a purchase-request row, read from the product the request is for. Every
+     * name the list returned when it read course_books is still here with its old meaning;
+     * `book_cover_image` is the product's image.
+     */
+    function book_request_select_sql(int $langId): string {
+        $nameSql = store_name_sql($langId, 'p');
+        return "
+                sbpr.id,
+                sbpr.student_id,
+                sbpr.book_id,
+                sbpr.status,
+                sbpr.reviewed_by_type,
+                sbpr.reviewed_by_id,
+                sbpr.notes,
+                sbpr.review_notes,
+                sbpr.created_at,
+                sbpr.updated_at,
+
+                st.name AS student_name,
+                st.email AS student_email,
+                st.phone AS student_phone,
+                st.image AS student_image,
+
+                IF(p.id IS NULL, NULL, {$nameSql}) AS book_title,
+                (SELECT COALESCE(
+                    (SELECT pt.description FROM products_translations pt WHERE pt.product_id = p.id AND pt.language_id = {$langId} LIMIT 1),
+                    (SELECT pt.description FROM products_translations pt WHERE pt.product_id = p.id ORDER BY pt.id ASC LIMIT 1))
+                ) AS book_description,
+                p.file_path AS book_file_path,
+                p.image AS book_cover_image,
+                p.price AS book_price,
+                p.sale_price AS book_sale_price,
+                p.stock AS book_stock,
+                p.allow_download AS book_allow_download,
+                p.product_type AS book_product_type,
+                p.file_extension AS book_file_extension,
+                p.subject_id AS subject_id,
+                subt.name AS subject_name
+        ";
+    }
+}
+
+if (!function_exists('book_request_from_sql')) {
+    function book_request_from_sql(int $langId): string {
+        return "
+            FROM student_book_purchase_requests sbpr
+            JOIN students st ON sbpr.student_id = st.id
+            LEFT JOIN products p ON sbpr.book_id = p.id
+            LEFT JOIN subjects sub ON p.subject_id = sub.id
+            LEFT JOIN subjects_translations subt ON sub.id = subt.subject_id AND subt.language_id = {$langId}
+        ";
+    }
+}
+
+if (!function_exists('book_request_format_row')) {
+    function book_request_format_row(array $row): array {
+        $row['id'] = (int)$row['id'];
+        $row['student_id'] = (int)$row['student_id'];
+        $row['book_id'] = (int)$row['book_id'];
+        $row['reviewed_by_id'] = !empty($row['reviewed_by_id']) ? (int)$row['reviewed_by_id'] : null;
+        $row['student_image'] = !empty($row['student_image']) ? format_image_url($row['student_image']) : null;
+        $row['book_cover_image'] = !empty($row['book_cover_image']) ? format_image_url($row['book_cover_image']) : null;
+        $row['book_file_path'] = !empty($row['book_file_path']) ? format_image_url($row['book_file_path']) : null;
+
+        // `book_file_type` keeps the value a book row carried: 'physical' or the extension.
+        $productType = $row['book_product_type'] ?? null;
+        $row['book_file_type'] = $productType === null ? null : store_item_file_type([
+            'product_type' => $productType,
+            'file_extension' => $row['book_file_extension'] ?? null,
+        ]);
+        unset($row['book_file_extension']);
+
+        $priced = $row['book_price'] !== null;
+        $effective = store_item_effective_price(['price' => $row['book_price'], 'sale_price' => $row['book_sale_price']]);
+        $row['book_price'] = (float)($row['book_price'] ?? 0.00);
+        $row['book_is_priced'] = $priced;
+        $row['book_sale_price'] = $row['book_sale_price'] !== null ? (float)$row['book_sale_price'] : null;
+        $row['book_effective_price'] = $effective;
+        $row['book_stock'] = $row['book_stock'] !== null ? (int)$row['book_stock'] : null;
+        $row['book_in_stock'] = $row['book_stock'] === null || $row['book_stock'] > 0;
+        $row['book_allow_download'] = (int)($row['book_allow_download'] ?? 1);
+        $row['subject_id'] = !empty($row['subject_id']) ? (int)$row['subject_id'] : null;
+        $row['subject_name'] = $row['subject_name'] ?? null;
+        $row['item_type'] = 'product';
+
+        return $row;
+    }
+}
+
+if (!function_exists('book_request_search_sql')) {
+    function book_request_search_sql($con, string $search, bool $withSubject): string {
+        $like = '%' . mysqli_real_escape_string($con, $search) . '%';
+        return " AND (
+                st.name LIKE '{$like}'
+                OR st.email LIKE '{$like}'
+                OR st.phone LIKE '{$like}'
+                OR EXISTS (SELECT 1 FROM products_translations pt_s WHERE pt_s.product_id = p.id AND pt_s.name LIKE '{$like}')
+                OR sbpr.status LIKE '{$like}'
+                OR sbpr.notes LIKE '{$like}'"
+            . ($withSubject ? " OR subt.name LIKE '{$like}'" : "") . "
+            )";
+    }
+}
 
 if (!function_exists('adminListBookPurchaseRequests')) {
     function adminListBookPurchaseRequests($con) {
@@ -639,193 +1018,59 @@ if (!function_exists('adminListBookPurchaseRequests')) {
         $langId = (int)($langInfo['id'] ?? 1);
 
         $whereClause = "WHERE 1=1";
-
-       if ($studentId > 0) {
-    $whereClause .= " AND sbpr.student_id = " . (int)$studentId;
-}
-
+        if ($studentId > 0) {
+            $whereClause .= " AND sbpr.student_id = {$studentId}";
+        }
         if ($bookId > 0) {
             $whereClause .= " AND sbpr.book_id = {$bookId}";
         }
-
         if ($subjectId > 0) {
-            $whereClause .= " AND cb.subject_id = {$subjectId}";
+            $whereClause .= " AND p.subject_id = {$subjectId}";
         }
-
         if ($status !== '') {
             $statusEsc = mysqli_real_escape_string($con, $status);
             $whereClause .= " AND sbpr.status = '{$statusEsc}'";
         }
-
         if ($reviewedByType !== '') {
             $reviewedByTypeEsc = mysqli_real_escape_string($con, $reviewedByType);
             $whereClause .= " AND sbpr.reviewed_by_type = '{$reviewedByTypeEsc}'";
         }
-
         if ($search !== '') {
-            $searchEsc = mysqli_real_escape_string($con, $search);
-            $searchLike = "%{$searchEsc}%";
-
-            $whereClause .= "
-                AND (
-                    st.name LIKE '{$searchLike}'
-                    OR st.email LIKE '{$searchLike}'
-                    OR st.phone LIKE '{$searchLike}'
-                    OR cbt.title LIKE '{$searchLike}'
-                    OR sbpr.status LIKE '{$searchLike}'
-                    OR sbpr.notes LIKE '{$searchLike}'
-                    OR subt.name LIKE '{$searchLike}'
-                )
-            ";
+            $whereClause .= book_request_search_sql($con, $search, true);
         }
 
-        $countSql = "
-            SELECT COUNT(DISTINCT sbpr.id) AS total
-            FROM student_book_purchase_requests sbpr
-            JOIN students st
-                ON sbpr.student_id = st.id
-            LEFT JOIN course_books cb
-                ON sbpr.book_id = cb.id
-            LEFT JOIN course_books_translations cbt
-                ON cb.id = cbt.book_id
-                AND cbt.language_id = {$langId}
-            LEFT JOIN subjects sub
-                ON cb.subject_id = sub.id
-            LEFT JOIN subjects_translations subt
-                ON sub.id = subt.subject_id
-                AND subt.language_id = {$langId}
+        $from = book_request_from_sql($langId);
+
+        $countRes = mysqli_query($con, "SELECT COUNT(DISTINCT sbpr.id) AS total {$from} {$whereClause}");
+        $totalRecords = $countRes ? (int)(mysqli_fetch_assoc($countRes)['total'] ?? 0) : 0;
+
+        $res = mysqli_query($con, "
+            SELECT " . book_request_select_sql($langId) . "
+            {$from}
             {$whereClause}
-        ";
-
-        $countRes = mysqli_query($con, $countSql);
-
-        $totalRecords = 0;
-
-        if ($countRes) {
-            $countRow = mysqli_fetch_assoc($countRes);
-            $totalRecords = (int)($countRow['total'] ?? 0);
-        }
-
-        $sql = "
-            SELECT
-                sbpr.id,
-                sbpr.student_id,
-                sbpr.book_id,
-                sbpr.status,
-                sbpr.reviewed_by_type,
-                sbpr.reviewed_by_id,
-                sbpr.notes,
-                sbpr.review_notes,
-                sbpr.created_at,
-                sbpr.updated_at,
-
-                st.name AS student_name,
-                st.email AS student_email,
-                st.phone AS student_phone,
-                st.image AS student_image,
-
-                COALESCE(
-                    cbt.title,
-                    cb.file_path
-                ) AS book_title,
-
-                cbt.description AS book_description,
-                cb.file_path AS book_file_path,
-                cb.link AS book_cover_image,
-                cb.price AS book_price,
-                cb.allow_download AS book_allow_download,
-                -- Added so a client can tell a shipped item from a downloadable one without
-                -- inferring it from an absent file_path. Purely additive: every field that was
-                -- here before is still here, under the same name.
-                cb.file_type AS book_file_type,
-                cb.subject_id AS subject_id,
-                subt.name AS subject_name
-
-            FROM student_book_purchase_requests sbpr
-
-            JOIN students st
-                ON sbpr.student_id = st.id
-
-            LEFT JOIN course_books cb
-                ON sbpr.book_id = cb.id
-
-            LEFT JOIN course_books_translations cbt
-                ON cb.id = cbt.book_id
-                AND cbt.language_id = {$langId}
-
-            LEFT JOIN subjects sub
-                ON cb.subject_id = sub.id
-
-            LEFT JOIN subjects_translations subt
-                ON sub.id = subt.subject_id
-                AND subt.language_id = {$langId}
-
-            {$whereClause}
-
             ORDER BY sbpr.id DESC
-
-            LIMIT {$limit}
-            OFFSET {$offset}
-        ";
-
-        $res = mysqli_query($con, $sql);
+            LIMIT {$limit} OFFSET {$offset}
+        ");
 
         $items = [];
-
-        if ($res) {
-            while ($row = mysqli_fetch_assoc($res)) {
-                $row['id'] = (int)$row['id'];
-                $row['student_id'] = (int)$row['student_id'];
-                $row['book_id'] = (int)$row['book_id'];
-
-                $row['reviewed_by_id'] = !empty($row['reviewed_by_id'])
-                    ? (int)$row['reviewed_by_id']
-                    : null;
-
-                $row['student_image'] = !empty($row['student_image'])
-                    ? format_image_url($row['student_image'])
-                    : null;
-
-                $row['book_cover_image'] = !empty($row['book_cover_image'])
-                    ? format_image_url($row['book_cover_image'])
-                    : null;
-
-                $row['book_file_path'] = !empty($row['book_file_path'])
-                    ? format_image_url($row['book_file_path'])
-                    : null;
-
-                $row['book_price'] = (float)($row['book_price'] ?? 0.00);
-                $row['book_allow_download'] = (int)($row['book_allow_download'] ?? 1);
-                $row['subject_id'] = !empty($row['subject_id']) ? (int)$row['subject_id'] : null;
-                $row['subject_name'] = $row['subject_name'] ?? null;
-
-                $items[] = $row;
-            }
+        while ($res && ($row = mysqli_fetch_assoc($res))) {
+            $items[] = book_request_format_row($row);
         }
 
-return build_admin_paginated_response(
-    $items,
-    $page,
-    $limit,
-    $totalRecords,
-    [
-        'total_count' => $totalRecords
-    ]
-);
+        return build_admin_paginated_response($items, $page, $limit, $totalRecords, ['total_count' => $totalRecords]);
     }
 }
 
-// teacherListBookPurchaseRequests moved to app/teacher/books/manage.php
+// teacherListBookPurchaseRequests lives in app/teacher/books/manage.php
 
-if (!function_exists('adminReviewBookRequest')) {
-    function adminReviewBookRequest($con, $adminData = null) {
-        $adminId = 0;
-        if (is_array($adminData)) {
-            $adminId = (int)($adminData['id'] ?? $adminData['admin_id'] ?? 0);
-        } elseif (is_object($adminData)) {
-            $adminId = (int)($adminData->id ?? $adminData->admin_id ?? 0);
-        }
-
+if (!function_exists('book_request_review')) {
+    /**
+     * Approve or reject a pending purchase request - the admin's and the teacher's review are
+     * this one function. An approval is refused, and the request left pending, when the item
+     * cannot be handed over (gone, inactive, out of stock); otherwise it grants the item and
+     * takes one unit of tracked stock (R6). `$teacherId` > 0 limits it to that teacher's items.
+     */
+    function book_request_review($con, string $byType, int $byId, int $teacherId = 0) {
         $body = read_json_body();
         $requestId = (int)($body['request_id'] ?? $_GET['request_id'] ?? 0);
         $newStatus = trim($body['status'] ?? '');
@@ -849,23 +1094,27 @@ if (!function_exists('adminReviewBookRequest')) {
 
         $stId = (int)$rRow['student_id'];
         $bookId = (int)$rRow['book_id'];
+
+        if ($teacherId > 0 && !teacher_owns_store_item($con, $teacherId, $bookId)) {
+            return ['status' => 'error', 'message' => 'You are not authorized to review this book request'];
+        }
+
+        if ($newStatus === 'approved') {
+            $block = store_item_sale_block($con, store_item_find($con, $bookId));
+            if ($block) {
+                return $block;
+            }
+        }
+
+        $byType = $byType === 'teacher' ? 'teacher' : 'admin';
         $notesEsc = mysqli_real_escape_string($con, $notes);
 
         // review_notes, not notes: `notes` is the student's own note from when the request was
         // filed. Writing the reviewer's note over it lost the student's words every time.
-        mysqli_query($con, "UPDATE student_book_purchase_requests SET status = '{$newStatus}', reviewed_by_type = 'admin', reviewed_by_id = {$adminId}, review_notes = '{$notesEsc}' WHERE id = {$requestId}");
+        mysqli_query($con, "UPDATE student_book_purchase_requests SET status = '{$newStatus}', reviewed_by_type = '{$byType}', reviewed_by_id = {$byId}, review_notes = '{$notesEsc}' WHERE id = {$requestId}");
 
         if ($newStatus === 'approved') {
-            $bRes = mysqli_query($con, "SELECT price FROM course_books WHERE id = {$bookId} LIMIT 1");
-            $bRow = $bRes ? mysqli_fetch_assoc($bRes) : null;
-            $price = $bRow ? (float)$bRow['price'] : 0.00;
-
-            $chk = mysqli_query($con, "SELECT id FROM student_book_subscriptions WHERE student_id = {$stId} AND book_id = {$bookId} LIMIT 1");
-            if ($chk && mysqli_num_rows($chk) > 0) {
-                mysqli_query($con, "UPDATE student_book_subscriptions SET is_active = 1, granted_by_type = 'admin', granted_by_id = {$adminId} WHERE student_id = {$stId} AND book_id = {$bookId}");
-            } else {
-                mysqli_query($con, "INSERT INTO student_book_subscriptions (student_id, book_id, granted_by_type, granted_by_id, price, is_active) VALUES ({$stId}, {$bookId}, 'admin', {$adminId}, {$price}, 1)");
-            }
+            store_item_grant_one($con, $bookId, $stId, $byType, $byId, true);
         }
 
         return [
@@ -876,6 +1125,17 @@ if (!function_exists('adminReviewBookRequest')) {
     }
 }
 
+if (!function_exists('adminReviewBookRequest')) {
+    function adminReviewBookRequest($con, $adminData = null) {
+        $adminId = 0;
+        if (is_array($adminData)) {
+            $adminId = (int)($adminData['id'] ?? $adminData['admin_id'] ?? 0);
+        } elseif (is_object($adminData)) {
+            $adminId = (int)($adminData->id ?? $adminData->admin_id ?? 0);
+        }
+        return book_request_review($con, 'admin', $adminId);
+    }
+}
 
 if (!function_exists('adminDeleteBookPurchaseRequest')) {
     /**

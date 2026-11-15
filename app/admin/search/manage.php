@@ -147,14 +147,30 @@ if (!function_exists('adminGlobalSearch')) {
             ORDER BY c.id DESC LIMIT {$perGroup}
         ", 'الباقات', 'Packages');
 
+        // Since migration 131 the store's books are `products` rows and course_books holds only
+        // lesson files. This group returned both before, so it still does: store items first (they
+        // are what the Books screen manages), then lesson files to fill what is left.
         $collect('books', 'manage_books', "
-            SELECT b.id, COALESCE(bt.title, CONCAT('#', b.id)) AS title,
-                   COALESCE(bt.description, '') AS subtitle,
-                   b.cover_image AS image, CONCAT('/books?q=', COALESCE(bt.title, '')) AS link, b.is_active
-            FROM course_books b
-            LEFT JOIN course_books_translations bt ON bt.book_id = b.id AND bt.language_id = {$langId}
-            WHERE bt.title LIKE '{$like}' OR bt.description LIKE '{$like}'
-            ORDER BY b.id DESC LIMIT {$perGroup}
+            SELECT x.id, x.title, x.subtitle, x.image, x.link, x.is_active FROM (
+                (SELECT p.id, COALESCE(pt.name, CONCAT('#', p.id)) AS title,
+                        COALESCE(pt.description, '') AS subtitle,
+                        p.image AS image, CONCAT('/books?q=', COALESCE(pt.name, '')) AS link, p.is_active,
+                        0 AS store_rank
+                   FROM products p
+                   LEFT JOIN products_translations pt ON pt.product_id = p.id AND pt.language_id = {$langId}
+                  WHERE pt.name LIKE '{$like}' OR pt.description LIKE '{$like}'
+                  ORDER BY p.id DESC LIMIT {$perGroup})
+                UNION ALL
+                (SELECT b.id, COALESCE(bt.title, CONCAT('#', b.id)) AS title,
+                        COALESCE(bt.description, '') AS subtitle,
+                        b.cover_image AS image, CONCAT('/books?q=', COALESCE(bt.title, '')) AS link, b.is_active,
+                        1 AS store_rank
+                   FROM course_books b
+                   LEFT JOIN course_books_translations bt ON bt.book_id = b.id AND bt.language_id = {$langId}
+                  WHERE bt.title LIKE '{$like}' OR bt.description LIKE '{$like}'
+                  ORDER BY b.id DESC LIMIT {$perGroup})
+            ) x
+            ORDER BY x.store_rank ASC, x.id DESC LIMIT {$perGroup}
         ", 'الكتب', 'Books');
 
         $collect('subjects', 'manage_subjects', "

@@ -1,5 +1,28 @@
 <?php
 require_once __DIR__ . '/../helpers.php';
+require_once __DIR__ . '/../../../helpers/app_settings.php';
+require_once __DIR__ . '/../../../helpers/store_items.php';
+
+/*
+ * The older copy of the book handlers (see R8 in the store-unification notes: whichever copy is
+ * loaded first wins). The live admin/teacher routes run app/admin/books/manage.php; this copy is
+ * reached through the student's /books/show for a lesson file. Since migration 131 a book here is
+ * a lesson file only - a store item is a product - so the same refusals apply as in the live copy.
+ */
+
+if (!function_exists('content_books_store_item_refusal')) {
+    function content_books_store_item_refusal($con): array {
+        return [
+            'status' => 'error',
+            'error_code' => 'store_item_is_product',
+            'message' => app_text(
+                $con,
+                'عناصر المتجر أصبحت تُدار كمنتجات من شاشة المنتجات. الكتب هنا هي ملفات الدروس فقط، ويجب أن ترتبط بكورس أو وحدة.',
+                'Store items are managed as products now. Books here are lesson files only and must belong to a course or a unit.'
+            ),
+        ];
+    }
+}
 
 if (!function_exists('get_book_details')) {
     function get_book_details($con, $bookId) {
@@ -269,6 +292,8 @@ if (!function_exists('adminCreateBook')) {
 
         $err = validate_content_linkage($con, $unitId, $courseId, $subjectId);
         if ($err) return $err;
+        // Subject-only used to be a store book; the store is `products` now.
+        if (!$unitId && !$courseId) return content_books_store_item_refusal($con);
 
         $titleAr = trim($body['title_ar'] ?? $body['title'] ?? '');
         $titleEn = trim($body['title_en'] ?? $titleAr);
@@ -352,6 +377,7 @@ if (!function_exists('adminUpdateBook')) {
         mysqli_stmt_execute($checkStmt);
         $existing = mysqli_fetch_assoc(mysqli_stmt_get_result($checkStmt));
         if (!$existing) {
+            if (store_item_find($con, $id)) return content_books_store_item_refusal($con);
             return ['status' => 'error', 'message' => 'Book not found'];
         }
 
@@ -361,6 +387,7 @@ if (!function_exists('adminUpdateBook')) {
 
         $err = validate_content_linkage($con, $unitId, $courseId, $subjectId);
         if ($err) return $err;
+        if (!$unitId && !$courseId) return content_books_store_item_refusal($con);
 
         $fileType = isset($body['file_type']) ? trim($body['file_type']) : null;
         $extension = isset($body['extension']) ? trim($body['extension']) : null;
@@ -461,6 +488,10 @@ if (!function_exists('adminDeleteBook')) {
         $id = (int)($_GET['id'] ?? read_json_body()['id'] ?? 0);
         if ($id <= 0) {
             return ['status' => 'error', 'message' => 'Book ID is required'];
+        }
+        $isLesson = @mysqli_query($con, "SELECT id FROM course_books WHERE id = {$id} LIMIT 1");
+        if ((!$isLesson || mysqli_num_rows($isLesson) === 0) && store_item_find($con, $id)) {
+            return content_books_store_item_refusal($con);
         }
         $stmt = mysqli_prepare($con, "DELETE FROM course_books WHERE id = ?");
         mysqli_stmt_bind_param($stmt, "i", $id);

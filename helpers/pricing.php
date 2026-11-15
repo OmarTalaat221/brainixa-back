@@ -3,6 +3,8 @@ require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/language.php';
 require_once __DIR__ . '/app_settings.php';
 require_once __DIR__ . '/unpriced.php';
+// A store item ('book' in item_country_prices) is a `products` row since migration 131.
+require_once __DIR__ . '/store_items.php';
 
 /**
  * What a given student, in a given country, pays for a given thing.
@@ -660,6 +662,7 @@ if (!function_exists('pricing_country_prices')) {
      * whole listing rather than one per course.
      */
     function pricing_country_prices($con, string $itemType, array $itemIds, int $countryId): array {
+        $itemType = store_item_type($itemType);
         if ($countryId <= 0 || !$itemIds) return [];
         if (!in_array($itemType, ['course', 'book'], true)) return [];
 
@@ -740,7 +743,9 @@ if (!function_exists('pricing_unpriced_ids')) {
      * when no price can be NULL.
      */
     function pricing_unpriced_ids($con, string $itemType, array $itemIds): array {
-        $tables = ['course' => 'courses', 'book' => 'course_books'];
+        $itemType = store_item_type($itemType);
+        // 'book' is a store item, and a store item is a `products` row (migration 131).
+        $tables = ['course' => 'courses', 'book' => 'products'];
         $table = $tables[$itemType] ?? null;
         $ids = array_values(array_unique(array_filter(array_map('intval', $itemIds))));
         if (!$table || !$ids) return [];
@@ -829,6 +834,16 @@ if (!function_exists('pricing_for_item')) {
      * that has to agree with what the student was shown.
      */
     function pricing_for_item($con, string $itemType, int $itemId, float $basePrice, int $studentId = 0): array {
+        $itemType = store_item_type($itemType);
+        // A store item's base price is whatever the product sells for right now - its sale price
+        // while it is on sale - read here rather than trusted from the caller, so every money path
+        // quotes the same figure. A country price still overrides it below, as it did for books.
+        if ($itemType === 'book') {
+            $product = store_item_find($con, $itemId);
+            if ($product) {
+                $basePrice = (float)(store_item_effective_price($product) ?? 0.0);
+            }
+        }
         $context = pricing_context($con, $studentId);
         $countryPrices = pricing_country_prices($con, $itemType, [$itemId], (int)($context['country_id'] ?? 0));
         $block = pricing_apply($con, $context, $basePrice, $countryPrices[$itemId] ?? null);

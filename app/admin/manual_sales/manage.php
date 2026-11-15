@@ -2,6 +2,8 @@
 require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/functions.php';
 require_once __DIR__ . '/../../../helpers/upload.php';
+// A sale of item_type 'book' is a store item - a `products` row since migration 131.
+require_once __DIR__ . '/../../../helpers/store_items.php';
 
 /**
  * The manual sales sheet.
@@ -26,6 +28,8 @@ if (!function_exists('manual_sale_enum_value')) {
     function manual_sale_enum_value($raw, string $field, string $default): string {
         $allowed = manual_sale_enums()[$field] ?? [];
         $value = strtolower(trim((string)$raw));
+        // A store item may arrive as 'product'; the column calls it 'book'.
+        if ($field === 'item_type') $value = store_item_type($value);
 
         return in_array($value, $allowed, true) ? $value : $default;
     }
@@ -112,6 +116,79 @@ if (!function_exists('manual_sale_row')) {
     }
 }
 
+/**
+ * Stock for a sale written down by hand.
+ *
+ * A row only says what was sold until it is APPROVED and linked to a store item (item_type
+ * 'book' with an item_id). From then the item has left the shelf, so one unit of tracked stock
+ * goes with it - once, on the move into that state, never again on a later edit of the same row.
+ * Moving an already approved row onto a different item counts as a sale of that item.
+ */
+if (!function_exists('manual_sale_takes_stock')) {
+    function manual_sale_takes_stock(?array $before, ?array $after): bool {
+        $linked = fn(?array $r) => $r
+            && ($r['status'] ?? '') === 'approved'
+            && ($r['item_type'] ?? '') === 'book'
+            && (int)($r['item_id'] ?? 0) > 0;
+
+        if (!$linked($after)) return false;
+        return !$linked($before) || (int)$before['item_id'] !== (int)$after['item_id'];
+    }
+}
+
+if (!function_exists('manual_sale_find')) {
+    function manual_sale_find($con, int $id): ?array {
+        $stmt = mysqli_prepare($con, "SELECT * FROM manual_sales WHERE id = ? LIMIT 1");
+        if (!$stmt) return null;
+        mysqli_stmt_bind_param($stmt, "i", $id);
+        mysqli_stmt_execute($stmt);
+        $row = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+        return $row ?: null;
+    }
+}
+
+if (!function_exists('manual_sale_prospective')) {
+    /** The row as it will be once this edit's status / item_type / item_id are written. */
+    function manual_sale_prospective(array $before, array $body): array {
+        $after = $before;
+        foreach (['item_type' => 'course', 'status' => 'pending'] as $field => $default) {
+            if (array_key_exists($field, $body)) {
+                $after[$field] = manual_sale_enum_value($body[$field], $field, $default);
+            }
+        }
+        if (array_key_exists('item_id', $body)) {
+            $after['item_id'] = (int)$body['item_id'] > 0 ? (int)$body['item_id'] : null;
+        }
+        return $after;
+    }
+}
+
+if (!function_exists('manual_sale_stock_block')) {
+    /**
+     * The refusal for approving a sale of a physical store item whose tracked stock is gone, or
+     * null. Only asked when this save would take stock: a pending row, or one already counted,
+     * is never refused for it.
+     */
+    function manual_sale_stock_block($con, ?array $before, ?array $after): ?array {
+        if (!manual_sale_takes_stock($before, $after)) return null;
+        $product = store_item_find($con, (int)$after['item_id']);
+        // An unknown or inactive item is not refused here - the sheet has never validated what a
+        // row is linked to - and there is no stock to take from it either.
+        if (!$product) return null;
+        $block = store_item_sale_block($con, $product);
+        return ($block && ($block['error_code'] ?? '') === 'out_of_stock') ? $block : null;
+    }
+}
+
+if (!function_exists('manual_sale_settle_stock')) {
+    /** Takes the unit once the save succeeded. See manual_sale_takes_stock() for when. */
+    function manual_sale_settle_stock($con, ?array $before, ?array $after): void {
+        if (manual_sale_takes_stock($before, $after)) {
+            store_item_take_stock($con, (int)$after['item_id']);
+        }
+    }
+}
+
 if (!function_exists('adminListManualSales')) {
     function adminListManualSales($con) {
         $page = max(1, (int)($_GET['page'] ?? 1));
@@ -134,6 +211,7 @@ if (!function_exists('adminListManualSales')) {
         // than silently returning nothing.
         foreach (['status', 'channel', 'item_type'] as $field) {
             $raw = strtolower(trim($_GET[$field] ?? ''));
+            if ($field === 'item_type') $raw = store_item_type($raw);
             if ($raw !== '' && in_array($raw, manual_sale_enums()[$field], true)) {
                 $where[] = "{$field} = ?";
                 $params[] = $raw;
@@ -272,6 +350,11 @@ if (!function_exists('adminCreateManualSale')) {
         $createdBy = (int)($adminData['id'] ?? 0) ?: null;
         $receipt = manual_sale_receipt_value($body) ?: null;
 
+        $stockAfter = ['status' => $status, 'item_type' => $itemType, 'item_id' => $itemId];
+        if ($block = manual_sale_stock_block($con, null, $stockAfter)) {
+            return $block;
+        }
+
         $stmt = mysqli_prepare($con, "
             INSERT INTO manual_sales
                 (student_name, phone, phone_country_code, item_type, item_name, item_id,
@@ -290,11 +373,13 @@ if (!function_exists('adminCreateManualSale')) {
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => 'Failed to create the manual sale: ' . mysqli_error($con)];
         }
+        $newId = mysqli_insert_id($con);
+        manual_sale_settle_stock($con, null, $stockAfter);
 
         return [
             'status' => 'success',
             'message' => 'Manual sale recorded',
-            'data' => ['id' => mysqli_insert_id($con)],
+            'data' => ['id' => $newId],
         ];
     }
 }
@@ -306,6 +391,14 @@ if (!function_exists('adminUpdateManualSale')) {
 
         if ($id <= 0) {
             return ['status' => 'error', 'message' => 'Manual sale ID is required'];
+        }
+
+        // Read before writing, so the move into "approved" can be told apart from a later edit
+        // of a row that was approved already (only the move takes stock).
+        $before = manual_sale_find($con, $id);
+        $stockAfter = $before ? manual_sale_prospective($before, $body) : null;
+        if ($before && ($block = manual_sale_stock_block($con, $before, $stockAfter))) {
+            return $block;
         }
 
         $fields = [];
@@ -382,6 +475,9 @@ if (!function_exists('adminUpdateManualSale')) {
 
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => 'Failed to update the manual sale: ' . mysqli_error($con)];
+        }
+        if ($before && mysqli_stmt_affected_rows($stmt) > 0) {
+            manual_sale_settle_stock($con, $before, $stockAfter);
         }
 
         return ['status' => 'success', 'message' => 'Manual sale updated'];

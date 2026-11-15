@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../../helpers/pricing.php';
 // whatever else their chain happened to pull in - session_ratings did not, and died with a
 // PHP fatal that came back as an HTML page where the client expected JSON.
 require_once __DIR__ . '/../../../helpers/app_settings.php';
+require_once __DIR__ . '/../../../helpers/store_items.php';
 
 /**
  * The admin side of pricing: which countries and currencies are offered, and what each item costs
@@ -31,9 +32,19 @@ if (!function_exists('pricing_actor')) {
 if (!function_exists('pricing_item_exists')) {
     /** The item, or null. Returns the base price with it, so the screen can show what it falls back to. */
     function pricing_item_exists($con, string $itemType, int $itemId): ?array {
+        $itemType = store_item_type($itemType);
         if (!in_array($itemType, ['course', 'book'], true) || $itemId <= 0) return null;
 
-        $table = $itemType === 'course' ? 'courses' : 'course_books';
+        // A store item is a `products` row since migration 131. Its base price is what it sells
+        // for now - the sale price while on sale - since that is what a country without a price
+        // of its own is quoted. NULL (no price) stays 0 here as it always did on this screen.
+        if ($itemType === 'book') {
+            $product = store_item_find($con, $itemId);
+            if (!$product) return null;
+            return ['id' => (int)$product['id'], 'price' => (float)(store_item_effective_price($product) ?? 0.0)];
+        }
+
+        $table = 'courses';
         $stmt = mysqli_prepare($con, "SELECT id, price FROM {$table} WHERE id = ? LIMIT 1");
         if (!$stmt) return null;
 
@@ -252,7 +263,7 @@ if (!function_exists('pricing_item_prices_payload')) {
 
 if (!function_exists('adminListItemPrices')) {
     function adminListItemPrices($con) {
-        $itemType = strtolower(trim((string)($_GET['item_type'] ?? 'course')));
+        $itemType = store_item_type((string)($_GET['item_type'] ?? 'course'));
         $itemId = (int)($_GET['item_id'] ?? 0);
 
         $item = pricing_item_exists($con, $itemType, $itemId);
@@ -326,7 +337,7 @@ if (!function_exists('pricing_save_item_prices')) {
 if (!function_exists('adminSaveItemPrices')) {
     function adminSaveItemPrices($con, $adminData = null) {
         $body = read_json_body();
-        $itemType = strtolower(trim((string)($body['item_type'] ?? 'course')));
+        $itemType = store_item_type((string)($body['item_type'] ?? 'course'));
         $itemId = (int)($body['item_id'] ?? 0);
 
         $item = pricing_item_exists($con, $itemType, $itemId);
@@ -373,7 +384,7 @@ if (!function_exists('pricing_delete_item_price')) {
 if (!function_exists('adminDeleteItemPrice')) {
     function adminDeleteItemPrice($con) {
         $body = read_json_body();
-        $itemType = strtolower(trim((string)($body['item_type'] ?? $_GET['item_type'] ?? 'course')));
+        $itemType = store_item_type((string)($body['item_type'] ?? $_GET['item_type'] ?? 'course'));
         $itemId = (int)($body['item_id'] ?? $_GET['item_id'] ?? 0);
         $countryId = (int)($body['country_id'] ?? $_GET['country_id'] ?? 0);
         $priceId = (int)($body['id'] ?? $_GET['id'] ?? 0);
@@ -416,6 +427,9 @@ if (!function_exists('adminListPricedItems')) {
     function adminListPricedItems($con) {
         $langInfo = get_language_info($con);
         $langId = (int)($langInfo['id'] ?? 1);
+        // A 'book' row here is a store item, read from `products` since migration 131; its base
+        // price is the one it sells for now (the sale price while on sale).
+        $storeName = store_name_sql($langId, 'sp');
 
         $sql = "
             SELECT p.item_type, p.item_id, COUNT(*) AS countries_count, MAX(p.updated_at) AS updated_at,
@@ -423,13 +437,12 @@ if (!function_exists('adminListPricedItems')) {
                        WHEN 'course' THEN COALESCE(
                            (SELECT ct.name FROM courses_translations ct WHERE ct.course_id = p.item_id AND ct.language_id = {$langId} LIMIT 1),
                            (SELECT ct.name FROM courses_translations ct WHERE ct.course_id = p.item_id LIMIT 1))
-                       ELSE COALESCE(
-                           (SELECT bt.title FROM course_books_translations bt WHERE bt.book_id = p.item_id AND bt.language_id = {$langId} LIMIT 1),
-                           (SELECT bt.title FROM course_books_translations bt WHERE bt.book_id = p.item_id LIMIT 1))
+                       ELSE (SELECT {$storeName} FROM products sp WHERE sp.id = p.item_id)
                    END AS item_name,
                    CASE p.item_type
                        WHEN 'course' THEN (SELECT c.price FROM courses c WHERE c.id = p.item_id)
-                       ELSE (SELECT b.price FROM course_books b WHERE b.id = p.item_id)
+                       ELSE (SELECT CASE WHEN sp.sale_price IS NOT NULL AND sp.sale_price < sp.price THEN sp.sale_price ELSE sp.price END
+                             FROM products sp WHERE sp.id = p.item_id)
                    END AS base_price
             FROM item_country_prices p
             GROUP BY p.item_type, p.item_id

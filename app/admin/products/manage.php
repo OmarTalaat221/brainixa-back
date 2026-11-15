@@ -14,11 +14,22 @@ require_once __DIR__ . '/../../../helpers/unpriced.php';
  *
  * Needs migration 127. Every function here degrades to an empty list rather than a fatal error
  * while it has not run, as the rest of this codebase does for a table added after the fact.
+ *
+ * SINCE MIGRATION 131 THIS IS THE STORE. The store's books moved into `products` with their ids,
+ * so the fields a book had live here too: `product_type` (physical | digital), `subject_id`,
+ * `book_category` (summary | exam, digital only), `allow_download`, `link`, and the teachers
+ * assigned in `book_teachers` (keyed by the product id). The teacher's store screen uses the same
+ * functions through a creator context (app/teacher/products/manage.php), so the two cannot drift.
+ * Prices are base-currency prices, like a course's: `currency` is no longer taken from a request.
  */
 
 require_once __DIR__ . '/../../../helpers/functions.php';
 require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/upload.php';
+require_once __DIR__ . '/../../../helpers/app_settings.php';
+require_once __DIR__ . '/../../../helpers/pricing.php';
+require_once __DIR__ . '/../../../helpers/store_items.php';
+require_once __DIR__ . '/../../../helpers/teacher_ownership.php';
 require_once __DIR__ . '/../../content/helpers.php';
 
 if (!function_exists('products_tables_ready')) {
@@ -397,6 +408,59 @@ if (!function_exists('product_file_columns_ready')) {
 
 if (!function_exists('product_file_fields_from_body')) {
     /**
+     * Takes the product's file off a POST before read_json_body() runs. That reader stores every
+     * upload it recognises under a generic name - a PDF in uploads/documents, and an unknown type
+     * (a .dwg, a .zip) under a guessed ".pdf" - and leaves the product nothing to read. Claimed
+     * here, the temp file is only set aside; it is stored (once, in uploads/products, under its
+     * real extension) when the product is actually written, so a refused save leaves nothing
+     * behind. Call it first thing in a handler; it runs once per request.
+     */
+    function product_claim_upload(): void {
+        static $done = false;
+        if ($done) return;
+        $done = true;
+        foreach (['file', 'product_file'] as $key) {
+            $f = $_FILES[$key] ?? null;
+            if (!is_array($f) || (int)($f['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+                continue;
+            }
+            $claimed = false;
+            if ((int)($f['error'] ?? 0) === UPLOAD_ERR_OK && !empty($f['tmp_name']) && file_exists($f['tmp_name'])) {
+                $aside = tempnam(sys_get_temp_dir(), 'prd');
+                if ($aside !== false && @copy($f['tmp_name'], $aside)) {
+                    $f['tmp_name'] = $aside;
+                    $claimed = $f;
+                    register_shutdown_function(static function () use ($aside) {
+                        if (is_file($aside)) @unlink($aside);
+                    });
+                }
+            }
+            $GLOBALS['__product_claimed_upload'] = $claimed;
+            unset($_FILES[$key]);
+            return;
+        }
+    }
+
+    /**
+     * The file product_claim_upload() set aside, stored on first use: the stored file
+     * (upload_any_file's array), false when it was refused, or null when there was none.
+     */
+    function product_claimed_upload() {
+        $claimed = $GLOBALS['__product_claimed_upload'] ?? null;
+        if (is_array($claimed) && !isset($claimed['path'])) {
+            $claimed = upload_any_file($claimed, 'products') ?: false;
+            $GLOBALS['__product_claimed_upload'] = $claimed;
+        }
+        return $claimed;
+    }
+
+    /** Whether a file was set aside, without storing it yet. */
+    function product_has_claimed_upload(): bool {
+        $claimed = $GLOBALS['__product_claimed_upload'] ?? null;
+        return is_array($claimed);
+    }
+
+    /**
      * The attachment off the request, as [column => value] ready to splice into an INSERT or an
      * UPDATE. Returns an empty array when the body says nothing about a file, which is how a
      * product is saved without touching the one it already has.
@@ -409,6 +473,21 @@ if (!function_exists('product_file_fields_from_body')) {
             return [];
         }
 
+        // A file claimed off a POST before read_json_body() could store it (product_claim_upload).
+        $claimed = product_claimed_upload();
+        if ($claimed !== null) {
+            if ($claimed === false) {
+                return ['__error' => 'نوع الملف غير مسموح، أو تعذّر رفعه. الملفات التنفيذية مرفوضة.'];
+            }
+            $name = trim((string)($body['file_name'] ?? ''));
+            return [
+                'file_path' => $claimed['path'],
+                'file_name' => $name !== '' ? upload_safe_basename($name) : $claimed['name'],
+                'file_extension' => $claimed['extension'] !== '' ? $claimed['extension'] : null,
+                'file_size' => $claimed['size'] > 0 ? $claimed['size'] : null,
+            ];
+        }
+
         // A form-data request carries a `file` row whether or not the person picked anything, and
         // an empty one arrives as UPLOAD_ERR_NO_FILE. That is "nothing chosen", not "a file that
         // failed" - treating it as the latter answers every ordinary save with a bogus "this file
@@ -416,6 +495,18 @@ if (!function_exists('product_file_fields_from_body')) {
         // time the price was edited from the dashboard.
         $upload = $_FILES['file'] ?? $_FILES['product_file'] ?? null;
         if (is_array($upload) && (int)($upload['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+            $upload = null;
+        }
+
+        // read_json_body() stores every upload it recognises (a PDF, an image, a video, audio) as
+        // it parses the request, and puts the stored path in $body['file']. By the time we get
+        // here the temp file is gone, so handing $upload on would fail as "not allowed". The
+        // stored path is the file; only its original name and size are taken from the upload.
+        $uploadedName = null;
+        $uploadedSize = 0;
+        if (is_array($upload) && (empty($upload['tmp_name']) || !file_exists($upload['tmp_name']))) {
+            $uploadedName = isset($upload['name']) ? (string)$upload['name'] : null;
+            $uploadedSize = (int)($upload['size'] ?? 0);
             $upload = null;
         }
 
@@ -452,9 +543,12 @@ if (!function_exists('product_file_fields_from_body')) {
             ];
         }
 
-        $result = process_any_file_input($raw, 'products', $upload, $body['file_name'] ?? null);
+        $result = process_any_file_input($raw, 'products', $upload, $body['file_name'] ?? $uploadedName);
         if ($result === null) {
             return ['__error' => 'نوع الملف غير مسموح، أو تعذّر رفعه. الملفات التنفيذية مرفوضة.'];
+        }
+        if ($result['size'] <= 0 && $uploadedSize > 0) {
+            $result['size'] = $uploadedSize;
         }
 
         return [
@@ -463,6 +557,43 @@ if (!function_exists('product_file_fields_from_body')) {
             'file_extension' => $result['extension'] !== '' ? $result['extension'] : null,
             'file_size' => $result['size'] > 0 ? $result['size'] : null,
         ];
+    }
+}
+
+if (!function_exists('product_teachers')) {
+    /**
+     * The teachers a product belongs to (R7): the ones assigned in `book_teachers`, plus its
+     * creator when that was a teacher. Only id, name and image - product_row() also feeds the
+     * public store, which has no business publishing a teacher's email or phone.
+     */
+    function product_teachers($con, array $row): array {
+        $id = (int)($row['id'] ?? 0);
+        if ($id <= 0) return [];
+
+        $creatorId = (($row['created_by_type'] ?? '') === 'teacher' && !empty($row['created_by_id']))
+            ? (int)$row['created_by_id'] : 0;
+
+        $out = [];
+        $res = @mysqli_query($con, "
+            SELECT t.id, t.name, t.image
+            FROM book_teachers bt
+            JOIN teachers t ON t.id = bt.teacher_id
+            WHERE bt.book_id = {$id} AND bt.is_active = 1
+            ORDER BY t.id ASC
+        ");
+        while ($res && ($t = mysqli_fetch_assoc($res))) {
+            $tid = (int)$t['id'];
+            $out[$tid] = ['id' => $tid, 'name' => $t['name'], 'image' => $t['image'], 'is_creator' => $tid === $creatorId];
+        }
+
+        if ($creatorId > 0 && !isset($out[$creatorId])) {
+            $cRes = @mysqli_query($con, "SELECT id, name, image FROM teachers WHERE id = {$creatorId} LIMIT 1");
+            if ($cRes && ($t = mysqli_fetch_assoc($cRes))) {
+                $out = [$creatorId => ['id' => $creatorId, 'name' => $t['name'], 'image' => $t['image'], 'is_creator' => true]] + $out;
+            }
+        }
+
+        return array_values($out);
     }
 }
 
@@ -484,6 +615,9 @@ if (!function_exists('product_row')) {
 
         $stock = $row['stock'] !== null ? (int)$row['stock'] : null;
 
+        // Before migration 131 there is no column; a product with a file was the digital kind.
+        $productType = $row['product_type'] ?? (!empty($row['file_path'] ?? null) ? 'digital' : 'physical');
+
         $out = [
             'id' => $id,
             'product_category_id' => $row['product_category_id'] !== null ? (int)$row['product_category_id'] : null,
@@ -495,7 +629,9 @@ if (!function_exists('product_row')) {
             'effective_price' => round($onSale ? $salePrice : $price, 2),
             'is_on_sale' => $onSale,
             'discount_percent' => $onSale && $price > 0 ? (int)round((($price - $salePrice) / $price) * 100) : 0,
-            'currency' => $row['currency'] ?? 'EGP',
+            // Every store price is a base-currency price (migration 131), whatever an older row
+            // still says in its own column.
+            'currency' => pricing_base_currency($con),
             // NULL stock is "not tracked", which must not read as "sold out".
             'stock' => $stock,
             'in_stock' => $stock === null || $stock > 0,
@@ -518,8 +654,20 @@ if (!function_exists('product_row')) {
             'created_by_type' => $row['created_by_type'] ?? 'admin',
             'created_by_id' => $row['created_by_id'] !== null ? (int)$row['created_by_id'] : null,
             'created_at' => $row['created_at'] ?? null,
+            // The fields a store book had (migration 131). `file_type` is the value a book row
+            // carried - 'physical' or the extension - because every older client branches on it.
+            'item_type' => 'product',
+            'product_type' => $productType,
+            'file_type' => store_item_file_type(['product_type' => $productType] + $row),
+            'subject_id' => isset($row['subject_id']) && $row['subject_id'] !== null ? (int)$row['subject_id'] : null,
+            'book_category' => $row['book_category'] ?? null,
+            'allow_download' => (int)($row['allow_download'] ?? 1),
+            'link' => $row['link'] ?? null,
+            'legacy_book_id' => isset($row['legacy_book_id']) && $row['legacy_book_id'] !== null ? (int)$row['legacy_book_id'] : null,
+            'teachers' => product_teachers($con, $row),
             'translations' => [],
         ];
+        $out['teacher_ids'] = array_values(array_map(fn($t) => (int)$t['id'], $out['teachers']));
 
         $tStmt = mysqli_prepare($con, "
             SELECT t.language_id, l.code AS language_code, t.name, t.description
@@ -558,13 +706,62 @@ if (!function_exists('product_row')) {
     }
 }
 
+if (!function_exists('product_actor')) {
+    /**
+     * Who is saving: ['type' => 'admin'|'teacher', 'id' => int]. Every write below takes one, so
+     * the admin's and the teacher's store screens run the same code and differ only in this.
+     */
+    function product_actor($data, string $type): array {
+        $id = 0;
+        if (is_array($data)) {
+            $id = (int)($data['id'] ?? $data['teacher_id'] ?? $data['admin_id'] ?? 0);
+        } elseif (is_object($data)) {
+            $id = (int)($data->id ?? $data->teacher_id ?? $data->admin_id ?? 0);
+        }
+        return ['type' => $type === 'teacher' ? 'teacher' : 'admin', 'id' => $id];
+    }
+}
+
+if (!function_exists('product_not_owned')) {
+    function product_not_owned($con): array {
+        return [
+            'status' => 'error',
+            'error_code' => 'not_owner',
+            'message' => app_text($con, 'هذا المنتج ليس من منتجاتك، فلا يمكنك تعديله أو حذفه.', 'This product is not one of yours, so you cannot change or delete it.'),
+        ];
+    }
+}
+
+if (!function_exists('product_actor_may_edit')) {
+    /** An admin may change any product; a teacher only one they own (R7). */
+    function product_actor_may_edit($con, array $actor, int $productId): bool {
+        if ($actor['type'] !== 'teacher') return true;
+        return teacher_owns_store_item($con, (int)$actor['id'], $productId);
+    }
+}
+
+if (!function_exists('product_teacher_visibility_clause')) {
+    /**
+     * What a teacher's store screen lists: their own products (R7) and the admin's products that
+     * no teacher is assigned to, the latter read-only. The same rule the teacher's old store list
+     * (/teacher/books) applied - minus "any book in a subject I teach", which R7 no longer counts
+     * as ownership and which put other teachers' products on the screen.
+     */
+    function product_teacher_visibility_clause(int $teacherId, string $alias = 'p'): string {
+        return "(" . teacher_store_item_ownership_clause($teacherId, $alias) . "
+            OR ({$alias}.created_by_type = 'admin' AND NOT EXISTS (
+                SELECT 1 FROM book_teachers bt_vis WHERE bt_vis.book_id = {$alias}.id AND bt_vis.is_active = 1)))";
+    }
+}
+
 if (!function_exists('product_filters_sql')) {
     /**
-     * The filters shared by the admin list and the store, so the two cannot disagree about what
-     * `category_id` or `search` mean. `$publicOnly` adds the two conditions a shopper's view
-     * needs and an admin's must not have.
+     * The filters shared by the admin list, the teacher's list and the store, so they cannot
+     * disagree about what `category_id` or `search` mean. `$publicOnly` adds the two conditions a
+     * shopper's view needs and an admin's must not have. `$allowTeacherFilter` is off on the
+     * teacher's own list, where `teacher_id` must not be a way to look at someone else's shelf.
      */
-    function product_filters_sql($con, bool $publicOnly): array {
+    function product_filters_sql($con, bool $publicOnly, bool $allowTeacherFilter = true): array {
         $where = $publicOnly ? ["p.is_active = 1", "p.show_on_website = 1"] : [];
 
         $categoryId = (int)($_GET['category_id'] ?? $_GET['product_category_id'] ?? 0);
@@ -593,32 +790,74 @@ if (!function_exists('product_filters_sql')) {
             $where[] = "p.is_active = " . (int)$_GET['is_active'];
         }
 
+        // The columns the store's books brought with them (migration 131).
+        if (store_products_ready($con)) {
+            $productType = strtolower(trim((string)($_GET['product_type'] ?? '')));
+            if (in_array($productType, ['physical', 'digital'], true)) {
+                $where[] = "p.product_type = '{$productType}'";
+            }
+            $subjectId = (int)($_GET['subject_id'] ?? 0);
+            if ($subjectId > 0) {
+                $where[] = "p.subject_id = {$subjectId}";
+            }
+            $bookCategory = strtolower(trim((string)($_GET['book_category'] ?? '')));
+            if (in_array($bookCategory, ['summary', 'exam'], true)) {
+                $where[] = "p.book_category = '{$bookCategory}'";
+            }
+        }
+
+        $createdByType = strtolower(trim((string)($_GET['created_by_type'] ?? '')));
+        if (in_array($createdByType, ['admin', 'teacher'], true)) {
+            $where[] = "p.created_by_type = '{$createdByType}'";
+        }
+
+        if ($allowTeacherFilter) {
+            $teacherId = (int)($_GET['teacher_id'] ?? 0);
+            if ($teacherId > 0) {
+                $where[] = teacher_store_item_ownership_clause($teacherId, 'p');
+            }
+        }
+
         return $where;
     }
 }
 
-if (!function_exists('adminListProducts')) {
-    function adminListProducts($con) {
+if (!function_exists('product_list_response')) {
+    /**
+     * One page of products. `$scopeWhere` is what the viewer may see at all (nothing for the
+     * admin, product_teacher_visibility_clause() for a teacher); the statistics count that whole
+     * scope, the page and its total count the filters too.
+     */
+    function product_list_response($con, array $scopeWhere = [], int $viewerTeacherId = 0): array {
         if (!products_tables_ready($con)) {
             return build_paginated_response([], 1, 10, 0);
         }
 
         $page = max(1, (int)($_GET['page'] ?? 1));
-        $limit = max(1, min(100, (int)($_GET['limit'] ?? 20)));
+        $limit = max(1, min(500, (int)($_GET['limit'] ?? 20)));
         $offset = ($page - 1) * $limit;
 
-        $where = product_filters_sql($con, false);
+        $where = array_merge($scopeWhere, product_filters_sql($con, false, $viewerTeacherId <= 0));
+        if ($viewerTeacherId > 0 && !empty($_GET['owned'])) {
+            $where[] = teacher_store_item_ownership_clause($viewerTeacherId, 'p');
+        }
         $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+        $scopeSql = $scopeWhere ? 'WHERE ' . implode(' AND ', $scopeWhere) : '';
 
         $totalRes = @mysqli_query($con, "SELECT COUNT(*) AS total FROM products p {$whereSql}");
         $total = $totalRes ? (int)(mysqli_fetch_assoc($totalRes)['total'] ?? 0) : 0;
 
+        $typeStats = store_products_ready($con)
+            ? ", COALESCE(SUM(p.product_type = 'physical'), 0) AS physical_count,
+                 COALESCE(SUM(p.product_type = 'digital'), 0) AS digital_count"
+            : "";
         $statRes = @mysqli_query($con, "
             SELECT COUNT(*) AS total,
-                   COALESCE(SUM(is_active = 1), 0) AS active_count,
-                   COALESCE(SUM(is_active = 0), 0) AS inactive_count,
-                   COALESCE(SUM(stock IS NOT NULL AND stock <= 0), 0) AS out_of_stock_count
-            FROM products
+                   COALESCE(SUM(p.is_active = 1), 0) AS active_count,
+                   COALESCE(SUM(p.is_active = 0), 0) AS inactive_count,
+                   COALESCE(SUM(p.stock IS NOT NULL AND p.stock <= 0), 0) AS out_of_stock_count
+                   {$typeStats}
+            FROM products p {$scopeSql}
         ");
         $stat = $statRes ? (mysqli_fetch_assoc($statRes) ?: []) : [];
 
@@ -629,19 +868,41 @@ if (!function_exists('adminListProducts')) {
             LIMIT {$limit} OFFSET {$offset}
         ");
 
+        // A teacher's list carries the admin's unassigned products too, read-only. The dashboard's
+        // discount picker keeps only `is_owned !== false`, and the server refuses the rest by the
+        // same rule this reads.
+        $owned = $viewerTeacherId > 0 ? array_flip(teacher_owned_store_item_ids($con, $viewerTeacherId)) : [];
+
         $rows = [];
         if ($res) {
             while ($row = mysqli_fetch_assoc($res)) {
-                $rows[] = product_row($con, $row);
+                $item = product_row($con, $row);
+                if ($viewerTeacherId > 0) {
+                    $item['is_owned'] = isset($owned[(int)$row['id']]);
+                    $item['can_edit'] = $item['is_owned'];
+                }
+                $rows[] = $item;
             }
         }
 
-        return build_paginated_response($rows, $page, $limit, $total, [
+        $statistics = [
             'total_count' => (int)($stat['total'] ?? 0),
             'active_count' => (int)($stat['active_count'] ?? 0),
             'inactive_count' => (int)($stat['inactive_count'] ?? 0),
             'out_of_stock_count' => (int)($stat['out_of_stock_count'] ?? 0),
-        ]);
+        ];
+        if ($typeStats !== '') {
+            $statistics['physical_count'] = (int)($stat['physical_count'] ?? 0);
+            $statistics['digital_count'] = (int)($stat['digital_count'] ?? 0);
+        }
+
+        return build_paginated_response($rows, $page, $limit, $total, $statistics);
+    }
+}
+
+if (!function_exists('adminListProducts')) {
+    function adminListProducts($con) {
+        return product_list_response($con);
     }
 }
 
@@ -745,10 +1006,190 @@ if (!function_exists('product_apply_file_fields')) {
     }
 }
 
-if (!function_exists('adminCreateProduct')) {
-    function adminCreateProduct($con, $adminData = null) {
+if (!function_exists('product_bool_input')) {
+    /** A flag off JSON or form-data, where "false" and "0" arrive as non-empty strings. */
+    function product_bool_input($raw): int {
+        if (is_bool($raw)) return $raw ? 1 : 0;
+        $s = strtolower(trim((string)$raw));
+        return in_array($s, ['', '0', 'false', 'no', 'off', 'null'], true) ? 0 : 1;
+    }
+}
+
+if (!function_exists('product_store_fields_from_body')) {
+    /**
+     * The columns the store's books brought with them, off the request: product_type,
+     * subject_id, book_category, allow_download, link - as [column => value] ready for
+     * product_apply_store_fields(), or ['__error' => message]. Empty before migration 131.
+     *
+     * `$current` is the stored row on an update (null on a create), so a field the request does
+     * not mention keeps its value and the physical/digital rules are checked against the type the
+     * product WILL have.
+     */
+    function product_store_fields_from_body($con, array $body, ?array $current, bool $hasFile): array {
+        if (!store_products_ready($con)) {
+            return [];
+        }
+
+        $out = [];
+
+        $typeRaw = strtolower(trim((string)($body['product_type'] ?? '')));
+        if ($typeRaw !== '') {
+            if (!in_array($typeRaw, ['physical', 'digital'], true)) {
+                return ['__error' => 'نوع المنتج يجب أن يكون physical أو digital'];
+            }
+            $type = $typeRaw;
+        } elseif ($current !== null) {
+            $type = $current['product_type'] ?? 'physical';
+        } else {
+            // Not said on a create: a file or a link is something the buyer opens.
+            $type = $hasFile ? 'digital' : 'physical';
+        }
+        $out['product_type'] = $type;
+
+        if (array_key_exists('subject_id', $body)) {
+            $subjectId = (int)$body['subject_id'];
+            if ($subjectId > 0) {
+                $chk = @mysqli_query($con, "SELECT id FROM subjects WHERE id = {$subjectId} LIMIT 1");
+                if (!$chk || !mysqli_num_rows($chk)) {
+                    return ['__error' => 'المادة المختارة غير موجودة'];
+                }
+            }
+            $out['subject_id'] = $subjectId > 0 ? $subjectId : null;
+        }
+
+        // A summary or a past paper is a kind of FILE; a physical item has neither.
+        $categoryKey = array_key_exists('book_category', $body) ? 'book_category'
+            : (in_array(strtolower(trim((string)($body['category'] ?? ''))), ['summary', 'exam'], true) ? 'category' : null);
+        if ($type === 'physical') {
+            $out['book_category'] = null;
+        } elseif ($categoryKey !== null) {
+            $category = strtolower(trim((string)($body[$categoryKey] ?? '')));
+            if ($category !== '' && !in_array($category, ['summary', 'exam'], true)) {
+                return ['__error' => 'تصنيف الملف يجب أن يكون summary أو exam'];
+            }
+            $out['book_category'] = $category !== '' ? $category : null;
+        }
+
+        if (array_key_exists('allow_download', $body)) {
+            $out['allow_download'] = product_bool_input($body['allow_download']);
+        } elseif ($current === null && $type === 'digital') {
+            // A new digital item is view-only unless the request says otherwise - the rule every
+            // book was created under, so a file sold in the store is read through the API rather
+            // than handed out as a link that can be passed around.
+            $out['allow_download'] = 0;
+        }
+
+        if (array_key_exists('link', $body)) {
+            $link = trim((string)($body['link'] ?? ''));
+            $out['link'] = $link !== '' ? $link : null;
+        }
+
+        return $out;
+    }
+}
+
+if (!function_exists('product_apply_store_fields')) {
+    function product_apply_store_fields($con, int $productId, array $fields): void {
+        $types = ['product_type' => 's', 'subject_id' => 'i', 'book_category' => 's', 'allow_download' => 'i', 'link' => 's'];
+        $sets = [];
+        $params = [];
+        $bind = '';
+        foreach ($fields as $column => $value) {
+            if (!isset($types[$column])) continue;
+            $sets[] = "`{$column}` = ?";
+            $params[] = $value;
+            $bind .= $types[$column];
+        }
+        if (!$sets) return;
+
+        $stmt = mysqli_prepare($con, "UPDATE products SET " . implode(', ', $sets) . " WHERE id = ?");
+        if (!$stmt) return;
+        $params[] = $productId;
+        $bind .= 'i';
+        mysqli_stmt_bind_param($stmt, $bind, ...$params);
+        mysqli_stmt_execute($stmt);
+    }
+}
+
+if (!function_exists('product_teacher_ids_input')) {
+    /** `teacher_ids` as JSON array, form-data `teacher_ids[]`, "1,2" or a JSON string "[1,2]". */
+    function product_teacher_ids_input($raw): array {
+        if (is_string($raw)) {
+            $trim = trim($raw);
+            if ($trim !== '' && $trim[0] === '[') {
+                $decoded = json_decode($trim, true);
+                $raw = is_array($decoded) ? $decoded : [];
+            } else {
+                $raw = $trim === '' ? [] : explode(',', $trim);
+            }
+        } elseif (is_numeric($raw)) {
+            $raw = [$raw];
+        } elseif (!is_array($raw)) {
+            $raw = [];
+        }
+        return array_values(array_unique(array_filter(array_map('intval', $raw), fn($i) => $i > 0)));
+    }
+}
+
+if (!function_exists('product_sync_teachers')) {
+    /**
+     * The teachers assigned to a product, in `book_teachers` keyed by the product id - the same
+     * table and the same sync the store's books used, so ownership (R7) reads one place.
+     *
+     * Untouched unless the request sends `teacher_ids`, except that a teacher creating a product
+     * is always assigned to it. A teacher saving the list is kept on it: removing themselves would
+     * lock them out of a product they could open a moment ago.
+     */
+    function product_sync_teachers($con, int $productId, array $body, array $actor, bool $isCreate): void {
+        $given = array_key_exists('teacher_ids', $body);
+        $isTeacher = $actor['type'] === 'teacher' && (int)$actor['id'] > 0;
+        if (!$given && !($isCreate && $isTeacher)) {
+            return;
+        }
+
+        $ids = $given ? product_teacher_ids_input($body['teacher_ids']) : [];
+        if ($isTeacher && !in_array((int)$actor['id'], $ids, true)) {
+            $ids[] = (int)$actor['id'];
+        }
+
+        // Only real teachers: a stray id would otherwise become an ownership row for nobody.
+        if ($ids) {
+            $known = [];
+            $res = @mysqli_query($con, "SELECT id FROM teachers WHERE id IN (" . implode(',', $ids) . ")");
+            while ($res && ($r = mysqli_fetch_assoc($res))) {
+                $known[] = (int)$r['id'];
+            }
+            $ids = $known;
+        }
+
+        sync_content_teachers($con, 'book', $productId, $ids);
+    }
+}
+
+if (!function_exists('product_has_file_in_body')) {
+    /** Whether a create carries something the buyer would open: an upload, a file path or a link. */
+    function product_has_file_in_body(array $body): bool {
+        if (product_has_claimed_upload()) {
+            return true;
+        }
+        $upload = $_FILES['file'] ?? $_FILES['product_file'] ?? null;
+        if (is_array($upload) && (int)($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+            return true;
+        }
+        foreach (['file', 'file_path', 'link'] as $key) {
+            if (isset($body[$key]) && is_string($body[$key]) && trim($body[$key]) !== '') {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+if (!function_exists('product_create')) {
+    function product_create($con, array $actor) {
         if (!products_tables_ready($con)) return products_not_ready();
 
+        product_claim_upload();
         $body = read_json_body();
         $nameAr = trim((string)($body['name_ar'] ?? $body['name'] ?? ''));
         $nameEn = trim((string)($body['name_en'] ?? ''));
@@ -787,12 +1228,21 @@ if (!function_exists('adminCreateProduct')) {
             }
         }
 
+        // Validated before the INSERT, so a bad product_type or subject is a refusal and not a
+        // half-saved product.
+        $storeFields = product_store_fields_from_body($con, $body, null, product_has_file_in_body($body));
+        if (isset($storeFields['__error'])) {
+            return ['status' => 'error', 'message' => $storeFields['__error']];
+        }
+
         $slug = generate_unique_slug($con, 'products', trim((string)($body['slug'] ?? '')) !== ''
             ? trim((string)$body['slug'])
             : ($nameEn !== '' ? $nameEn : $nameAr), 'product');
 
         $sku = trim((string)($body['sku'] ?? '')) ?: null;
-        $currency = strtoupper(trim((string)($body['currency'] ?? 'EGP'))) ?: 'EGP';
+        // A store price is a base-currency price, like a course's (migration 131). A `currency`
+        // in the request is ignored rather than refused, so an older form still saves.
+        $currency = pricing_base_currency($con);
         // Absent means "not tracked"; an explicit 0 means "out of stock". They are kept apart.
         $stock = array_key_exists('stock', $body) && $body['stock'] !== null && trim((string)$body['stock']) !== ''
             ? (int)$body['stock']
@@ -804,14 +1254,14 @@ if (!function_exists('adminCreateProduct')) {
         $isActive = isset($body['is_active']) ? (int)(bool)$body['is_active'] : 1;
         $showOnWebsite = isset($body['show_on_website']) ? (int)(bool)$body['show_on_website'] : 1;
         $orderNum = isset($body['order_num']) ? (int)$body['order_num'] : 1;
-        $adminId = is_array($adminData) ? (int)($adminData['id'] ?? 0) : 0;
-        $createdById = $adminId > 0 ? $adminId : null;
+        $createdByType = $actor['type'] === 'teacher' ? 'teacher' : 'admin';
+        $createdById = (int)$actor['id'] > 0 ? (int)$actor['id'] : null;
 
         $stmt = mysqli_prepare($con, "
             INSERT INTO products
                 (product_category_id, slug, sku, price, sale_price, currency, stock, image, gallery,
                  is_active, show_on_website, order_num, created_by_type, created_by_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'admin', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         if (!$stmt) {
             return ['status' => 'error', 'message' => describe_db_write_error($con, 'تعذّر إنشاء المنتج')];
@@ -819,9 +1269,9 @@ if (!function_exists('adminCreateProduct')) {
 
         $categoryParam = $categoryId > 0 ? $categoryId : null;
         mysqli_stmt_bind_param(
-            $stmt, "issddsissiiii",
+            $stmt, "issddsissiiisi",
             $categoryParam, $slug, $sku, $price, $salePrice, $currency, $stock, $image, $gallery,
-            $isActive, $showOnWebsite, $orderNum, $createdById
+            $isActive, $showOnWebsite, $orderNum, $createdByType, $createdById
         );
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => describe_db_write_error($con, 'تعذّر إنشاء المنتج')];
@@ -829,6 +1279,8 @@ if (!function_exists('adminCreateProduct')) {
 
         $productId = mysqli_insert_id($con);
         product_save_translations($con, $productId, $body);
+        product_apply_store_fields($con, $productId, $storeFields);
+        product_sync_teachers($con, $productId, $body, $actor, true);
 
         // Written as a second statement rather than spliced into the INSERT: the columns only
         // exist once migration 128 has run, and the product must still be creatable before then.
@@ -840,31 +1292,42 @@ if (!function_exists('adminCreateProduct')) {
             product_apply_file_fields($con, $productId, $fileFields, $body);
         }
 
+        $rowRes = @mysqli_query($con, "SELECT * FROM products WHERE id = {$productId} LIMIT 1");
+        $savedRow = $rowRes ? mysqli_fetch_assoc($rowRes) : null;
+
         return [
             'status' => 'success',
             // The product was created either way; saying so plainly beats a bare success that
             // leaves an owner wondering where their attachment went.
             'message' => $fileWarning ? 'تم إنشاء المنتج، لكن ' . $fileWarning : 'تم إنشاء المنتج بنجاح',
-            'data' => ['id' => $productId, 'slug' => $slug, 'file_warning' => $fileWarning],
+            'data' => [
+                'id' => $productId,
+                'slug' => $slug,
+                'file_warning' => $fileWarning,
+                'product' => $savedRow ? product_row($con, $savedRow) : null,
+            ],
         ];
     }
 }
 
-if (!function_exists('adminUpdateProduct')) {
-    function adminUpdateProduct($con) {
+if (!function_exists('product_update')) {
+    function product_update($con, array $actor) {
         if (!products_tables_ready($con)) return products_not_ready();
 
+        product_claim_upload();
         $body = read_json_body();
         $id = (int)($body['id'] ?? $_GET['id'] ?? 0);
         if ($id <= 0) {
             return ['status' => 'error', 'message' => 'id is required'];
         }
 
-        $currentCols = product_file_columns_ready($con) ? "price, sale_price, file_path" : "price, sale_price";
-        $currentRes = @mysqli_query($con, "SELECT {$currentCols} FROM products WHERE id = {$id} LIMIT 1");
+        $currentRes = @mysqli_query($con, "SELECT * FROM products WHERE id = {$id} LIMIT 1");
         $current = $currentRes ? mysqli_fetch_assoc($currentRes) : null;
         if (!$current) {
             return ['status' => 'error', 'message' => 'المنتج غير موجود'];
+        }
+        if (!product_actor_may_edit($con, $actor, $id)) {
+            return product_not_owned($con);
         }
 
         $fields = [];
@@ -943,6 +1406,11 @@ if (!function_exists('adminUpdateProduct')) {
             $types .= 'i';
         }
 
+        $storeFields = product_store_fields_from_body($con, $body, $current, false);
+        if (isset($storeFields['__error'])) {
+            return ['status' => 'error', 'message' => $storeFields['__error']];
+        }
+
         if (isset($body['slug']) && trim((string)$body['slug']) !== '') {
             $fields[] = 'slug = ?';
             $params[] = generate_unique_slug($con, 'products', trim((string)$body['slug']), 'product', $id);
@@ -951,9 +1419,9 @@ if (!function_exists('adminUpdateProduct')) {
         if (array_key_exists('sku', $body)) {
             $fields[] = 'sku = ?'; $params[] = trim((string)$body['sku']) ?: null; $types .= 's';
         }
-        if (isset($body['currency'])) {
-            $fields[] = 'currency = ?'; $params[] = strtoupper(trim((string)$body['currency'])); $types .= 's';
-        }
+        // The base currency on every save, whatever was sent: a store price is a base-currency
+        // price (migration 131), and a row saved with another label would be quoted wrongly.
+        $fields[] = 'currency = ?'; $params[] = pricing_base_currency($con); $types .= 's';
         if (array_key_exists('stock', $body)) {
             $stock = ($body['stock'] === null || trim((string)$body['stock']) === '') ? null : (int)$body['stock'];
             $fields[] = 'stock = ?'; $params[] = $stock; $types .= 'i';
@@ -990,6 +1458,8 @@ if (!function_exists('adminUpdateProduct')) {
         }
 
         product_save_translations($con, $id, $body);
+        product_apply_store_fields($con, $id, $storeFields);
+        product_sync_teachers($con, $id, $body, $actor, false);
 
         $fileWarning = null;
         $fileFields = product_file_fields_from_body($con, $body, $current['file_path'] ?? null);
@@ -999,22 +1469,34 @@ if (!function_exists('adminUpdateProduct')) {
             product_apply_file_fields($con, $id, $fileFields, $body);
         }
 
+        $rowRes = @mysqli_query($con, "SELECT * FROM products WHERE id = {$id} LIMIT 1");
+        $savedRow = $rowRes ? mysqli_fetch_assoc($rowRes) : null;
+
         return [
             'status' => 'success',
             'message' => $fileWarning ? 'تم تعديل المنتج، لكن ' . $fileWarning : 'تم تعديل المنتج بنجاح',
-            'data' => ['file_warning' => $fileWarning],
+            'data' => [
+                'file_warning' => $fileWarning,
+                'product' => $savedRow ? product_row($con, $savedRow) : null,
+            ],
         ];
     }
 }
 
-if (!function_exists('adminDeleteProduct')) {
-    function adminDeleteProduct($con) {
+if (!function_exists('product_delete')) {
+    function product_delete($con, array $actor) {
         if (!products_tables_ready($con)) return products_not_ready();
 
         $body = read_json_body();
         $id = (int)($body['id'] ?? $_GET['id'] ?? 0);
         if ($id <= 0) {
             return ['status' => 'error', 'message' => 'id is required'];
+        }
+        if (!store_item_find($con, $id)) {
+            return ['status' => 'error', 'message' => 'المنتج غير موجود'];
+        }
+        if (!product_actor_may_edit($con, $actor, $id)) {
+            return product_not_owned($con);
         }
 
         $stmt = mysqli_prepare($con, "DELETE FROM products WHERE id = ?");
@@ -1022,20 +1504,25 @@ if (!function_exists('adminDeleteProduct')) {
         if (!mysqli_stmt_execute($stmt)) {
             return ['status' => 'error', 'message' => describe_db_write_error($con, 'تعذّر حذف المنتج')];
         }
+        // The assignments go with it. Safe on the shared table: a product id and a lesson-file id
+        // never share a number (course_books continues from 1,000,000).
+        @mysqli_query($con, "DELETE FROM book_teachers WHERE book_id = {$id}");
 
         return ['status' => 'success', 'message' => 'تم حذف المنتج بنجاح'];
     }
 }
 
-if (!function_exists('adminToggleProductWebsiteVisibility')) {
-    /** The same one-click toggle courses and books have on the website-visibility screen. */
-    function adminToggleProductWebsiteVisibility($con) {
+if (!function_exists('product_toggle_website_visibility')) {
+    function product_toggle_website_visibility($con, array $actor) {
         if (!products_tables_ready($con)) return products_not_ready();
 
         $body = read_json_body();
         $id = (int)($body['id'] ?? $_GET['id'] ?? 0);
         if ($id <= 0) {
             return ['status' => 'error', 'message' => 'id is required'];
+        }
+        if (!product_actor_may_edit($con, $actor, $id)) {
+            return product_not_owned($con);
         }
 
         if (!@mysqli_query($con, "UPDATE products SET show_on_website = IF(show_on_website = 1, 0, 1) WHERE id = {$id}")) {
@@ -1050,5 +1537,30 @@ if (!function_exists('adminToggleProductWebsiteVisibility')) {
             'message' => 'تم تحديث حالة الظهور بالمتجر',
             'data' => ['show_on_website' => (int)($row['show_on_website'] ?? 0)],
         ];
+    }
+}
+
+if (!function_exists('adminCreateProduct')) {
+    function adminCreateProduct($con, $adminData = null) {
+        return product_create($con, product_actor($adminData, 'admin'));
+    }
+}
+
+if (!function_exists('adminUpdateProduct')) {
+    function adminUpdateProduct($con, $adminData = null) {
+        return product_update($con, product_actor($adminData, 'admin'));
+    }
+}
+
+if (!function_exists('adminDeleteProduct')) {
+    function adminDeleteProduct($con, $adminData = null) {
+        return product_delete($con, product_actor($adminData, 'admin'));
+    }
+}
+
+if (!function_exists('adminToggleProductWebsiteVisibility')) {
+    /** The same one-click toggle courses and books have on the website-visibility screen. */
+    function adminToggleProductWebsiteVisibility($con, $adminData = null) {
+        return product_toggle_website_visibility($con, product_actor($adminData, 'admin'));
     }
 }

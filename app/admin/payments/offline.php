@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../../helpers/functions.php';
 require_once __DIR__ . '/../../../helpers/offline_payments.php';
+require_once __DIR__ . '/../../../helpers/store_items.php';
 
 /**
  * The review queue, and the accounts students transfer into.
@@ -53,7 +54,7 @@ if (!function_exists('adminListOfflinePayments')) {
             $types .= 'i';
         }
 
-        $itemType = trim($_GET['item_type'] ?? '');
+        $itemType = store_item_type((string)($_GET['item_type'] ?? ''));
         if (in_array($itemType, ['course', 'book'], true)) {
             $conditions[] = 'r.item_type = ?';
             $params[] = $itemType;

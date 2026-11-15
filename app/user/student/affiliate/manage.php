@@ -3,6 +3,7 @@ require_once __DIR__ . '/../../../../helpers/functions.php';
 require_once __DIR__ . '/../../../../helpers/language.php';
 require_once __DIR__ . '/../../../../helpers/notifications.php';
 require_once __DIR__ . '/../../../../helpers/points.php';
+require_once __DIR__ . '/../../../../helpers/store_items.php';
 
 if (!function_exists('ensure_affiliate_commissions_extended_columns')) {
     function ensure_affiliate_commissions_extended_columns($con): void {
@@ -119,13 +120,10 @@ if (!function_exists('format_affiliate_item_details')) {
                 $itemTitle = $cRes['name'] ?? ('كورس #' . $itemId);
             }
         } elseif ($itemType === 'book' && $itemId > 0) {
-            $bStmt = mysqli_prepare($con, "SELECT title FROM course_books WHERE id = ? LIMIT 1");
-            if ($bStmt) {
-                mysqli_stmt_bind_param($bStmt, "i", $itemId);
-                mysqli_stmt_execute($bStmt);
-                $bRes = mysqli_fetch_assoc(mysqli_stmt_get_result($bStmt));
-                $itemTitle = $bRes['title'] ?? ('كتاب #' . $itemId);
-            }
+            // A store item, named from products_translations since migration 131. (The old query
+            // read a `title` column course_books never had.)
+            $name = store_item_name($con, $itemId);
+            $itemTitle = $name !== '' ? $name : ('كتاب #' . $itemId);
         }
 
         return [
@@ -303,7 +301,7 @@ if (!function_exists('createPendingAffiliateCommission')) {
 
         ensure_affiliate_commissions_extended_columns($con);
 
-        $itemType = strtolower(trim($itemType));
+        $itemType = store_item_type($itemType);
         if (!in_array($itemType, ['course', 'book', 'subscription_code', 'other'], true)) {
             $itemType = 'other';
         }

@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../../../helpers/functions.php';
 require_once __DIR__ . '/../../../helpers/language.php';
 require_once __DIR__ . '/../../../helpers/upload.php';
+require_once __DIR__ . '/../../../helpers/store_items.php';
 
 if (!function_exists('get_student_subscriptions')) {
     function get_student_subscriptions($con, int $studentId, string $filter = 'all') {
@@ -19,8 +20,8 @@ if (!function_exists('get_student_subscriptions')) {
             ];
         }
 
-    
-    
+        $langId = (int)(get_language_info($con)['id'] ?? 1);
+
         $sql = "SELECT 
                     ss.id                       AS subscription_id,
                     ss.student_id               AS student_id,
@@ -165,11 +166,16 @@ if (!function_exists('get_student_subscriptions')) {
             }
 
             // --- Books ---
+            // A store item named in a subscription is a `products` row (migration 131 moved every
+            // standalone book there under its old id). The `books` table this used to join never
+            // existed on this platform, so the list came back empty. The price is what a buyer
+            // pays: the sale price while the item is on sale.
+            $bookName = store_name_sql($langId, 'b');
             $bSql = "SELECT ssb.student_subscription_id, ssb.book_id,
-                            b.title AS book_title, b.image AS book_image,
-                            b.price AS book_price
+                            {$bookName} AS book_title, b.image AS book_image,
+                            CASE WHEN b.sale_price IS NOT NULL AND b.sale_price < b.price THEN b.sale_price ELSE b.price END AS book_price
                      FROM student_subscription_books ssb
-                     INNER JOIN books b ON b.id = ssb.book_id
+                     INNER JOIN products b ON b.id = ssb.book_id
                      WHERE ssb.student_subscription_id IN ($ids)";
             $bRes = mysqli_query($con, $bSql);
             if ($bRes) {
@@ -210,6 +216,8 @@ if (!function_exists('get_student_subscriptions')) {
         // ============================================================
         //  3) Also fetch standalone book subscriptions (student_book_subscriptions)
         // ============================================================
+        // Purchased store items, read from `products` like the subscription books above.
+        $bookName = store_name_sql($langId, 'b');
         $sqlBooks = "SELECT sbs.id                AS subscription_id,
                             sbs.student_id        AS student_id,
                             sbs.book_id           AS book_id,
@@ -218,10 +226,10 @@ if (!function_exists('get_student_subscriptions')) {
                             sbs.price             AS price,
                             sbs.is_active         AS is_active,
                             sbs.created_at        AS created_at,
-                            b.title               AS book_title,
+                            {$bookName}           AS book_title,
                             b.image               AS book_image
                      FROM student_book_subscriptions sbs
-                     INNER JOIN books b ON b.id = sbs.book_id
+                     INNER JOIN products b ON b.id = sbs.book_id
                      WHERE sbs.student_id = ?
                      ORDER BY sbs.created_at DESC";
 

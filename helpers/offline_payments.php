@@ -6,6 +6,8 @@ require_once __DIR__ . '/discounts.php';
 require_once __DIR__ . '/pricing.php';
 require_once __DIR__ . '/points.php';
 require_once __DIR__ . '/admin_notifications.php';
+// A store item ('book' on these rows) is a `products` row since migration 131.
+require_once __DIR__ . '/store_items.php';
 
 /**
  * Offline payments: the student sends the money themselves, and someone here confirms it.
@@ -125,12 +127,19 @@ if (!function_exists('payment_account_find')) {
  */
 if (!function_exists('offline_payment_quote')) {
     function offline_payment_quote($con, int $studentId, string $itemType, int $itemId, string $code = '', float $usePoints = 0.0): array {
+        // 'product' is accepted for a store item and quoted - and later stored - as 'book'.
+        $itemType = store_item_type($itemType);
         $item = payments_resolve_purchasable_item($con, $itemType, $itemId);
         if (!$item) {
             return ['ok' => false, 'message' => app_offline_text($con, 'العنصر ده مش موجود.', 'That item does not exist.')];
         }
         if ((int)$item['is_active'] !== 1) {
             return ['ok' => false, 'message' => app_offline_text($con, 'العنصر ده مش متاح حاليًا.', 'That item is not available right now.')];
+        }
+        // A physical store item whose tracked stock has run out cannot be quoted at all: a
+        // student would otherwise pay for something nobody can hand over.
+        if (!empty($item['sale_block'])) {
+            return ['ok' => false] + $item['sale_block'];
         }
 
         // Priced for the student's country, so the number quoted here is the number they were
@@ -301,6 +310,8 @@ if (!function_exists('offline_payment_base_query')) {
         $langId = (int)($langInfo['id'] ?? 1);
 
         $countryNameColumn = get_request_lang($con) === 'en' ? 'co.name_en' : 'co.name_ar';
+        // A 'book' request is for a store item, whose name lives in products_translations.
+        $storeName = store_name_sql($langId, 'sp');
 
         return "
             SELECT r.*,
@@ -311,9 +322,7 @@ if (!function_exists('offline_payment_base_query')) {
                        WHEN 'course' THEN COALESCE(
                            (SELECT ct.name FROM courses_translations ct WHERE ct.course_id = r.item_id AND ct.language_id = {$langId} LIMIT 1),
                            (SELECT ct.name FROM courses_translations ct WHERE ct.course_id = r.item_id LIMIT 1))
-                       ELSE COALESCE(
-                           (SELECT bt.title FROM course_books_translations bt WHERE bt.book_id = r.item_id AND bt.language_id = {$langId} LIMIT 1),
-                           (SELECT bt.title FROM course_books_translations bt WHERE bt.book_id = r.item_id LIMIT 1))
+                       ELSE (SELECT {$storeName} FROM products sp WHERE sp.id = r.item_id)
                    END AS item_name
             FROM offline_payment_requests r
             LEFT JOIN students s ON s.id = r.student_id

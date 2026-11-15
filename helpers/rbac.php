@@ -47,6 +47,25 @@ if (!function_exists('requirePermission')) {
     }
 }
 
+if (!function_exists('requireAnyPermission')) {
+    /**
+     * Allowed when the admin holds ANY of the codes. The store is one screen since update-23 but
+     * used to be two, each with its own permission (`manage_books` for the original store,
+     * `manage_products` for products): an admin trusted with either keeps the store.
+     */
+    function requireAnyPermission($con, array $adminData, array $permissionCodes): void {
+        foreach ($permissionCodes as $code) {
+            if (hasPermission($con, $adminData, (string)$code)) {
+                return;
+            }
+        }
+        json_response([
+            'status' => 'error',
+            'message' => 'Permission denied: You do not have access to perform this action (' . implode(' or ', $permissionCodes) . ')'
+        ], 403);
+    }
+}
+
 if (!function_exists('isSuperAdmin')) {
     /**
      * Whether this admin is a super admin.

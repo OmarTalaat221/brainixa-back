@@ -3,7 +3,7 @@ require_once __DIR__ . '/app_settings.php';
 /**
  * Changing the platform's base currency, without silently repricing everything.
  *
- * `courses.price` and `course_books.price` are plain numbers. Nothing on the row says which
+ * `courses.price` and `products.price` are plain numbers. Nothing on the row says which
  * currency they are in - the answer is whatever `base_currency` happens to say today. So flipping
  * that setting from EGP to SAR does not convert anything: a course priced at 300 EGP becomes a
  * course priced at 300 SAR, roughly eight times dearer, with no edit, no audit trail and nothing
@@ -24,24 +24,33 @@ require_once __DIR__ . '/app_settings.php';
  * exchange rate picked by the server would put a number in front of a customer that nobody
  * approved.
  *
- * Store products are deliberately absent. `products.currency` is a column on each row, so a
- * product already carries its own currency and the base setting never spoke for it. (Note that
- * `course_books` rows - labelled "منتج" in the dashboard - DO go through here, because their price
- * is a bare number like a course's.)
+ * Store products go through here exactly like courses. Since migration 131 every store item is a
+ * `products` row priced in the base currency (`products.currency` is set to the base on every row
+ * and is kept in step below), and country prices for them are stored under item_type 'book', the
+ * token the store used before. `course_books` now holds only lesson files, which carry no price
+ * of their own and are not touched.
+ *
+ * A product on sale has a second number, `sale_price`, in the same old currency. It is cleared
+ * when the price moves: the new price is either the country price buyers in that currency were
+ * already paying in place of the sale price, or a figure the admin typed for the new currency,
+ * and a leftover sale figure in the old currency would undercut both. Each such row is reported
+ * with `current_sale_price` so the admin can set a new sale.
  */
 
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/pricing.php';
+require_once __DIR__ . '/store_items.php';
 
 if (!function_exists('base_currency_item_sources')) {
     /**
      * The things that carry a bare price in the base currency. `kind` separates packages from
      * ordinary courses for the report only - both live in `courses` and are priced the same way.
+     * 'book' is the store item token (item_country_prices, the money tables); its rows are products.
      */
     function base_currency_item_sources(): array {
         return [
             'course' => ['table' => 'courses', 'price_column' => 'price'],
-            'book'   => ['table' => 'course_books', 'price_column' => 'price'],
+            'book'   => ['table' => 'products', 'price_column' => 'price'],
         ];
     }
 }
@@ -55,9 +64,8 @@ if (!function_exists('base_currency_item_name_sql')) {
                 (SELECT ct.name FROM courses_translations ct WHERE ct.course_id = i.id LIMIT 1))";
         }
 
-        return "COALESCE(
-            (SELECT bt.title FROM course_books_translations bt WHERE bt.book_id = i.id AND bt.language_id = {$langId} LIMIT 1),
-            (SELECT bt.title FROM course_books_translations bt WHERE bt.book_id = i.id LIMIT 1))";
+        // A store item: a product, named in products_translations.
+        return store_name_sql($langId, 'i');
     }
 }
 
@@ -85,12 +93,14 @@ if (!function_exists('base_currency_scan')) {
             $priceColumn = $source['price_column'];
             $nameSql = base_currency_item_name_sql($itemType, $langId);
             $kindSql = $itemType === 'course' ? 'i.kind' : "'book'";
+            $saleSql = $itemType === 'book' ? 'i.sale_price' : 'NULL';
 
             $sql = "
                 SELECT i.id,
                        {$nameSql} AS item_name,
                        {$kindSql} AS item_kind,
                        i.{$priceColumn} AS base_price,
+                       {$saleSql} AS sale_price,
                        (SELECT MIN(p.price) FROM item_country_prices p
                          WHERE p.item_type = ? AND p.item_id = i.id
                            AND p.is_active = 1 AND p.currency_code = ?) AS target_price
@@ -114,6 +124,9 @@ if (!function_exists('base_currency_scan')) {
                     'item_name' => $row['item_name'] ?: ('#' . (int)$row['id']),
                     'current_price' => (float)$row['base_price'],
                 ];
+                if ($itemType === 'book') {
+                    $entry['current_sale_price'] = $row['sale_price'] !== null ? (float)$row['sale_price'] : null;
+                }
 
                 if ($row['target_price'] !== null) {
                     $entry['new_price'] = (float)$row['target_price'];
@@ -181,10 +194,12 @@ if (!function_exists('base_currency_impact')) {
                 'adoptable_count' => count($scan['adoptable']),
                 'missing_count' => count($scan['missing']),
                 'missing_by_kind' => $byKind,
+                // Kept for the screens that print it. Products used to be outside this move; since
+                // migration 131 they are listed above with the courses.
                 'products_note' => app_text(
                     $con,
-                    'المنتجات مش متأثرة: كل منتج بيحمل عملته في صفّه.',
-                    'Products are unaffected: each product carries its own currency on its row.'
+                    'المنتجات مسعّرة بالعملة الأساسية زي الكورسات، وموجودة في القايمة. سعر التخفيض لأي منتج بيتشال عند التحويل.',
+                    'Store products are priced in the base currency like courses and are listed here. Any sale price on a product is cleared when it moves.'
                 ),
             ],
         ];
@@ -282,13 +297,22 @@ if (!function_exists('base_currency_adopt')) {
             $source = $sources[$row['item_type']] ?? null;
             if (!$source) continue;
 
-            $stmt = @mysqli_prepare($con, "UPDATE {$source['table']} SET {$source['price_column']} = ? WHERE id = ?");
+            // A product's sale figure was in the old currency; see the note at the top of the file.
+            $extraSet = $row['item_type'] === 'book' ? ', sale_price = NULL' : '';
+            $stmt = @mysqli_prepare($con, "UPDATE {$source['table']} SET {$source['price_column']} = ?{$extraSet} WHERE id = ?");
             if (!$stmt) continue;
 
             $newPrice = $row['new_price'];
             $itemId = $row['item_id'];
             mysqli_stmt_bind_param($stmt, "di", $newPrice, $itemId);
             if (@mysqli_stmt_execute($stmt)) $updated[] = $row;
+        }
+
+        // Every product row states the base currency (migration 131), including the unpriced and
+        // free ones the scan skipped, so all of them follow it.
+        $targetCode = strtoupper(trim($targetCurrency));
+        if (preg_match('/^[A-Z]{3}$/', $targetCode)) {
+            @mysqli_query($con, "UPDATE products SET currency = '{$targetCode}' WHERE currency <> '{$targetCode}'");
         }
 
         return ['ok' => true, 'updated' => $updated, 'missing' => []];

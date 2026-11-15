@@ -18,31 +18,33 @@ require_once __DIR__ . '/../../../helpers/app_settings.php';
 // currency_info() and pricing_format_amount() - the figure is printed in the currency it was
 // actually taken in, not the platform's base.
 require_once __DIR__ . '/../../../helpers/pricing.php';
+require_once __DIR__ . '/../../../helpers/store_items.php';
 require_once __DIR__ . '/../../user/student/payments/manage.php';
 
 if (!function_exists('gateway_payment_base_query')) {
     /**
-     * Course and book names live in translation tables, not on the rows themselves - `courses` has
-     * a slug and `course_books` has nothing readable at all. Both are joined for the request's
-     * language, falling back the way helpers/sales.php does: a course to its slug, a book to its
-     * id, so a missing translation shows something rather than an empty cell.
+     * Course and store item names live in translation tables, not on the rows themselves. A
+     * course falls back to its slug; a store item ('book' on these rows) is a `products` row since
+     * migration 131 and falls back to any language and then its slug (store_name_sql), so a
+     * missing translation shows something rather than an empty cell.
      */
     function gateway_payment_base_query($con): string {
         $langInfo = get_language_info($con);
         $langId = (int)($langInfo['id'] ?? 1);
+        $storeName = store_name_sql($langId, 'sp');
 
         return "SELECT t.id, t.student_id, t.item_type, t.item_id, t.amount, t.currency, t.status,
                        t.easykash_ref, t.gateway_reference, t.payment_method, t.granted_ref_id,
                        t.created_at, t.paid_at,
                        s.name AS student_name, s.email AS student_email, s.phone AS student_phone,
                        COALESCE(ct.name, c.slug) AS course_name,
-                       cbt.title AS book_title
+                       CASE WHEN t.item_type = 'book'
+                            THEN (SELECT {$storeName} FROM products sp WHERE sp.id = t.item_id)
+                       END AS book_title
                 FROM payment_transactions t
                 LEFT JOIN students s ON s.id = t.student_id
                 LEFT JOIN courses c ON c.id = t.item_id AND t.item_type = 'course'
-                LEFT JOIN courses_translations ct ON ct.course_id = c.id AND ct.language_id = {$langId}
-                LEFT JOIN course_books cb ON cb.id = t.item_id AND t.item_type = 'book'
-                LEFT JOIN course_books_translations cbt ON cbt.book_id = cb.id AND cbt.language_id = {$langId}";
+                LEFT JOIN courses_translations ct ON ct.course_id = c.id AND ct.language_id = {$langId}";
     }
 }
 
@@ -154,7 +156,7 @@ if (!function_exists('adminListGatewayPayments')) {
             $types .= 'i';
         }
 
-        $itemType = trim($_GET['item_type'] ?? '');
+        $itemType = store_item_type((string)($_GET['item_type'] ?? ''));
         if (in_array($itemType, ['course', 'book'], true)) {
             $conditions[] = 't.item_type = ?';
             $params[] = $itemType;
