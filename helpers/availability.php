@@ -217,6 +217,15 @@ if (!function_exists('availability_redact_link_for_student')) {
             // slots join the room outside that check.
             $row['zoom_meeting_id'] = null;
             $row['zoom_password'] = null;
+
+            // Additive: the same date under the names the home page's session items use
+            // (`session_date`, `date`, `scope`), so an app that reads package appointments and
+            // weekly sessions with one model does not drop these rows for "having no date".
+            if (!empty($row['slot_date'])) {
+                $row['session_date'] = $row['session_date'] ?? $row['slot_date'];
+                $row['date'] = $row['date'] ?? $row['slot_date'];
+            }
+            $row['scope'] = $row['scope'] ?? 'package';
         }
         unset($row);
 
