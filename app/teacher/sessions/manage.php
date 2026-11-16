@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../../helpers/notifications.php';
 require_once __DIR__ . '/../../../helpers/admin_notifications.php';
 require_once __DIR__ . '/../../../helpers/attendance_core.php';
 require_once __DIR__ . '/files.php';
+require_once __DIR__ . '/../../../helpers/slot_reschedule.php';
 
 if (!function_exists('is_teacher_request')) {
     function is_teacher_request(): bool {
@@ -566,17 +567,35 @@ if (!function_exists('teacherDeleteSession')) {
 
 if (!function_exists('get_reschedule_request_details')) {
     function get_reschedule_request_details($con, int $reqId) {
-        $stmt = mysqli_prepare($con, "SELECT srr.id, srr.session_id, srr.teacher_id, srr.requested_by_type, srr.requested_by_id, srr.new_day, srr.new_start_time, srr.new_end_time, srr.reason, srr.status, srr.admin_note, srr.reviewed_by_type, srr.reviewed_by_id, srr.created_at, srr.reviewed_at FROM session_reschedule_requests srr WHERE srr.id = ? LIMIT 1");
+        $slotCols = slot_reschedule_ready($con) ? ", srr.slot_id, srr.new_date, srr.original_date, srr.original_start_time, srr.original_end_time, srr.new_slot_id" : "";
+        $stmt = mysqli_prepare($con, "SELECT srr.id, srr.session_id, srr.teacher_id, srr.requested_by_type, srr.requested_by_id, srr.new_day, srr.new_start_time, srr.new_end_time, srr.reason, srr.status, srr.admin_note, srr.reviewed_by_type, srr.reviewed_by_id, srr.created_at, srr.reviewed_at{$slotCols} FROM session_reschedule_requests srr WHERE srr.id = ? LIMIT 1");
         mysqli_stmt_bind_param($stmt, "i", $reqId);
         mysqli_stmt_execute($stmt);
         $row = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
         if (!$row) return null;
         $row['id'] = (int)$row['id'];
-        $row['session_id'] = (int)$row['session_id'];
+        // `kind` tells the two apart: 'weekly' moves a weekly class to another weekday,
+        // 'package' moves one dated package appointment to another date (migration 132).
+        $row['slot_id'] = !empty($row['slot_id']) ? (int)$row['slot_id'] : null;
+        $row['new_slot_id'] = !empty($row['new_slot_id']) ? (int)$row['new_slot_id'] : null;
+        $row['kind'] = $row['slot_id'] ? 'package' : 'weekly';
+        foreach (['new_date', 'original_date', 'original_start_time', 'original_end_time'] as $k) {
+            $row[$k] = $row[$k] ?? null;
+        }
+        $row['session_id'] = $row['session_id'] !== null ? (int)$row['session_id'] : null;
         $row['teacher_id'] = (int)$row['teacher_id'];
         $row['requested_by_id'] = $row['requested_by_id'] ? (int)$row['requested_by_id'] : null;
         $row['reviewed_by_id'] = $row['reviewed_by_id'] ? (int)$row['reviewed_by_id'] : null;
-        $row['session'] = get_class_session_details($con, $row['session_id']);
+        $row['session'] = $row['session_id'] ? get_class_session_details($con, $row['session_id']) : null;
+        // The appointment as it stands now: the new slot once approved, the original before.
+        $row['slot'] = null;
+        if ($row['kind'] === 'package') {
+            $row['slot'] = get_availability_slot_details($con, $row['new_slot_id'] ?: $row['slot_id'], false);
+        }
+        $tStmt0 = mysqli_prepare($con, "SELECT id, name, email FROM teachers WHERE id = ? LIMIT 1");
+        mysqli_stmt_bind_param($tStmt0, "i", $row['teacher_id']);
+        mysqli_stmt_execute($tStmt0);
+        $row['teacher'] = mysqli_fetch_assoc(mysqli_stmt_get_result($tStmt0)) ?: null;
 
         $requester = null;
         if ($row['requested_by_type'] === 'student' && $row['requested_by_id']) {
@@ -659,6 +678,10 @@ if (!function_exists('studentRequestReschedule')) {
     function studentRequestReschedule($con, $studentData) {
         $studentId = (int)($studentData['id'] ?? 0);
         $body = read_json_body();
+        // A package appointment (a dated slot) moves to a new DATE and time, not a weekday.
+        if (!empty($body['slot_id'])) {
+            return slot_reschedule_create($con, $studentId, $body);
+        }
         $sessionId = (int)($body['session_id'] ?? 0);
         $newDay = trim($body['new_day'] ?? $body['day'] ?? '');
         $allowedDays = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -765,12 +788,18 @@ if (!function_exists('teacherReviewRescheduleRequest')) {
             return ['status' => 'error', 'message' => 'id and a valid decision (approved/rejected) are required'];
         }
 
-        $reqStmt = mysqli_prepare($con, "SELECT session_id, new_day, new_start_time, new_end_time FROM session_reschedule_requests WHERE id = ? AND teacher_id = ? AND requested_by_type = 'student' AND status = 'pending' LIMIT 1");
+        // `requested_by_id` was missing here, so the student was never told the outcome.
+        $reqStmt = mysqli_prepare($con, "SELECT * FROM session_reschedule_requests WHERE id = ? AND teacher_id = ? AND requested_by_type = 'student' AND status = 'pending' LIMIT 1");
         mysqli_stmt_bind_param($reqStmt, "ii", $id, $teacherId);
         mysqli_stmt_execute($reqStmt);
         $reqRow = mysqli_fetch_assoc(mysqli_stmt_get_result($reqStmt));
         if (!$reqRow) {
             return ['status' => 'error', 'message' => 'Request not found, already reviewed, or not addressed to you'];
+        }
+
+        // A package appointment: only this teacher's own (teacher_id above), moved on approval.
+        if (!empty($reqRow['slot_id'])) {
+            return slot_reschedule_review($con, $reqRow, $decision, $note, 'teacher', $teacherId, $body);
         }
 
         $uStmt = mysqli_prepare($con, "UPDATE session_reschedule_requests SET status = ?, admin_note = ?, reviewed_by_type = 'teacher', reviewed_by_id = ?, reviewed_at = NOW() WHERE id = ?");
@@ -801,9 +830,24 @@ if (!function_exists('adminListRescheduleRequests')) {
         $offset = ($page - 1) * $limit;
         $status = strtolower(trim($_GET['status'] ?? ''));
 
-        $where = "WHERE requested_by_type = 'teacher'";
+        // Both directions now: a teacher's request to move their class, and a student's request
+        // to move a weekly class or a package appointment - the admin may decide any of them.
+        // `requested_by_type` and `kind` (weekly|package) narrow the list.
+        $where = "WHERE 1 = 1";
         $params = [];
         $types = "";
+        $requestedBy = strtolower(trim($_GET['requested_by_type'] ?? ''));
+        if (in_array($requestedBy, ['teacher', 'student'], true)) {
+            $where .= " AND requested_by_type = ?";
+            $params[] = $requestedBy;
+            $types .= "s";
+        }
+        $kind = strtolower(trim($_GET['kind'] ?? ''));
+        if (slot_reschedule_ready($con) && $kind === 'package') {
+            $where .= " AND slot_id IS NOT NULL";
+        } elseif (slot_reschedule_ready($con) && $kind === 'weekly') {
+            $where .= " AND slot_id IS NULL";
+        }
         if (in_array($status, ['pending', 'approved', 'rejected'])) {
             $where .= " AND status = ?";
             $params[] = $status;
@@ -847,12 +891,34 @@ if (!function_exists('adminReviewRescheduleRequest')) {
             return ['status' => 'error', 'message' => 'id and a valid decision (approved/rejected) are required'];
         }
 
-        $reqStmt = mysqli_prepare($con, "SELECT session_id, requested_by_id, new_day, new_start_time, new_end_time FROM session_reschedule_requests WHERE id = ? AND requested_by_type = 'teacher' AND status = 'pending' LIMIT 1");
+        $reqStmt = mysqli_prepare($con, "SELECT * FROM session_reschedule_requests WHERE id = ? AND status = 'pending' LIMIT 1");
         mysqli_stmt_bind_param($reqStmt, "i", $id);
         mysqli_stmt_execute($reqStmt);
         $reqRow = mysqli_fetch_assoc(mysqli_stmt_get_result($reqStmt));
         if (!$reqRow) {
-            return ['status' => 'error', 'message' => 'Request not found, already reviewed, or not a teacher-initiated request'];
+            return ['status' => 'error', 'message' => 'Request not found or already reviewed'];
+        }
+
+        // A student's request: a package appointment moves its booking; a weekly class moves the
+        // class, exactly as the teacher's approval of the same request does.
+        if ($reqRow['requested_by_type'] === 'student') {
+            if (!empty($reqRow['slot_id'])) {
+                return slot_reschedule_review($con, $reqRow, $decision, $adminNote, 'admin', null, $body);
+            }
+            if ($decision === 'approved') {
+                $sStmt = mysqli_prepare($con, "UPDATE class_sessions SET day_of_week = ?, start_time = COALESCE(?, start_time), end_time = COALESCE(?, end_time) WHERE id = ?");
+                mysqli_stmt_bind_param($sStmt, "sssi", $reqRow['new_day'], $reqRow['new_start_time'], $reqRow['new_end_time'], $reqRow['session_id']);
+                mysqli_stmt_execute($sStmt);
+            }
+            $uStmt = mysqli_prepare($con, "UPDATE session_reschedule_requests SET status = ?, admin_note = ?, reviewed_by_type = 'admin', reviewed_at = NOW() WHERE id = ?");
+            mysqli_stmt_bind_param($uStmt, "ssi", $decision, $adminNote, $id);
+            mysqli_stmt_execute($uStmt);
+            $studentId = (int)($reqRow['requested_by_id'] ?? 0);
+            if ($studentId > 0) {
+                $decisionLabel = $decision === 'approved' ? 'تمت الموافقة عليه' : 'تم رفضه';
+                send_notification_to_users($con, 'student', [$studentId], 'الرد على طلب تأجيل الحصة', "طلب تأجيل الحصة الذي أرسلته {$decisionLabel}.", ['type' => 'reschedule_request_reviewed', 'request_id' => $id, 'decision' => $decision], 'system', null, ['push']);
+            }
+            return ['status' => 'success', 'message' => 'Reschedule request ' . $decision, 'data' => get_reschedule_request_details($con, $id)];
         }
 
         if ($decision === 'approved') {
