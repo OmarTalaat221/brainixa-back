@@ -106,3 +106,62 @@ if (!function_exists('teacher_owned_book_ids')) {
         return teacher_owned_store_item_ids($con, $teacherId);
     }
 }
+
+if (!function_exists('teacher_owns_course')) {
+    /** The teacher teaches this course (its teacher, an active course_teachers row) or created it. */
+    function teacher_owns_course($con, int $teacherId, int $courseId): bool {
+        if ($teacherId <= 0 || $courseId <= 0) return false;
+        $res = @mysqli_query($con, "
+            SELECT id FROM courses WHERE id = {$courseId} AND (
+                teacher_id = {$teacherId}
+                OR (created_by_type = 'teacher' AND created_by_id = {$teacherId})
+                OR id IN (SELECT course_id FROM course_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
+            ) LIMIT 1");
+        return $res && mysqli_num_rows($res) > 0;
+    }
+}
+
+if (!function_exists('teacher_owns_unit')) {
+    /** The unit's course is the teacher's, or the teacher created or is assigned to the unit. */
+    function teacher_owns_unit($con, int $teacherId, int $unitId): bool {
+        if ($teacherId <= 0 || $unitId <= 0) return false;
+        $res = @mysqli_query($con, "
+            SELECT id, course_id FROM units WHERE id = {$unitId} AND (
+                (created_by_type = 'teacher' AND created_by_id = {$teacherId})
+                OR id IN (SELECT unit_id FROM unit_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
+            ) LIMIT 1");
+        if ($res && mysqli_num_rows($res) > 0) return true;
+        $u = @mysqli_query($con, "SELECT course_id FROM units WHERE id = {$unitId} LIMIT 1");
+        $row = $u ? mysqli_fetch_assoc($u) : null;
+        return $row && teacher_owns_course($con, $teacherId, (int)$row['course_id']);
+    }
+}
+
+if (!function_exists('teacher_can_edit_lesson_file')) {
+    /**
+     * Whether a teacher may change or delete this lesson file: they created it, are assigned to it,
+     * or it sits in their own course or unit. Deliberately NOT "any file of a subject they teach"
+     * (teacher_book_ownership_clause's widest test) - that let one teacher delete another's files.
+     */
+    function teacher_can_edit_lesson_file($con, int $teacherId, int $fileId): bool {
+        if ($teacherId <= 0 || $fileId <= 0) return false;
+        $res = @mysqli_query($con, "SELECT id, course_id, unit_id, created_by_type, created_by_id FROM course_books WHERE id = {$fileId} LIMIT 1");
+        $f = $res ? mysqli_fetch_assoc($res) : null;
+        if (!$f) return false;
+        if ($f['created_by_type'] === 'teacher' && (int)$f['created_by_id'] === $teacherId) return true;
+        $bt = @mysqli_query($con, "SELECT id FROM book_teachers WHERE book_id = {$fileId} AND teacher_id = {$teacherId} AND is_active = 1 LIMIT 1");
+        if ($bt && mysqli_num_rows($bt) > 0) return true;
+        if (!empty($f['unit_id']) && teacher_owns_unit($con, $teacherId, (int)$f['unit_id'])) return true;
+        return !empty($f['course_id']) && teacher_owns_course($con, $teacherId, (int)$f['course_id']);
+    }
+}
+
+if (!function_exists('teacher_can_read_book')) {
+    /** Whether a teacher may stream this file: one of their lesson files, or one of their products. */
+    function teacher_can_read_book($con, int $teacherId, int $id): bool {
+        if ($teacherId <= 0 || $id <= 0) return false;
+        $res = @mysqli_query($con, "SELECT cb.id FROM course_books cb WHERE cb.id = {$id} AND " . teacher_book_ownership_clause($teacherId) . " LIMIT 1");
+        if ($res && mysqli_num_rows($res) > 0) return true;
+        return teacher_owns_store_item($con, $teacherId, $id);
+    }
+}

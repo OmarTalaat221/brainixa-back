@@ -865,8 +865,12 @@ $routes = [
         "method" => "GET",
         "path" => "/brain-ixa/courses/show",
         "handler" => function ($con) {
+            // The same optional sign-in as /student/courses/show: a signed-in student is told what
+            // they own, and a guest's `?student_id=` is dropped rather than trusted.
+            include_once "./middlewares/studentauthmiddleware.php";
             include_once "./app/user/student/content/courses.php";
-            return studentGetCourseDetails($con);
+            $studentData = studentAuthMiddlewareOptional();
+            return studentGetCourseDetails($con, $studentData);
         },
     ],
     [
@@ -1189,9 +1193,10 @@ $routes = [
             include_once "./app/teacher/content/manage.php";
             $teacherData = teacherAuthMiddleware();
             $tId = (int)($teacherData['id'] ?? $teacherData['teacher_id'] ?? $teacherData->id ?? 0);
-            if ($tId > 0 && !isset($_GET['teacher_id'])) {
-                $_GET['teacher_id'] = $tId;
-            }
+            // Always this teacher's own files. It used to be filled in only when the query had no
+            // teacher_id, so ?teacher_id=<another> listed another teacher's files.
+            unset($_GET['teacher_ids'], $_GET['teachers']);
+            $_GET['teacher_id'] = $tId;
             return adminListBooks($con);
         },
     ],
@@ -1201,7 +1206,16 @@ $routes = [
         "handler" => function ($con) {
             include_once "./middlewares/teacherauthmiddleware.php";
             include_once "./app/teacher/content/manage.php";
+            include_once "./helpers/teacher_ownership.php";
             $teacherData = teacherAuthMiddleware();
+            $tId = (int)($teacherData['id'] ?? $teacherData['teacher_id'] ?? $teacherData->id ?? 0);
+            $body = read_json_body();
+            $unitId = (int)($body['unit_id'] ?? 0);
+            $courseId = (int)($body['course_id'] ?? 0);
+            // A lesson file goes into one of this teacher's own courses or units, nobody else's.
+            if (($unitId > 0 && !teacher_owns_unit($con, $tId, $unitId)) || ($unitId <= 0 && $courseId > 0 && !teacher_owns_course($con, $tId, $courseId))) {
+                return ['status' => 'error', 'error_code' => 'not_owner', 'message' => 'هذا الكورس أو الوحدة ليس من كورساتك'];
+            }
             return adminCreateBook($con, $teacherData);
         },
     ],
@@ -1211,7 +1225,20 @@ $routes = [
         "handler" => function ($con) {
             include_once "./middlewares/teacherauthmiddleware.php";
             include_once "./app/teacher/content/manage.php";
+            include_once "./helpers/teacher_ownership.php";
             $teacherData = teacherAuthMiddleware();
+            $tId = (int)($teacherData['id'] ?? $teacherData['teacher_id'] ?? $teacherData->id ?? 0);
+            $body = read_json_body();
+            $fileId = (int)($body['id'] ?? $_GET['id'] ?? 0);
+            // Any teacher could edit any lesson file, the admin's included.
+            if ($fileId > 0 && !teacher_can_edit_lesson_file($con, $tId, $fileId)) {
+                return ['status' => 'error', 'error_code' => 'not_owner', 'message' => 'هذا الملف ليس من ملفاتك'];
+            }
+            $unitId = (int)($body['unit_id'] ?? 0);
+            $courseId = (int)($body['course_id'] ?? 0);
+            if (($unitId > 0 && !teacher_owns_unit($con, $tId, $unitId)) || ($courseId > 0 && !teacher_owns_course($con, $tId, $courseId))) {
+                return ['status' => 'error', 'error_code' => 'not_owner', 'message' => 'هذا الكورس أو الوحدة ليس من كورساتك'];
+            }
             return adminUpdateBook($con, $teacherData);
         },
     ],
@@ -1221,7 +1248,13 @@ $routes = [
         "handler" => function ($con) {
             include_once "./middlewares/teacherauthmiddleware.php";
             include_once "./app/teacher/content/manage.php";
+            include_once "./helpers/teacher_ownership.php";
             $teacherData = teacherAuthMiddleware();
+            $tId = (int)($teacherData['id'] ?? $teacherData['teacher_id'] ?? $teacherData->id ?? 0);
+            $fileId = (int)($_GET['id'] ?? read_json_body()['id'] ?? 0);
+            if ($fileId > 0 && !teacher_can_edit_lesson_file($con, $tId, $fileId)) {
+                return ['status' => 'error', 'error_code' => 'not_owner', 'message' => 'هذا الملف ليس من ملفاتك'];
+            }
             return adminDeleteBook($con, $teacherData);
         },
     ],
@@ -1233,7 +1266,14 @@ $routes = [
         "handler" => function ($con) {
             include_once "./middlewares/teacherauthmiddleware.php";
             include_once "./app/teacher/content/manage.php";
-            teacherAuthMiddleware();
+            include_once "./helpers/teacher_ownership.php";
+            $teacherData = teacherAuthMiddleware();
+            $tId = (int)($teacherData['id'] ?? $teacherData['teacher_id'] ?? $teacherData->id ?? 0);
+            // Any teacher could stream any lesson file, or any product's paid file.
+            $fileId = (int)($_GET['book_id'] ?? $_GET['id'] ?? 0);
+            if ($fileId > 0 && !teacher_can_read_book($con, $tId, $fileId)) {
+                return ['status' => 'error', 'error_code' => 'not_owner', 'message' => 'هذا الملف ليس من ملفاتك'];
+            }
             return adminStreamBookFile($con);
         },
     ],
@@ -6159,8 +6199,14 @@ $routes = [
             "method" => "GET",
             "path" => "/brain-ixa/landing",
             "handler" => function ($con) {
+                // The landing site is its own app now; website/index.html is not in this repo, and
+                // reading a missing file printed a PHP warning into an empty page.
+                $page = __DIR__ . "/website/index.html";
+                if (!is_file($page)) {
+                    return ['status' => 'error', 'message' => 'Not found: the landing page is served by the landing site, not this API.'];
+                }
                 header("Content-Type: text/html; charset=UTF-8");
-                readfile(__DIR__ . "/website/index.html");
+                readfile($page);
                 exit();
             },
         ],
@@ -6432,8 +6478,12 @@ $routes = [
             "method" => "GET",
             "path" => "/brain-ixa/store/products/show",
             "handler" => function ($con) {
+                // Read the optional token like GET /store does: without it `own` was always false
+                // and the price was never the signed-in student's country price.
+                include_once "./middlewares/studentauthmiddleware.php";
                 include_once "./app/store/manage.php";
-                return storeShowProduct($con);
+                $studentData = studentAuthMiddlewareOptional();
+                return storeShowProduct($con, $studentData);
             },
         ],
         [

@@ -239,16 +239,18 @@ if (!function_exists('adminListBooks')) {
         if ($courseId > 0) $cbWhere[] = "(cb.course_id = {$courseId} OR cb.unit_id IN (SELECT id FROM units WHERE course_id = {$courseId}))";
         if ($subjectId > 0) $cbWhere[] = "cb.subject_id = {$subjectId}";
         if ($teacherId > 0) {
+            // A teacher's lesson files: the same rule as teacher_book_ownership_clause(). Two
+            // tests are gone: a bare `created_by_id = <teacher>` (it also matched files the ADMIN
+            // created whenever the admin's id equalled the teacher's), and "any admin file with no
+            // assigned teacher" (it showed every teacher the files of courses that are not theirs).
             $cbWhere[] = "(
                 (cb.created_by_type = 'teacher' AND cb.created_by_id = {$teacherId})
-                OR (cb.created_by_id = {$teacherId})
                 OR cb.id IN (SELECT book_id FROM book_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
                 OR cb.course_id IN (SELECT id FROM courses WHERE teacher_id = {$teacherId} OR (created_by_type = 'teacher' AND created_by_id = {$teacherId}))
                 OR cb.course_id IN (SELECT course_id FROM course_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
                 OR cb.unit_id IN (SELECT id FROM units WHERE (created_by_type = 'teacher' AND created_by_id = {$teacherId}))
                 OR cb.unit_id IN (SELECT unit_id FROM unit_teachers WHERE teacher_id = {$teacherId} AND is_active = 1)
                 OR cb.subject_id IN (SELECT subject_id FROM teacher_subjects WHERE teacher_id = {$teacherId})
-                OR (cb.created_by_type = 'admin' AND NOT EXISTS (SELECT 1 FROM book_teachers bt_chk WHERE bt_chk.book_id = cb.id AND bt_chk.is_active = 1))
             )";
         }
         if (!empty($search)) {
@@ -848,6 +850,13 @@ if (!function_exists('store_item_grant_access')) {
             $result = store_item_grant_one($con, $bookId, $stId, $byType, $byId, false);
             if ($result !== 'granted' && $result !== 'already') {
                 $outOfStock[] = $stId;
+                continue;
+            }
+
+            // A student who already owned it gets nothing new: this used to add another 'custom'
+            // subscription row (and its book row) on every repeated grant.
+            if ($result === 'already') {
+                $grantedCount++;
                 continue;
             }
 

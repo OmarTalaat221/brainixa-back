@@ -84,6 +84,13 @@ if (!function_exists('studentAuthMiddlewareOptional')) {
             }
         }
 
+        // No valid student token. Some ~40 student handlers inherited a fallback that reads the
+        // student from `?student_id=` when no token identified one - which let anyone read any
+        // student's profile, notifications, reports, subscriptions or purchases by guessing a
+        // number. A guest is a guest: the id in the URL is dropped before the handler runs.
+        // No client sends it (checked: landing, student dashboard, mobile app).
+        unset($_GET['student_id'], $_REQUEST['student_id']);
+
         return null;
     }
 }
